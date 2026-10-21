@@ -69,7 +69,6 @@ renderer.localClippingEnabled = true;
 // 바닥(y=0) 아래는 그리지 않는 면. 엘리베이터가 내려갈 때 '나'와 바닥판이 구멍 속으로 잘려 들어가게 한다
 const FLOOR_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 renderer.shadowMap.type = THREE.PCFShadowMap;
-window.__office = { renderer };   // 성능·누수 점검용(브라우저 콘솔에서 renderer.info 를 본다)
 
 const scene = new THREE.Scene();
 // 층 하나(바닥·벽·가구·사람)는 officeRoot 에 담는다. 엘리베이터를 탈 때 카메라·탑승칸은 그대로 두고
