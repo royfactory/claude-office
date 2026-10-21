@@ -156,6 +156,56 @@ HEARTBEAT_SEC = 10
 WAIT_SEC = 25           # 메시지 롱폴링(/api/outbox/wait) 한 번에 기다리는 시간(허브 최대 25초)
 
 
+_project_cache = {}
+
+
+def project_of(cwd):
+    """세션 폴더 → (층 이름, worktree 이름). 층 = git 저장소 이름.
+
+    git worktree(.git 이 'gitdir: <주 저장소>/.git/worktrees/<이름>' 파일)는 주 저장소 이름으로 묶어 같은 층에 둔다
+    (예: Orca 가 만든 ~/orca/workspaces/DailyGoal/dg-en-c0 → DailyGoal 층, worktree dg-en-c0).
+    저장소 안의 하위 폴더에서 연 세션도 저장소 이름으로 본다. 홈 폴더 위로는 올라가지 않는다(홈이 저장소여도 무시).
+    git 이 아니면 폴더 이름 그대로."""
+    cwd = (cwd or "").rstrip("/\\")
+    if cwd in _project_cache:
+        return _project_cache[cwd]
+    out = (os.path.basename(cwd), "")
+    home = os.path.abspath(os.path.expanduser("~"))
+    d = cwd
+    for _ in range(12):
+        if not d or (os.path.abspath(d) == home and d != cwd):
+            break
+        g = os.path.join(d, ".git")
+        try:
+            if os.path.isdir(g):
+                out = (os.path.basename(d), "")
+                break
+            if os.path.isfile(g):
+                with open(g, encoding="utf-8", errors="replace") as f:
+                    line = f.read(4096).strip()
+                gitdir = line[7:].strip() if line.startswith("gitdir:") else ""
+                if gitdir and not os.path.isabs(gitdir):
+                    gitdir = os.path.normpath(os.path.join(d, gitdir))
+                parts = gitdir.replace("\\", "/").rstrip("/").split("/")
+                if len(parts) >= 3 and parts[-2] == "worktrees":   # <주 저장소>/.git/worktrees/<이름>
+                    common = "/".join(parts[:-2])                   # <주 저장소>/.git
+                    main = os.path.basename(os.path.dirname(common)) if os.path.basename(common) == ".git" else os.path.basename(common)
+                    out = (main or os.path.basename(d), os.path.basename(d))
+                else:   # 서브모듈 등: 그 폴더가 저장소 뿌리
+                    out = (os.path.basename(d), "")
+                break
+        except OSError:
+            break
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    if len(_project_cache) > 500:
+        _project_cache.clear()
+    _project_cache[cwd] = out
+    return out
+
+
 def short(s, n=48):
     s = " ".join(str(s).split())
     return s if len(s) <= n else s[: n - 1] + "…"
@@ -597,6 +647,7 @@ class Collector:
                 kind = "approval"   # 권한 창을 띄우고 사용자의 승인을 기다리는 중(훅을 넣은 경우만 안다)
             since = (ev["ts"] if approval else None) or (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
             subs = self.subagents(jsonl, tr, now) if jsonl else []
+            project, worktree = project_of(cwd)
             sock = s.get("messagingSocketPath") or ""
             if sock:
                 socks[sid] = sock
@@ -605,7 +656,8 @@ class Collector:
                 "pid": s.get("pid"),
                 "name": s.get("name") or os.path.basename(cwd),
                 "title": tr.title,
-                "project": os.path.basename(cwd.rstrip("/\\")),
+                "project": project,
+                "worktree": worktree,
                 "status": status,
                 "kind": kind,
                 "tool": cur["tool"] if cur else (str(ev.get("tool_name") or "") if approval else ""),

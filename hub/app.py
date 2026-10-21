@@ -125,6 +125,7 @@ DEFAULT_CONFIG: dict = {
     "defaultRoom": "dev",
     "speech": True,      # 말풍선에 Claude 마지막 답변 앞 80자. 끄면 수집기가 30초 안에 보내지 않는다
     "messaging": False,  # 대시보드에서 세션으로 메시지 보내기. OFFICE_TOKEN 이 있어야 켜진다
+    "approvals": False,  # 대시보드에서 권한 요청 허용·거절. OFFICE_TOKEN + 그 컴퓨터의 승인 훅이 있어야 동작
     "meName": "나",
     "meCharacter": "",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
 }
@@ -180,6 +181,7 @@ class Config(BaseModel):
     defaultRoom: WorkRoomId = "dev"
     speech: bool = True
     messaging: bool = False
+    approvals: bool = False
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
 
@@ -238,6 +240,8 @@ class Hub:
         self.changed = asyncio.Condition()
         self.outbox: list[dict] = []   # 대시보드 → 세션 메시지(최근 것만, 메모리에만)
         self.queued = asyncio.Condition()   # 새 메시지가 큐에 들어오면 롱폴링 중인 수집기를 깨운다
+        self.approvals: dict[str, dict] = {}   # 승인 요청 id -> 요청(메모리에만)
+        self.decided = asyncio.Condition()       # 결정이 나면 기다리는 승인 훅을 깨운다
         self.closing = False   # 종료 신호를 받았다 — 열린 SSE·롱폴링을 바로 끝낸다
 
     @staticmethod
@@ -260,14 +264,18 @@ class Hub:
                 agents.extend({**a, "host": name} for a in h["agents"])
         msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
                 for m in self.outbox[-20:]]
+        # 기다리는 승인 요청. 명령 미리보기는 토큰이 있어야 따로 받는다(읽기는 누구나 하므로)
+        appr = [{k: x[k] for k in ("id", "host", "session", "tool", "createdAt", "status")}
+                for x in self.approvals.values() if x["status"] == "pending"]
         return {"version": self.version, "now": now, "hosts": hosts, "agents": agents,
                 "config": self.config, "messaging": {"ready": self.messaging_ready(), "auth": bool(TOKEN)},
-                "messages": msgs}
+                "messages": msgs, "approvals": appr,
+                "approvalsReady": bool(TOKEN) and bool(self.config.get("approvals"))}
 
     async def close(self) -> None:
         """종료가 시작되면 기다리는 SSE·롱폴링을 모두 깨워 바로 끝나게 한다."""
         self.closing = True
-        for cond in (self.changed, self.queued):
+        for cond in (self.changed, self.queued, self.decided):
             async with cond:
                 cond.notify_all()
 
@@ -302,6 +310,10 @@ async def _expire_loop() -> None:
             if m["status"] in ("queued", "sending") and now - m["createdAt"] > OUTBOX_TTL_SEC:
                 m.update(status="expired", error="그 컴퓨터의 수집기가 가져가지 않았다(꺼져 있거나 메시지 받기가 꺼짐)")
                 expired = True
+        if _settle_approvals(now):   # 거둔 요청이 있으면 기다리는 승인 훅을 깨워 끝나게 한다
+            expired = True
+            async with hub.decided:
+                hub.decided.notify_all()
         if cur != online or expired:
             online = cur
             await hub.bump()
@@ -444,6 +456,9 @@ async def state() -> dict:
     return hub.snapshot()
 
 
+PATCH_KEYS = ("config", "messaging", "messages", "approvals", "approvalsReady")
+
+
 def _agent_key(a: dict) -> str:
     return f"{a.get('host')}/{a.get('id')}"
 
@@ -452,7 +467,7 @@ def _sent_view(snap: dict) -> dict:
     """연결마다 마지막으로 보낸 상태를 비교하기 쉬운 문자열로 기억한다."""
     return {"agents": {_agent_key(a): json.dumps(a, sort_keys=True, ensure_ascii=False) for a in snap["agents"]},
             "order": [_agent_key(a) for a in snap["agents"]],
-            **{k: json.dumps(snap[k], sort_keys=True, ensure_ascii=False) for k in ("config", "messaging", "messages")}}
+            **{k: json.dumps(snap[k], sort_keys=True, ensure_ascii=False) for k in PATCH_KEYS}}
 
 
 def _patch(prev: dict, snap: dict) -> dict:
@@ -468,7 +483,7 @@ def _patch(prev: dict, snap: dict) -> dict:
     out["del"] = [k for k in prev["agents"] if k not in now_keys]
     if keys != prev["order"]:
         out["order"] = keys
-    for k in ("config", "messaging", "messages"):
+    for k in PATCH_KEYS:
         if json.dumps(snap[k], sort_keys=True, ensure_ascii=False) != prev[k]:
             out[k] = snap[k]
     return out
@@ -615,6 +630,132 @@ async def outbox_result(r: Result) -> dict:
             await hub.bump()
             break
     return {"ok": True}
+
+
+# ---------- 대시보드에서 권한 승인 ----------
+# 흐름: 그 컴퓨터의 승인 훅(hooks/claude_office_approve.py, PermissionRequest)이 /api/approvals 로 요청을 올리고
+#       /api/approvals/wait 로 결정을 기다린다 → 화면에서 허용·거절(/api/approvals/{id}/decide) → 훅이 결정을
+#       Claude Code 에 돌려준다. 터미널 권한 창은 그동안에도 떠 있고, 사람이 먼저 답하면 그쪽이 이긴다.
+#       그 세션이 더는 '승인 대기'가 아니게 되면(터미널에서 답함·끝남) 요청은 gone 이 되어 훅이 조용히 끝난다.
+# 켜는 조건: 허브 OFFICE_TOKEN + 관리 화면 '대시보드에서 승인' + 그 컴퓨터 .env CLAUDE_OFFICE_APPROVE=on + 승인 훅 설치
+APPROVAL_TTL_SEC = 590      # 훅 시간 제한(600초)보다 조금 짧게
+APPROVAL_GRACE_SEC = 8      # 요청 직후에는 수집기가 아직 '승인 대기'를 못 봤을 수 있다
+APPROVAL_GONE_SEC = 4       # 세션이 승인 대기가 아닌 채로 이만큼 지나면 요청을 거둔다
+
+
+def _require_approvals() -> None:
+    if not TOKEN:
+        raise HTTPException(403, "대시보드 승인은 허브에 OFFICE_TOKEN 을 정해야 쓸 수 있다")
+    if not hub.config.get("approvals"):
+        raise HTTPException(403, "관리 화면에서 '대시보드에서 승인'이 꺼져 있다")
+
+
+def _settle_approvals(now: float) -> bool:
+    """끝난 요청을 정리한다: 시간 초과·컴퓨터 끊김·세션이 더는 승인 대기가 아님 → gone. 바뀌었으면 True."""
+    changed = False
+    for x in list(hub.approvals.values()):
+        if x["status"] != "pending":
+            if now - (x.get("decidedAt") or x["createdAt"]) > 120:
+                del hub.approvals[x["id"]]
+            continue
+        h = hub.hosts.get(x["host"])
+        agent = next((a for a in (h or {}).get("agents", []) if a.get("id") == x["session"]), None)
+        waiting = bool(agent) and agent.get("kind") == "approval" and bool(h) and hub.online(h, now)
+        if waiting:
+            x["notSince"] = None
+        elif now - x["createdAt"] > APPROVAL_GRACE_SEC:
+            x["notSince"] = x.get("notSince") or now
+            if now - x["notSince"] >= APPROVAL_GONE_SEC:
+                x.update(status="gone", decidedAt=now)
+                changed = True
+        if x["status"] == "pending" and now - x["createdAt"] > APPROVAL_TTL_SEC:
+            x.update(status="gone", decidedAt=now)
+            changed = True
+    return changed
+
+
+class ApprovalIn(BaseModel):
+    host: str = Field(pattern=r"^[A-Za-z0-9._-]{1,40}$")
+    session: str = Field(min_length=1, max_length=80)
+    toolUseId: str = Field("", max_length=120)
+    tool: str = Field(min_length=1, max_length=64)
+    preview: str = Field("", max_length=600)
+
+
+@app.post("/api/approvals", dependencies=[Depends(require_write)])
+async def approval_request(a: ApprovalIn) -> dict:
+    _require_approvals()
+    now = time.time()
+    for x in hub.approvals.values():   # 같은 도구 호출로 다시 오면(훅 재시도) 그 요청을 그대로
+        if a.toolUseId and x["toolUseId"] == a.toolUseId and x["host"] == a.host and x["status"] == "pending":
+            return {"id": x["id"]}
+    aid = hashlib.sha256(f"{now}{a.host}{a.session}{a.toolUseId}".encode()).hexdigest()[:16]
+    hub.approvals[aid] = {"id": aid, "host": a.host, "session": a.session, "toolUseId": a.toolUseId, "tool": a.tool,
+                          "preview": a.preview, "createdAt": now, "status": "pending", "notSince": None}
+    if len(hub.approvals) > 100:   # 넘치면 오래된 끝난 것부터
+        for k in sorted(hub.approvals, key=lambda k: hub.approvals[k]["createdAt"])[:20]:
+            if hub.approvals[k]["status"] != "pending":
+                del hub.approvals[k]
+    await hub.bump()
+    return {"id": aid}
+
+
+class ApprovalWait(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    timeout: float = 25
+
+    @field_validator("timeout")
+    @classmethod
+    def _finite_wait(cls, v):
+        return v if math.isfinite(v) else 0
+
+
+@app.post("/api/approvals/wait", dependencies=[Depends(require_write)])
+async def approval_wait(w: ApprovalWait, request: Request) -> dict:
+    """결정이 나거나(allow·deny), 요청이 거둬지거나(gone), timeout 이 지나면(pending) 답한다."""
+    deadline = time.monotonic() + max(0.0, min(w.timeout, WAIT_MAX_SEC))
+    while True:
+        x = hub.approvals.get(w.id)
+        if not x:
+            return {"status": "gone"}
+        if x["status"] != "pending" or hub.closing:
+            return {"status": x["status"]}
+        left = deadline - time.monotonic()
+        if left <= 0 or await request.is_disconnected():
+            return {"status": "pending"}
+        try:
+            async with hub.decided:
+                await asyncio.wait_for(hub.decided.wait(), timeout=min(left, 5))
+        except asyncio.TimeoutError:
+            pass
+
+
+@app.get("/api/approvals/{aid}", dependencies=[Depends(require_write)])
+async def approval_detail(aid: str) -> dict:
+    """명령 미리보기까지. 쓰기 토큰이 있어야 본다."""
+    x = hub.approvals.get(aid)
+    if not x:
+        raise HTTPException(404, "그 요청이 없다")
+    return {k: x[k] for k in ("id", "host", "session", "tool", "preview", "createdAt", "status")}
+
+
+class Decision(BaseModel):
+    decision: Literal["allow", "deny"]
+
+
+@app.post("/api/approvals/{aid}/decide", dependencies=[Depends(require_write)])
+async def approval_decide(aid: str, d: Decision) -> dict:
+    _require_approvals()
+    x = hub.approvals.get(aid)
+    if not x:
+        raise HTTPException(404, "그 요청이 없다")
+    if x["status"] != "pending":
+        raise HTTPException(409, f"이미 끝난 요청이다({x['status']})")
+    x.update(status=d.decision, decidedAt=time.time())
+    async with hub.decided:
+        hub.decided.notify_all()
+    await hub.bump()
+    return {"ok": True, "status": x["status"]}
 
 
 @app.get("/api/config")

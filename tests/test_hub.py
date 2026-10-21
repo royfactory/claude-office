@@ -839,3 +839,100 @@ def test_sse_patch_only_carries_changes(hub):
     snap = mod.hub.snapshot()
     p2 = mod._patch(mod._sent_view(snap), snap)
     assert p2["set"] == [] and p2["del"] == [] and "order" not in p2
+
+
+# ---------- 대시보드에서 승인 ----------
+
+APPR = {"host": "mac", "session": "s1", "toolUseId": "tu1", "tool": "Bash", "preview": "rm -rf build"}
+
+
+def _approvals_on(c):
+    cfg = c.get("/api/config").json()
+    cfg["approvals"] = True
+    assert c.put("/api/config", json=cfg, headers=AUTH).status_code == 200
+
+
+def test_approval_needs_token_and_toggle(hub, authed):
+    _, c0 = hub
+    assert c0.post("/api/approvals", json=APPR).status_code == 403          # 허브 토큰 없음
+    _, c = authed
+    assert c.post("/api/approvals", json=APPR).status_code == 401           # 쓰기 토큰
+    assert c.post("/api/approvals", json=APPR, headers=AUTH).status_code == 403   # 관리 화면 꺼짐
+    assert c.get("/api/state").json()["approvalsReady"] is False
+
+
+def test_approval_flow_allow(authed):
+    mod, c = authed
+    _approvals_on(c)
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", kind="approval")]}, headers=AUTH)
+    aid = c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"]
+    assert c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"] == aid      # 같은 도구 호출은 한 요청
+    st = c.get("/api/state").json()
+    assert st["approvalsReady"] is True
+    assert st["approvals"] == [{"id": aid, "host": "mac", "session": "s1", "tool": "Bash",
+                                "createdAt": st["approvals"][0]["createdAt"], "status": "pending"}]   # 미리보기는 안 보인다
+    assert c.get(f"/api/approvals/{aid}").status_code == 401
+    assert c.get(f"/api/approvals/{aid}", headers=AUTH).json()["preview"] == "rm -rf build"
+    assert c.post("/api/approvals/wait", json={"id": aid, "timeout": 0}, headers=AUTH).json() == {"status": "pending"}
+    assert c.post(f"/api/approvals/{aid}/decide", json={"decision": "allow"}).status_code == 401
+    assert c.post(f"/api/approvals/{aid}/decide", json={"decision": "allow"}, headers=AUTH).json()["status"] == "allow"
+    assert c.post(f"/api/approvals/{aid}/decide", json={"decision": "deny"}, headers=AUTH).status_code == 409
+    assert c.post("/api/approvals/wait", json={"id": aid, "timeout": 5}, headers=AUTH).json() == {"status": "allow"}
+    assert c.get("/api/state").json()["approvals"] == []
+
+
+def test_approval_bad_decision_and_unknown(authed):
+    mod, c = authed
+    _approvals_on(c)
+    assert c.post("/api/approvals/zzz/decide", json={"decision": "allow"}, headers=AUTH).status_code == 404
+    aid = c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"]
+    assert c.post(f"/api/approvals/{aid}/decide", json={"decision": "maybe"}, headers=AUTH).status_code == 422
+    assert c.post("/api/approvals/wait", json={"id": "nope", "timeout": 0}, headers=AUTH).json() == {"status": "gone"}
+
+
+def test_approval_wait_wakes_on_decision(authed):
+    mod, c = authed
+    _approvals_on(c)
+    aid = c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"]
+    out = {}
+    t = threading.Thread(target=lambda: out.update(c.post("/api/approvals/wait", json={"id": aid, "timeout": 20}, headers=AUTH).json()))
+    t.start()
+    time.sleep(0.3)
+    started = time.time()
+    c.post(f"/api/approvals/{aid}/decide", json={"decision": "deny"}, headers=AUTH)
+    t.join(10)
+    assert out == {"status": "deny"} and time.time() - started < 5
+
+
+def test_settle_marks_gone_when_session_no_longer_waits(authed):
+    mod, c = authed
+    _approvals_on(c)
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", kind="approval")]}, headers=AUTH)
+    aid = c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"]
+    x = mod.hub.approvals[aid]
+    now = x["createdAt"] + 20
+    assert mod._settle_approvals(now) is False                       # 아직 승인 대기 중
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", kind="working")]}, headers=AUTH)   # 터미널에서 답함
+    assert mod._settle_approvals(now) is False                       # 바로 거두지 않고 잠깐 본다
+    assert mod._settle_approvals(now + mod.APPROVAL_GONE_SEC) is True
+    assert x["status"] == "gone"
+
+
+def test_settle_grace_and_ttl(authed):
+    mod, c = authed
+    _approvals_on(c)
+    aid = c.post("/api/approvals", json=APPR, headers=AUTH).json()["id"]   # 수집기가 아직 못 봄(세션 없음)
+    x = mod.hub.approvals[aid]
+    assert mod._settle_approvals(x["createdAt"] + 1) is False and x["status"] == "pending"
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", kind="approval")]}, headers=AUTH)
+    assert mod._settle_approvals(x["createdAt"] + mod.APPROVAL_TTL_SEC + 1) is True and x["status"] == "gone"
+
+
+def test_patch_carries_approvals(authed):
+    mod, c = authed
+    _approvals_on(c)
+    snap = mod.hub.snapshot()
+    sent = mod._sent_view(snap)
+    c.post("/api/approvals", json=APPR, headers=AUTH)
+    p = mod._patch(sent, mod.hub.snapshot())
+    assert len(p["approvals"]) == 1 and "preview" not in p["approvals"][0]

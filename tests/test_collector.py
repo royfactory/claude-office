@@ -1135,3 +1135,39 @@ def test_sender_reset_after_network_error_sends_full(collector, fake):
 
 def agent_d(i, **kw):
     return dict({"id": i, "kind": "idle", "lastActivity": 100}, **kw)
+
+
+# ---------- 층 = git 저장소(worktree 는 주 저장소로) ----------
+
+def test_project_of_plain_repo_subdir_and_worktree(collector, tmp_path):
+    main = tmp_path / "repos" / "DailyGoal"
+    (main / ".git" / "worktrees" / "dg-en-c0").mkdir(parents=True)
+    (main / "src" / "deep").mkdir(parents=True)
+    wt = tmp_path / "orca" / "DailyGoal" / "dg-en-c0"
+    (wt / "app").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'dg-en-c0'}\n")
+    plain = tmp_path / "notes"
+    plain.mkdir()
+    collector._project_cache.clear()
+    assert collector.project_of(str(main)) == ("DailyGoal", "")
+    assert collector.project_of(str(main / "src" / "deep")) == ("DailyGoal", "")
+    assert collector.project_of(str(wt)) == ("DailyGoal", "dg-en-c0")
+    assert collector.project_of(str(wt / "app")) == ("DailyGoal", "dg-en-c0")
+    assert collector.project_of(str(plain)) == ("notes", "")
+
+
+def test_project_of_submodule_and_relative_gitdir(collector, tmp_path):
+    sup = tmp_path / "super"
+    (sup / ".git" / "modules" / "lib").mkdir(parents=True)
+    (sup / "lib").mkdir()
+    (sup / "lib" / ".git").write_text("gitdir: ../.git/modules/lib\n")
+    collector._project_cache.clear()
+    assert collector.project_of(str(sup / "lib")) == ("lib", "")
+
+
+def test_project_of_does_not_climb_to_home_repo(collector, home):
+    (home / ".git").mkdir()
+    d = home / "scratch" / "x"
+    d.mkdir(parents=True)
+    collector._project_cache.clear()
+    assert collector.project_of(str(d)) == ("x", "")

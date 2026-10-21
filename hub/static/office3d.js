@@ -1053,7 +1053,7 @@ function renderPeople(floor, chars) {
   if (!floor) { setHTML($("people"), ""); setHTML($("detail"), ""); updateCompose(null); updateSessionTab(null); return; }
   const rows = [];
   for (const a of floor.agents) {
-    rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.name, now, false));
+    rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.worktree ? `${a.name} · worktree ${a.worktree}` : a.name, now, false));
     for (const s of a.subagents || []) rows.push(personRow(a.id + "/" + s.id, { ...s, kind: s.tool ? "working" : "thinking", lastActivity: s.since }, chars.get(a.id + "/" + s.id), s.tool ? "working" : "thinking", `${s.type}${s.description ? " · " + s.description : ""}`, "서브에이전트", now, true));
   }
   const busy = floor.agents.filter(a => a.kind !== "idle").length;
@@ -1132,7 +1132,7 @@ function detailCard(a, ch, now) {
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
     ${sessionMeta(a)}
-    ${a.kind === "approval" ? `<p class="approval-note"><i class="fa-solid fa-hand"></i> 권한 승인을 기다리는 중${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, "째")}<small>그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.</small></p>` : ""}
+    ${a.kind === "approval" ? `<div class="approval-note"><i class="fa-solid fa-hand"></i> 권한 승인을 기다리는 중${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, "째")}<small>그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.</small>${approvalBox(a)}</div>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
     ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
@@ -1141,6 +1141,7 @@ function detailCard(a, ch, now) {
 function sessionMeta(a) {
   const bits = [];
   if (a.model) bits.push(`<span title="모델"><i class="fa-solid fa-microchip"></i>${esc(a.model)}</span>`);
+  if (a.worktree) bits.push(`<span title="git worktree — 이 저장소(층)의 다른 작업 폴더"><i class="fa-solid fa-code-fork"></i>${esc(a.worktree)}</span>`);
   if (a.branch) bits.push(`<span title="git 브랜치"><i class="fa-solid fa-code-branch"></i>${esc(a.branch)}</span>`);
   const ln = a.lines || [0, 0];
   if (ln[0] || ln[1]) bits.push(`<span title="이 세션이 Edit·Write 로 더하고 뺀 줄"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
@@ -1150,6 +1151,59 @@ function sessionMeta(a) {
     <div class="track"><i style="width:${p}%"></i></div>${a.compacts ? `<small>압축 ${a.compacts}회 · 마지막 ${agoSpan(a.compactAt, " 전")}</small>` : p >= 85 ? `<small>곧 자동 압축될 수 있습니다</small>` : ""}</div>`;
   return bits.length || bar ? `<div class="smeta">${bits.join("")}</div>${bar}` : "";
 }
+// ---------- 대시보드에서 승인 ----------
+// 그 컴퓨터에 승인 훅이 있으면 요청이 허브에 올라온다. 명령 미리보기는 토큰으로 따로 받는다(화면 읽기는 누구나라서).
+// 결정은 이번 한 번만(규칙을 바꾸지 않는다). 터미널에서 먼저 답하면 그쪽이 이기고 요청은 사라진다
+const apprPreview = new Map();   // 요청 id -> 미리보기(받는 중이면 null)
+const apprBusy = new Set();
+function pendingApproval(a) { return ((state && state.approvals) || []).find(x => x.host === a.host && x.session === a.id && x.status === "pending"); }
+function approvalBox(a) {
+  const x = pendingApproval(a);
+  if (!x) return state && state.approvalsReady
+    ? `<small class="appr-off">이 컴퓨터에 승인 훅(--approve)이 없거나 CLAUDE_OFFICE_APPROVE 가 꺼져 있어 터미널에서만 답할 수 있습니다.</small>` : "";
+  const pv = apprPreview.get(x.id);   // undefined = 아직, null = 받는 중, false = 못 받음(토큰 없음·틀림)
+  if (pv === undefined && token) loadPreview(x.id, false);
+  const busy = apprBusy.has(x.id) ? " disabled" : "";
+  return `<span class="appr-act" data-aid="${esc(x.id)}">
+    ${pv ? `<pre class="appr-pv">${esc(pv)}</pre>` : pv === null ? `<span class="muted">명령을 불러오는 중…</span>` : `<button data-act="pv"><i class="fa-solid fa-eye"></i> 명령 보기(토큰 필요)</button>`}
+    <span class="appr-btns"><button class="primary" data-act="allow"${busy}><i class="fa-solid fa-check"></i> 이번만 허용</button><button class="danger" data-act="deny"${busy}><i class="fa-solid fa-xmark"></i> 거절</button></span></span>`;
+}
+function rerenderPeople() { if (state) { const fl = floors(); renderPeople(fl.find(f => f.project === floorKey), assignCharacters(cfg, state.agents)); } }
+async function tokenFetch(url, opts = {}, ask = true) {
+  for (let tries = 0; tries < 2; tries++) {
+    const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(token ? { "X-Office-Token": token } : {}) } });
+    if (r.status !== 401 || !ask) return r;
+    const t = prompt("허브의 OFFICE_TOKEN 이 필요합니다. 값을 넣어 주세요.");
+    if (!t) return r;
+    token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {}
+  }
+  return null;
+}
+async function loadPreview(id, ask) {   // ask: 토큰이 틀리면 물어본다(사람이 버튼을 눌렀을 때만)
+  apprPreview.set(id, null);
+  const r = await tokenFetch("/api/approvals/" + encodeURIComponent(id), {}, ask).catch(() => null);
+  const j = r && r.ok ? await r.json().catch(() => null) : null;
+  apprPreview.set(id, j ? (j.preview || "(미리보기 없음)") : false);
+  rerenderPeople();
+}
+async function decideApproval(id, decision) {
+  if (decision === "allow") {
+    const pv = apprPreview.get(id);
+    if (!confirm(`이번 한 번 허용할까요?${pv ? "\n\n" + pv.slice(0, 400) : ""}`)) return;
+  }
+  apprBusy.add(id); rerenderPeople();
+  const r = await tokenFetch(`/api/approvals/${encodeURIComponent(id)}/decide`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }).catch(() => null);
+  apprBusy.delete(id);
+  if (!r || !r.ok) { const j = r ? await r.json().catch(() => ({})) : {}; alert("보내지 못했습니다: " + (j.detail || (r ? r.statusText : "연결 실패"))); }
+  rerenderPeople();
+}
+$("detail").addEventListener("click", e => {
+  const b = e.target.closest(".appr-act [data-act]"); if (!b) return;
+  const id = b.closest("[data-aid]").dataset.aid;
+  if (b.dataset.act === "pv") loadPreview(id, true);
+  else decideApproval(id, b.dataset.act);
+});
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });
 
 // ---------- 오른쪽 패널 탭 ----------

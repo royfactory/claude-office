@@ -112,6 +112,7 @@
     <div class="row" style="gap:18px">
       <label class="row" style="font-size:13px"><input type="checkbox" id="speech"> 말풍선에 Claude가 한 말 보이기</label>
       <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN 과 그 컴퓨터 수집기의 CLAUDE_OFFICE_MESSAGES=on 도 있어야 동작"><input type="checkbox" id="messaging"> 대시보드에서 세션으로 메시지 보내기</label>
+      <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN, 그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on, 승인 훅(install_hooks.py --approve --apply)도 있어야 동작"><input type="checkbox" id="approvals"> 대시보드에서 권한 요청 허용·거절</label>
       <label class="row" style="font-size:13px">내 자리에 앉은 '나' 이름 <input id="meName" maxlength="12" style="width:110px"></label>
       <label class="row" style="font-size:13px">'나' 캐릭터 <select id="meChar"></select></label>
     </div>
@@ -243,6 +244,7 @@ function renderRules() {
   $("meChar").innerHTML = `<option value="">🧑‍💻 (기본)</option>` + charOptions(cfg.meCharacter, false);
   $("speech").checked = cfg.speech !== false;
   $("messaging").checked = !!cfg.messaging;
+  $("approvals").checked = !!cfg.approvals;
   $("meName").value = cfg.meName || "나";
 }
 
@@ -324,6 +326,7 @@ document.addEventListener("input", e => {
   else if (t.id === "meChar") cfg.meCharacter = val;
   else if (t.id === "speech") cfg.speech = val;
   else if (t.id === "messaging") cfg.messaging = val;
+  else if (t.id === "approvals") cfg.approvals = val;
   else if (t.id === "meName") cfg.meName = val;
   else if (t.id === "defaultRoom") cfg.defaultRoom = val;
   light();

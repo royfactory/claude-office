@@ -4,6 +4,8 @@
   python3 hooks/install_hooks.py                 무엇을 넣을지 보여 주기만 한다(바꾸지 않음, 기본)
   python3 hooks/install_hooks.py --apply         백업을 만든 뒤 넣는다(이미 있는 훅은 그대로 둔다)
   python3 hooks/install_hooks.py --remove        백업을 만든 뒤 이 훅만 뺀다
+  --approve                                      대시보드 승인 훅(claude_office_approve.py)도 함께 넣는다.
+                                                 다시 --apply 할 때 빼면 승인 훅은 빠진다
   --settings <경로>                              기본 ~/.claude/settings.json 대신 다른 설정 파일
 
 이 스크립트가 넣은 항목은 명령에 claude_office_hook.py 가 들어 있는 것으로 알아본다. 다시 --apply 하면
@@ -17,8 +19,10 @@ import sys
 import time
 
 HOOK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_office_hook.py")
-MARK = "claude_office_hook.py"
+APPROVE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_office_approve.py")
+MARKS = ("claude_office_hook.py", "claude_office_approve.py")
 TIMEOUT = 5   # 초. 훅은 보통 0.1초 안에 끝난다
+APPROVE_TIMEOUT = 600   # 승인 훅은 대시보드의 결정을 기다린다(그동안에도 터미널 권한 창은 떠 있다)
 
 # (이벤트, matcher). matcher 가 None 이면 그 이벤트의 모든 경우에 돈다.
 EVENTS = [
@@ -47,19 +51,21 @@ def launcher(script):
             % script)
 
 
-def hook_entry(python=None, script=None):
+def hook_entry(python=None, script=None, timeout=TIMEOUT):
     # exec 형식(args): 셸을 거치지 않아 경로의 공백·따옴표를 걱정하지 않고, Windows 에서도 같은 모양으로 돈다
     return {"type": "command", "command": python or sys.executable, "args": ["-c", launcher(script or HOOK_SCRIPT)],
-            "timeout": TIMEOUT}
+            "timeout": timeout}
 
 
-def groups_to_add(python=None, script=None):
+def groups_to_add(python=None, script=None, approve=False):
     out = {}
     for event, matcher in EVENTS:
         g = {"hooks": [hook_entry(python, script)]}
         if matcher:
             g = {"matcher": matcher, **g}
         out.setdefault(event, []).append(g)
+    if approve:
+        out["PermissionRequest"].append({"hooks": [hook_entry(python, APPROVE_SCRIPT, APPROVE_TIMEOUT)]})
     return out
 
 
@@ -67,7 +73,7 @@ def is_ours(h):
     if not isinstance(h, dict):
         return False
     parts = [h.get("command")] + (h.get("args") if isinstance(h.get("args"), list) else [])
-    return any(isinstance(p, str) and MARK in p for p in parts)
+    return any(isinstance(p, str) and any(m in p for m in MARKS) for p in parts)
 
 
 def strip_ours(settings):
@@ -99,11 +105,11 @@ def strip_ours(settings):
     return removed
 
 
-def merged(settings, python=None, script=None):
+def merged(settings, python=None, script=None, approve=False):
     out = json.loads(json.dumps(settings))   # 원본은 그대로
     strip_ours(out)
     hooks = out.setdefault("hooks", {})
-    for event, groups in groups_to_add(python, script).items():
+    for event, groups in groups_to_add(python, script, approve).items():
         if not isinstance(hooks.get(event), list):
             hooks[event] = []
         hooks[event].extend(groups)
@@ -145,6 +151,7 @@ def main(argv=None):
     g.add_argument("--remove", action="store_true", help="이 훅만 뺀다(백업을 만든다)")
     g.add_argument("--dry-run", action="store_true", help="보여 주기만 한다(기본)")
     ap.add_argument("--python", help="훅을 돌릴 파이썬(기본: 지금 이 스크립트를 돌린 파이썬)")
+    ap.add_argument("--approve", action="store_true", help="대시보드 승인 훅도 넣는다(.env 의 CLAUDE_OFFICE_APPROVE=on 도 필요)")
     args = ap.parse_args(argv)
     path = os.path.abspath(os.path.expanduser(args.settings))
 
@@ -169,7 +176,7 @@ def main(argv=None):
     if not os.path.isfile(HOOK_SCRIPT):
         print("훅 스크립트를 찾지 못했다: %s" % HOOK_SCRIPT, file=sys.stderr)
         return 1
-    out = merged(settings, args.python)
+    out = merged(settings, args.python, approve=args.approve)
     if args.apply:
         backup = save(path, out)
         print("claude-office 훅을 넣었다: %s" % path)
@@ -179,7 +186,7 @@ def main(argv=None):
         return 0
 
     print("[미리 보기] 아래 훅을 %s 의 \"hooks\" 에 더한다. 기존 훅은 그대로 둔다." % path)
-    print(json.dumps({"hooks": groups_to_add(args.python)}, ensure_ascii=False, indent=2))
+    print(json.dumps({"hooks": groups_to_add(args.python, approve=args.approve)}, ensure_ascii=False, indent=2))
     print("바꾸지 않았다. 넣으려면 --apply, 나중에 빼려면 --remove.")
     return 0
 

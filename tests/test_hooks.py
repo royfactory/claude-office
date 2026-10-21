@@ -413,3 +413,94 @@ def test_installed_hook_handles_quotes_in_path(inst, tmp_path, events):
     r = subprocess.run([h["command"]] + h["args"], input=json.dumps(PERMISSION_REQUEST).encode(),
                        env=dict(os.environ, CLAUDE_OFFICE_EVENTS=str(events)), timeout=10)
     assert r.returncode == 0 and read_event(events)["kind"] == "permission"
+
+
+# ---------- 승인 훅 ----------
+
+APPROVE_PY = REPO / "hooks" / "claude_office_approve.py"
+ENV_ON = {"CLAUDE_OFFICE_APPROVE": "on", "OFFICE_TOKEN": "t", "CLAUDE_OFFICE_HUB": "http://h", "CLAUDE_OFFICE_HOST": "mac"}
+REQ = {"hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "Bash", "tool_use_id": "tu1",
+       "tool_input": {"command": "rm -rf build", "description": "clean"}}
+
+
+@pytest.fixture
+def appr():
+    mod = load_module("office_approve_hook", APPROVE_PY)
+    yield mod
+    sys.modules.pop("office_approve_hook", None)
+
+
+def fake_hub(statuses):
+    calls = []
+
+    def call(hub, path, payload, token, timeout):
+        calls.append((path, payload, token))
+        if path == "/api/approvals":
+            return {"id": "a1"}
+        st = statuses.pop(0)
+        if isinstance(st, Exception):
+            raise st
+        return {"status": st}
+    return call, calls
+
+
+@pytest.mark.parametrize("statuses, behavior", [(["pending", "allow"], "allow"), (["deny"], "deny")])
+def test_approve_returns_decision(appr, statuses, behavior):
+    call, calls = fake_hub(statuses)
+    out = appr.decide(REQ, ENV_ON, call=call, sleep=lambda s: None)
+    assert out["hookSpecificOutput"]["hookEventName"] == "PermissionRequest"
+    assert out["hookSpecificOutput"]["decision"]["behavior"] == behavior
+    path, payload, token = calls[0]
+    assert payload == {"host": "mac", "session": "s1", "toolUseId": "tu1", "tool": "Bash", "preview": "clean\nrm -rf build"} and token == "t"
+
+
+@pytest.mark.parametrize("env", [{}, dict(ENV_ON, CLAUDE_OFFICE_APPROVE="off"), dict(ENV_ON, OFFICE_TOKEN="")])
+def test_approve_off_does_nothing(appr, env):
+    call, calls = fake_hub(["allow"])
+    assert appr.decide(REQ, env, call=call) is None and calls == []
+
+
+def test_approve_gone_or_other_event_gives_no_decision(appr):
+    call, _ = fake_hub(["gone"])
+    assert appr.decide(REQ, ENV_ON, call=call) is None
+    call, calls = fake_hub(["allow"])
+    assert appr.decide(dict(REQ, hook_event_name="PreToolUse"), ENV_ON, call=call) is None and calls == []
+
+
+def test_approve_hub_errors_retry_then_give_up_by_time(appr):
+    t = [0.0]
+    call, calls = fake_hub([OSError("down"), "pending"] + ["pending"] * 50)
+
+    def now():
+        t[0] += 30
+        return t[0]
+    assert appr.decide(REQ, ENV_ON, call=call, now=now, sleep=lambda s: None) is None
+    assert len(calls) < 30
+
+
+def test_approve_request_failure_is_silent(appr):
+    def call(*a, **k):
+        raise OSError("no hub")
+    assert appr.decide(REQ, ENV_ON, call=call) is None
+
+
+def test_approve_preview_shapes(appr):
+    assert appr.preview_of("Edit", {"file_path": "/a/b.py", "old_string": "x"}) == "/a/b.py"
+    assert appr.preview_of("WebFetch", {"url": "https://x.y/z"}) == "https://x.y/z"
+    assert appr.preview_of("Bash", {"command": "x" * 1000}) == "x" * 400
+    assert appr.preview_of("mcp__a__b", {"q": 1}) == '{"q": 1}'
+
+
+def test_approve_script_exits_zero_without_output_when_off(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path), USERPROFILE=str(tmp_path), CLAUDE_OFFICE_APPROVE="off")
+    p = subprocess.run([sys.executable, str(APPROVE_PY)], input=json.dumps(REQ).encode(), capture_output=True, env=env, timeout=20)
+    assert p.returncode == 0 and p.stdout == b""
+
+
+def test_install_approve_adds_long_timeout_entry_and_reapply_removes(inst):
+    s = inst.merged({}, python="py", approve=True)
+    pr = s["hooks"]["PermissionRequest"]
+    assert len(pr) == 2 and pr[1]["hooks"][0]["timeout"] == 600 and "claude_office_approve.py" in pr[1]["hooks"][0]["args"][1]
+    again = inst.merged(s, python="py")
+    assert len(again["hooks"]["PermissionRequest"]) == 1
+    assert inst.strip_ours(s) == len(inst.EVENTS) + 1
