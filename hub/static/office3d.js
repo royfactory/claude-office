@@ -1282,7 +1282,8 @@ const FEED_MAX = 300;
 const feed = [];                 // {ts, type: done|start|new|end|approval, id, project, title, say, tool}
 const feedKind = new Map();      // 세션 id -> 지난번 근무 여부
 const feedAppr = new Map();      // 세션 id -> 지난번 승인 대기 여부
-let feedOpen = false, feedFilter = "all", feedSeenTs = 0;
+let feedOpen = false, feedFilter = "all", feedSeenTs = 0, feedQuery = "", feedView = "news", tlScope = "floor", tlWin = 600;
+try { feedView = localStorage.getItem("office.feedView") === "tl" ? "tl" : "news"; tlScope = localStorage.getItem("office.tlScope") === "busy" ? "busy" : "floor"; tlWin = +localStorage.getItem("office.tlWin") === 1800 ? 1800 : 600; } catch (_) {}
 try { feedOpen = localStorage.getItem("office.feed") === "1"; feedSeenTs = +localStorage.getItem("office.feedSeen") || 0; } catch (_) {}
 const feedCompacts = new Map();  // 세션 id -> 지난번 압축 횟수
 const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off", approval: "hand", compact: "compress" };
@@ -1339,7 +1340,11 @@ function renderFeed() {
   setHTML($("feedLatest"), top ? `<i class="fa-solid fa-${FEED_ICON[top.type]}"></i> ${esc(top.title)} · ${FEED_WORD[top.type]} · ${agoSpan(top.ts, " 전")}` : "");
   tickTimes($("feedLatest"), now);
   if (!feedOpen) return;
-  const list = sorted.filter(e => feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter));
+  renderTimeline();
+  if (feedView !== "news") return;
+  const q = feedQuery.trim().toLowerCase();
+  const list = sorted.filter(e => (feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter)) &&
+    (!q || [e.title, e.project, e.say, e.tool, FEED_WORD[e.type]].some(v => v && String(v).toLowerCase().includes(q))));
   setHTML($("feedList"), list.slice(0, 120).map(e => {
     const n = floorN.get(e.project);
     const what = e.type === "compact" ? `${FEED_WORD[e.type]} · ${e.n}회째 · ${esc(e.project)}` : e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>`
@@ -1348,7 +1353,7 @@ function renderFeed() {
       <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${agoSpan(e.ts, " 전")}</span>
       <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b>${esc(e.title)}</b></span>
       <span class="what">${what}</span></li>`;
-  }).join("") || `<li class="empty">아직 소식이 없습니다.</li>`);
+  }).join("") || `<li class="empty">${q || feedFilter !== "all" ? "조건에 맞는 소식이 없습니다." : "아직 소식이 없습니다."}</li>`);
   tickTimes($("feedList"), now);
 }
 // 끌어서 정한 높이(px). 0 이면 기본(무대의 42%)
@@ -1416,9 +1421,74 @@ for (const side of ["left", "right"]) {
 $("feedFilter").addEventListener("click", e => {
   const b = e.target.closest("[data-f]"); if (!b) return;
   feedFilter = b.dataset.f;
-  $("feedFilter").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  $("feedFilter").querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x === b));
   renderFeed();
 });
+$("feedSearch").addEventListener("input", e => { feedQuery = e.target.value; renderFeed(); });
+$("feedSearch").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; feedQuery = ""; renderFeed(); e.target.blur(); } });
+
+// ---------- 타임라인 ----------
+// 세션마다 한 줄. 수집기가 보낸 최근 30분의 도구 구간([도구, 시작, 끝, 대상, 실패])을 그 도구의 방 색으로 놓고,
+// 사람이 말을 건 시각은 흰 세로선으로. 끝이 없는 구간(지금 쓰는 중)은 빗금
+const TL_ROOMS = ["library", "dev", "server", "search", "meeting", "mydesk"];
+function durText(sec) {
+  if (sec < 10) return sec.toFixed(1) + "초";
+  if (sec < 60) return Math.round(sec) + "초";
+  const m = Math.floor(sec / 60), r = Math.round(sec % 60);
+  return m + "분" + (r ? ` ${r}초` : "");
+}
+function setFeedView(v) {
+  feedView = v;
+  $("stage").classList.toggle("tl-view", v === "tl");
+  $("feedView").querySelectorAll("[data-v]").forEach(x => x.classList.toggle("on", x.dataset.v === v));
+  try { localStorage.setItem("office.feedView", v); } catch (_) {}
+  renderFeed();
+}
+function renderTimeline() {
+  if (!feedOpen || feedView !== "tl" || !state || !cfg) return;
+  const now = Date.now() / 1000 - skew, from = now - tlWin;
+  const fl = floors(), floorN = new Map(fl.map(f => [f.project, f.n]));
+  const touched = a => a.timeline && (a.timeline.spans.some(s => (s[2] == null ? now : s[2]) >= from) || a.timeline.prompts.some(p => p >= from));
+  const agents = (tlScope === "floor" ? ((fl.find(f => f.project === floorKey) || {}).agents || [])
+    : state.agents.filter(a => a.kind !== "idle" || touched(a))).slice()
+    .sort((x, y) => (floorN.get(x.project) || 0) - (floorN.get(y.project) || 0) || (x.startedAt || 0) - (y.startedAt || 0));
+  const pct = t => ((Math.max(t, from) - from) / tlWin * 100).toFixed(2);
+  const lanes = agents.map(a => {
+    const tl = a.timeline || { spans: [], prompts: [] };
+    const spans = tl.spans.filter(s => (s[2] == null ? now : s[2]) >= from).map(([tool, st, en, tg, err]) => {
+      const end = en == null ? now : Math.min(en, now), w = Math.max(0, (end - Math.max(st, from)) / tlWin * 100);
+      const room = roomForTool(cfg, tool);
+      const tip = `${tool}${tg ? " · " + tg : ""} · ${en == null ? "쓰는 중 " : ""}${durText(Math.max(0, end - st))}${err ? " · 실패" : ""}`;
+      return `<i class="sp${en == null ? " open" : ""}${err ? " err" : ""}" style="left:${pct(st)}%;width:${w.toFixed(2)}%;background-color:var(--rc-${room}, var(--rc-dev));color:var(--rc-${room}, var(--rc-dev))" title="${esc(tip)}"></i>`;
+    }).join("");
+    const pms = tl.prompts.filter(p => p >= from).map(p => `<i class="pm" style="left:${pct(p)}%" title="내가 말을 건 때"></i>`).join("");
+    const n = floorN.get(a.project), st = stateOf(a);
+    return `<div class="lane${selected === a.id ? " sel" : ""}" data-id="${esc(a.id)}" data-p="${esc(a.project)}">
+      <span class="ln"><span class="sd" style="--sc:${STATE_COLOR[st]}" title="${STATE_WORD[st]}"></span>${tlScope === "busy" && n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b title="${esc(a.title || a.name)}">${esc(a.title || a.name)}</b></span>
+      <span class="tr">${spans}${pms}</span></div>`;
+  }).join("");
+  const ticks = [0, 1, 2, 3, 4, 5].map(i => {
+    const left = (i / 5 * 100).toFixed(0), back = Math.round(tlWin * (1 - i / 5) / 60);
+    return `<span style="left:${left}%">${back ? `-${back}분` : "지금"}</span>`;
+  }).join("");
+  setHTML($("timeline"), lanes ? lanes + `<div class="axis"><span></span><span class="tk">${ticks}</span></div>`
+    : `<div class="empty">${tlScope === "floor" ? "이 층에 세션이 없습니다." : `최근 ${tlWin / 60}분 동안 일한 세션이 없습니다.`} 도구 기록은 수집기를 새로 깐 뒤부터 쌓입니다.</div>`);
+  const leg = TL_ROOMS.map(id => { const r = (cfg.rooms || []).find(x => x.id === id); return r ? `<span><i style="background:var(--rc-${id})"></i>${esc(r.name)}</span>` : ""; }).join("") +
+    `<span><i class="pmk"></i>내가 말함</span><span><i style="outline:2px solid #ef4444;outline-offset:-1px;background:transparent"></i>실패</span>`;
+  setHTML($("tlLegend"), leg);
+}
+$("feedView").addEventListener("click", e => { const b = e.target.closest("[data-v]"); if (b) setFeedView(b.dataset.v); });
+$("tlScope").addEventListener("click", e => {
+  const b = e.target.closest("[data-s]"); if (!b) return;
+  tlScope = b.dataset.s;
+  $("tlScope").querySelectorAll("[data-s]").forEach(x => x.classList.toggle("on", x === b));
+  try { localStorage.setItem("office.tlScope", tlScope); } catch (_) {}
+  renderFeed();
+});
+$("tlScope").querySelectorAll("[data-s]").forEach(x => x.classList.toggle("on", x.dataset.s === tlScope));
+$("tlWin").value = String(tlWin);
+$("tlWin").onchange = e => { tlWin = +e.target.value; try { localStorage.setItem("office.tlWin", String(tlWin)); } catch (_) {} renderFeed(); };
+$("timeline").addEventListener("click", e => { const l = e.target.closest(".lane"); if (l) jumpTo(l.dataset.id, l.dataset.p); });
 $("feedList").addEventListener("click", e => {
   const li = e.target.closest("li[data-id]"); if (!li) return;
   if (!state.agents.some(a => a.id === li.dataset.id)) return;   // 끝난 세션은 갈 곳이 없다
@@ -1426,6 +1496,7 @@ $("feedList").addEventListener("click", e => {
   if (selected !== li.dataset.id) select(li.dataset.id);
 });
 setFeedOpen(feedOpen);
+setFeedView(feedView);
 
 // ---------- 나를 기다리는 세션(모든 층) ----------
 // 층을 돌아다니는 동안 다른 층에서 승인을 기다리거나 일을 끝낸 세션을 놓치지 않게, 화면 위 가운데에 칩으로 모은다.
@@ -1565,7 +1636,7 @@ renderAlertBtn();
 // 글을 쓰는 칸에서는 동작하지 않는다. ? 로 목록
 const KEYS = [
   ["↑ ↓", "위층·아래층"], ["1 – 9", "그 층으로"], ["Space", "층 순회 재생·정지"], ["A", "나를 기다리는 다음 세션으로"],
-  ["F", "최근 소식 펼치기·접기"], ["[  ]", "왼쪽·오른쪽 패널 접기"], ["M", "소리·알림 바꾸기"], ["Esc", "선택 풀기·창 닫기"], ["?", "이 목록"],
+  ["F", "최근 소식 펼치기·접기"], ["T", "타임라인 보기"], ["/", "소식 검색"], ["[  ]", "왼쪽·오른쪽 패널 접기"], ["M", "소리·알림 바꾸기"], ["Esc", "선택 풀기·창 닫기"], ["?", "이 목록"],
 ];
 function renderKeys() {
   setHTML($("keysList"), KEYS.map(([k, d]) => `<li><kbd>${k}</kbd><span>${d}</span></li>`).join(""));
@@ -1599,6 +1670,8 @@ document.addEventListener("keydown", e => {
     const x = list[(i + 1) % list.length]; jumpTo(x.a.id, x.a.project);
   }
   else if (k === "f" || k === "F") setFeedOpen(!feedOpen);
+  else if (k === "t" || k === "T") { if (!feedOpen) setFeedOpen(true); setFeedView(feedView === "tl" ? "news" : "tl"); }
+  else if (k === "/") { if (!feedOpen) setFeedOpen(true); setFeedView("news"); $("feedSearch").focus(); }
   else if (k === "[") setPanel("left", !document.querySelector(".app").classList.contains("left-closed"));
   else if (k === "]") setPanel("right", !document.querySelector(".app").classList.contains("right-closed"));
   else if (k === "m" || k === "M") $("alertBtn").click();

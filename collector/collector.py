@@ -144,6 +144,8 @@ SUBAGENT_ACTIVE_SEC = 45     # 서브에이전트 기록이 이 시간 안에 �
 SUBAGENT_SCAN_SEC = 600      # 이보다 오래된 서브에이전트 파일은 아예 열지 않는다
 STALL_SEC = 90               # 생각만 하는데 기록이 이만큼 조용하면 '막힘'
 RECENT_N = 8
+TIMELINE_SEC = 30 * 60   # 타임라인: 최근 30분의 도구 사용 구간과 사람이 말을 건 시각
+TIMELINE_N = 60          # 그중 최근 것만(세션 하나에 보내는 구간 수 상한)
 # 컨텍스트 창 크기(토큰). 모델 이름에 [1m] 이 붙었거나 이미 20만을 넘겨 쓴 기록이 있으면 100만으로 본다.
 # 기본이 100만인 모델은 이름 앞부분으로 적는다(opus-5 는 96만 토큰에서 자동 압축된 기록으로 확인).
 # 맞지 않으면 CLAUDE_OFFICE_CONTEXT_WINDOW 로 한 값을 정한다.
@@ -216,9 +218,11 @@ def iso_ts(s):
     # "2026-10-20T13:46:45.950Z" → epoch. 3.9 의 fromisoformat 은 Z 를 못 읽는다.
     try:
         from datetime import datetime, timezone
-        return datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+        base = datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
     except Exception:
         return None
+    m = re.match(r"\.(\d{1,6})", s[19:])   # 소수점 아래(밀리초)까지 — 타임라인의 짧은 도구 길이
+    return base + (float("0." + m.group(1)) if m else 0.0)
 
 
 def say_of(text):
@@ -254,6 +258,9 @@ class Transcript:
         self.compacts = 0       # 자동·수동 압축 횟수와 마지막 시각
         self.compact_at = None
         self.lines = [0, 0]     # Edit/Write 로 더한 줄·뺀 줄
+        self.spans = []         # 타임라인: [도구, 시작, 끝(None=아직), 대상, 실패 여부]
+        self.span_by_id = {}    # tool_use_id -> spans 의 항목(결과가 오면 끝을 채운다)
+        self.prompts = []       # 사람이 말을 건 시각(내용은 보내지 않는다)
         self.last = None
         self.ino = None
 
@@ -317,6 +324,8 @@ class Transcript:
             self.ctx = int(cm.get("postTokens") or 0)
             return
         msg = rec.get("message")
+        if t == "user" and ts and self._is_prompt(rec, msg):
+            self.prompts = (self.prompts + [ts])[-20:]
         if t == "assistant" and isinstance(msg, dict) and not rec.get("isSidechain"):
             self._usage(msg)   # 예전 버전이 같은 파일에 적던 서브에이전트(사이드체인) 답변은 이 세션의 컨텍스트가 아니다
         if t == "user" and rec.get("toolUseResult"):
@@ -342,11 +351,21 @@ class Transcript:
                     for k in list(self.tools_by_id)[:200]:
                         del self.tools_by_id[k]
                 self.recent = (self.recent + [item])[-RECENT_N:]
+                span = [name, ts or time.time(), None, item["target"][:24], False]
+                self.spans = (self.spans + [span])[-TIMELINE_N * 2:]
+                self.span_by_id[c.get("id")] = span
+                if len(self.span_by_id) > 200:
+                    for k in list(self.span_by_id)[:100]:
+                        del self.span_by_id[k]
                 self.tools += 1
                 self._task_tool(name, inp, c.get("id"), detail)
             elif ct == "tool_result":
                 tid = c.get("tool_use_id")
                 self.pending.pop(tid, None)
+                span = self.span_by_id.pop(tid, None)
+                if span:
+                    span[2] = ts or time.time()
+                    span[4] = bool(c.get("is_error"))
                 text = c.get("content")
                 if not isinstance(text, str):
                     text = " ".join(x.get("text", "") for x in text if isinstance(x, dict)) if isinstance(text, list) else ""
@@ -364,6 +383,28 @@ class Transcript:
                 txt = say_of(c.get("text", ""))
                 if txt:
                     self.say = txt
+
+    @staticmethod
+    def _is_prompt(rec, msg):
+        """사람이 입력한 말인지. 요즘 기록은 origin.kind 가 human, 예전 기록은 isMeta·태그로 걸러 짐작한다."""
+        origin = rec.get("origin")
+        if isinstance(origin, dict):
+            return origin.get("kind") == "human"
+        if rec.get("isMeta") or rec.get("isSidechain") or not isinstance(msg, dict):
+            return False
+        ct = msg.get("content")
+        if isinstance(ct, list):
+            if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in ct):
+                return False
+            ct = next((x.get("text", "") for x in ct if isinstance(x, dict) and x.get("type") == "text"), "")
+        return isinstance(ct, str) and bool(ct.strip()) and not ct.lstrip().startswith("<")
+
+    def timeline(self, now):
+        """최근 TIMELINE_SEC 안에 걸친 도구 구간과 사람이 말을 건 시각. 시각은 0.1초 단위로 줄인다."""
+        since = now - TIMELINE_SEC
+        spans = [[s[0], round(s[1], 1), None if s[2] is None else round(s[2], 1), s[3], 1 if s[4] else 0]
+                 for s in self.spans if (s[2] is None and s[1] >= since - 6 * 3600) or (s[2] or 0) >= since][-TIMELINE_N:]
+        return {"spans": spans, "prompts": [round(p, 1) for p in self.prompts if p >= since]}
 
     def _usage(self, msg):
         """답변의 토큰 사용량으로 지금 컨텍스트 크기와 출력 토큰 합을 갱신한다."""
@@ -579,6 +620,7 @@ class Collector:
                 "mode": tr.mode,
                 "branch": tr.branch,
                 **tr.usage(),
+                "timeline": tr.timeline(now),
                 "bg": [{"tool": b["tool"], "target": b["target"], "ts": b.get("ts")} for b in bg][:5],
                 "todos": list(tr.tasks.values())[:30],
                 "canMessage": MESSAGES and not WINDOWS and socket_ok(sock),

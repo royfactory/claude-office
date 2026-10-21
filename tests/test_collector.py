@@ -1015,3 +1015,48 @@ def test_patch_lines_counts_edits_and_new_files(collector, tr_file):
 def test_sidechain_answers_do_not_move_context(collector, tr_file):
     tr = read(collector, tr_file, answer("m1", read_=5000), answer("s1", read_=90_000, sidechain=True))
     assert tr.usage()["ctx"]["used"] == 5210
+
+
+# ---------- 타임라인 ----------
+
+def test_iso_ts_keeps_milliseconds(collector):
+    assert collector.iso_ts("2026-10-20T13:46:45.950Z") - collector.iso_ts("2026-10-20T13:46:45Z") == pytest.approx(0.95)
+    assert collector.iso_ts("nope") is None
+
+
+def _iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".500Z"
+
+
+def test_timeline_spans_open_closed_and_errors(collector, tr_file):
+    now = time.time()
+    err = result("t2", "boom", ts=_iso(now - 50))
+    err["message"]["content"][0]["is_error"] = True
+    tr = read(collector, tr_file,
+              use("t1", "Read", ts=_iso(now - 100), file_path="/x/a.py"), result("t1", ts=_iso(now - 98)),
+              use("t2", "Bash", ts=_iso(now - 60), description="build it"), err,
+              use("t3", "Grep", ts=_iso(now - 10), pattern="foo"))
+    sp = tr.timeline(now)["spans"]
+    assert [s[0] for s in sp] == ["Read", "Bash", "Grep"]
+    assert sp[0][3] == "a.py" and sp[0][2] - sp[0][1] == pytest.approx(2, abs=0.11)
+    assert sp[1][4] == 1 and sp[0][4] == 0
+    assert sp[2][2] is None   # 아직 결과가 없는 도구
+
+
+def test_timeline_drops_old_spans(collector, tr_file):
+    now = time.time()
+    tr = read(collector, tr_file, use("t1", "Read", ts=_iso(now - 3 * 3600)), result("t1", ts=_iso(now - 3 * 3600 + 1)),
+              use("t2", "Read", ts=_iso(now - 5)), result("t2", ts=_iso(now - 4)))
+    assert len(tr.timeline(now)["spans"]) == 1
+
+
+def test_timeline_prompts_only_from_people(collector, tr_file):
+    now = time.time()
+    human = {"type": "user", "timestamp": _iso(now - 30), "origin": {"kind": "human"}, "message": {"role": "user", "content": "do it"}}
+    notif = {"type": "user", "timestamp": _iso(now - 20), "origin": {"kind": "task-notification"},
+             "message": {"role": "user", "content": notification("x")}}
+    old_style = {"type": "user", "timestamp": _iso(now - 10), "message": {"role": "user", "content": [{"type": "text", "text": "hello"}]}}
+    meta = {"type": "user", "timestamp": _iso(now - 5), "isMeta": True, "message": {"role": "user", "content": "caveat"}}
+    tagged = {"type": "user", "timestamp": _iso(now - 4), "message": {"role": "user", "content": "<local-command-stdout>x"}}
+    tr = read(collector, tr_file, human, notif, old_style, meta, tagged, result("t9", ts=_iso(now - 3)))
+    assert len(tr.timeline(now)["prompts"]) == 2

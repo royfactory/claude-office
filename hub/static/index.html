@@ -254,7 +254,37 @@
   .feed-bar .latest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
   .feed-body { flex: 1; min-height: 0; display: none; flex-direction: column; padding: 0 14px 10px; }
   .stage.feed-open .feed-body { display: flex; }
-  .feed-filter { flex: none; display: flex; gap: 6px; margin-bottom: 8px; }
+  .feed-filter { flex: none; display: flex; gap: 6px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .feed-filter .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--border); margin-right: 6px; }
+  .feed-filter .seg button { border: 0; background: transparent; }
+  .feed-filter .seg button.on { background: var(--brand-dark); color: #04120d; }
+  .feed-filter .grp { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #feedSearch { margin-left: auto; width: 200px; padding: 4px 10px; font-size: 12px; border-radius: 999px; background: var(--bg-2); color: var(--text-hi);
+                border: 1px solid var(--border-2); }
+  #tlWin { padding: 3px 6px; font-size: 12px; }
+  .stage:not(.tl-view) .tl-only, .stage.tl-view .news-only { display: none !important; }
+  /* 타임라인: 세션마다 한 줄, 도구를 쓴 구간을 그 방 색으로. 빨간 테두리 = 실패, 흰 세로선 = 내가 말을 건 때 */
+  #timeline { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 3px; padding-right: 4px; }
+  #feed { --rc-library: #60a5fa; --rc-dev: #34d399; --rc-server: #f59e0b; --rc-search: #a78bfa; --rc-meeting: #f472b6; --rc-mydesk: #94a3b8; --rc-lounge: #64748b; }
+  #timeline .lane { display: grid; grid-template-columns: 190px 1fr; gap: 10px; align-items: center; min-height: 24px; border-radius: 6px; cursor: pointer; padding: 1px 4px; }
+  #timeline .lane:hover, #timeline .lane.sel { background: var(--surface-2); }
+  #timeline .ln { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+  #timeline .ln b { color: var(--text-hi); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #timeline .ln .badge { min-width: 30px; height: 18px; font-size: 10px; flex: none; }
+  #timeline .ln .sd { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--sc, #94a3b8); }
+  #timeline .tr { position: relative; height: 16px; background: rgba(255,255,255,.035); border-radius: 3px; overflow: hidden; }
+  #timeline .sp { position: absolute; top: 2px; bottom: 2px; min-width: 2px; border-radius: 2px; background: var(--rc-dev); opacity: .9; }
+  #timeline .sp.open { opacity: 1; box-shadow: 0 0 6px currentColor; background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px); }
+  #timeline .sp.err { outline: 2px solid #ef4444; outline-offset: -1px; }
+  #timeline .pm { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f8fafc; box-shadow: 0 0 4px rgba(255,255,255,.8); }
+  #timeline .axis { display: grid; grid-template-columns: 190px 1fr; gap: 10px; position: sticky; bottom: 0; background: rgba(9,17,33,.96); padding: 2px 4px 0; }
+  #timeline .axis .tk { position: relative; height: 16px; font-size: 10px; color: var(--text-dim2); }
+  #timeline .axis .tk span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  #timeline .axis .tk span:last-child { transform: translateX(-100%); }
+  #timeline .empty { color: var(--text-dim2); font-size: 12px; padding: 12px 4px; }
+  .tl-legend { display: inline-flex; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--text-dim); margin-left: auto; }
+  .tl-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
+  .tl-legend .pmk { width: 2px; background: #f8fafc; }
   .feed-filter button { padding: 3px 10px; font-size: 12px; border-radius: 999px; background: var(--surface); color: var(--text-dim); }
   .feed-filter button.on { background: var(--surface-3); color: var(--text-hi); border-color: var(--brand); }
   #feedList { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
@@ -439,9 +469,15 @@
       </button>
       <div class="feed-body">
         <div class="feed-filter" id="feedFilter">
-          <button data-f="all" class="on">전체</button><button data-f="done"><i class="fa-solid fa-circle-check"></i> 완료</button><button data-f="start"><i class="fa-solid fa-circle-play"></i> 시작</button><button data-f="life"><i class="fa-solid fa-power-off"></i> 새 세션·종료</button>
+          <span class="seg" id="feedView"><button data-v="news" class="on"><i class="fa-solid fa-list"></i> 소식</button><button data-v="tl"><i class="fa-solid fa-chart-gantt"></i> 타임라인</button></span>
+          <span class="grp news-only"><button data-f="all" class="on">전체</button><button data-f="done"><i class="fa-solid fa-circle-check"></i> 완료</button><button data-f="start"><i class="fa-solid fa-circle-play"></i> 시작</button><button data-f="approval"><i class="fa-solid fa-hand"></i> 승인</button><button data-f="life"><i class="fa-solid fa-power-off"></i> 새 세션·종료</button></span>
+          <input class="news-only" id="feedSearch" type="search" placeholder="검색: 세션·프로젝트·말" aria-label="소식 검색">
+          <span class="grp tl-only" id="tlScope"><button data-s="floor" class="on">이 층</button><button data-s="busy">모든 층 · 최근 활동</button>
+            <select id="tlWin" title="보이는 시간"><option value="600">10분</option><option value="1800">30분</option></select></span>
+          <span class="tl-legend tl-only" id="tlLegend"></span>
         </div>
-        <ol id="feedList"></ol>
+        <ol id="feedList" class="news-only"></ol>
+        <div id="timeline" class="tl-only"></div>
       </div>
     </section>
   </main>
