@@ -23,12 +23,34 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 | | 필요한 것 |
 |---|---|
 | 수집기 (macOS) | `/usr/bin/python3`(명령줄 도구, 없으면 `xcode-select --install`) |
-| 수집기 (Windows) | Windows 10/11 + [Python](https://www.python.org/downloads/windows/) 3.9 이상(설치할 때 「py launcher」 포함), PowerShell(기본 설치). 관리자 권한은 필요 없습니다 |
+| 수집기 (Windows) | Windows 10/11 + [Python](https://www.python.org/downloads/windows/) 3.9 이상(허브까지 돌리면 3.10 이상, 설치할 때 「py launcher」 포함), PowerShell(기본 설치). 관리자 권한은 필요 없습니다 |
 | 수집기 (리눅스) | `python3` 3.9 이상. 직접 실행으로 동작할 것으로 보이나 시험하지 않았습니다 |
-| 허브 | Docker(Compose) 또는 [uv](https://docs.astral.sh/uv/) |
+| 허브 | Docker(Compose) 또는 [uv](https://docs.astral.sh/uv/). Windows 는 `windows-start.bat` 이 Python 가상환경으로 띄운다 |
 | 브라우저 | WebGL 이 되는 최신 브라우저 |
 
-## 설치
+## Windows: 한 컴퓨터에서 한 번에
+
+허브와 수집기를 그 Windows 컴퓨터 안에서 다 돌리는 경우입니다. Docker 는 필요 없습니다.
+
+1. [Python](https://www.python.org/downloads/windows/) 3.10 이상을 설치합니다(설치 화면에서 「py launcher」 포함).
+2. 저장소를 받습니다: `git clone https://github.com/royfactory/claude-office.git` (또는 GitHub 의 Code → Download ZIP 을 풀기)
+3. 폴더에서 **`windows-start.bat` 을 더블클릭**합니다.
+
+`windows-start.bat` 이 하는 일:
+- `.env` 가 없으면 기본값으로 만듭니다(허브 `127.0.0.1:3006`, 수집기도 그 주소로).
+- 저장소의 `.venv` 에 허브 의존성을 설치합니다(처음 한 번 1~2분, 인터넷 필요).
+- 허브와 수집기를 작업 스케줄러(`claude-office-hub`, `claude-office-collector`)에 등록하고 띄웁니다. 다음부터는 로그온하면 창 없이 저절로 뜹니다.
+- 브라우저로 사무실 화면(`http://127.0.0.1:3006`)을 엽니다.
+
+| 파일 | 하는 일 |
+|---|---|
+| `windows-start.bat` | 설치·갱신·시작(코드를 `git pull` 한 뒤 다시 누르면 새 코드로 다시 뜬다) |
+| `windows-status.bat` | 허브·수집기가 도는지와 최근 로그 |
+| `windows-stop.bat` | 둘 다 멈추고 작업 스케줄러 등록을 지움(설정·캐릭터 이미지는 `data\` 에 남음) |
+
+설정·캐릭터 이미지는 `data\`, 허브 로그는 `data\hub.log`, 수집기 로그는 `%USERPROFILE%\.claude-office\collector.log` 에 있습니다.
+
+## 설치 (macOS · 리눅스 · 허브를 서버에 두는 경우)
 
 ```bash
 git clone https://github.com/royfactory/claude-office.git

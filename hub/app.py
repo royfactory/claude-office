@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import re
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -422,5 +423,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("OFFICE_BIND") or "127.0.0.1")
     ap.add_argument("--port", type=int, default=int(os.environ.get("OFFICE_PORT") or 3006))
+    ap.add_argument("--log", help="출력을 이 파일에 이어 쓴다(1MB 넘으면 시작할 때 비움). Windows 작업 스케줄러용")
     args = ap.parse_args()
+    if args.log:
+        try:
+            if os.path.getsize(args.log) > 1024 * 1024:
+                open(args.log, "w").close()
+        except OSError:
+            pass
+        sys.stdout = sys.stderr = open(args.log, "a", encoding="utf-8", buffering=1)
+    elif sys.stdout is None:   # 창 없는 pythonw 로 떴는데 --log 가 없으면 출력은 버린다
+        sys.stdout = sys.stderr = open(os.devnull, "w")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
