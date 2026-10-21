@@ -272,7 +272,7 @@ py hooks\install_hooks.py --apply                  # Windows(%USERPROFILE%\.clau
 
 ### 사용 한도 막대 (선택: 상태 표시줄)
 
-Claude Code 는 구독 계정의 **사용 한도(5시간·주간)**를 [상태 표시줄](https://code.claude.com/docs/en/statusline) 명령에만 알려 줍니다. `hooks/claude_office_statusline.py` 를 상태 표시줄로 걸면 그 값을 `~/.claude-office/status/<세션 ID>.json` 에 남기고(사용률·초기화 시각·컨텍스트 창 크기·모델 이름만), 수집기가 읽어 빌딩 아래 「사용 한도」 칸에 계정마다 5시간·주간 막대와 초기화까지 남은 시간을 보여 줍니다. 세션 탭에도 그 세션 계정의 값이 나오고, 컨텍스트 게이지의 창 크기도 짐작 대신 이 값을 씁니다.
+Claude Code 는 구독 계정의 **사용 한도(5시간·주간)**를 [상태 표시줄](https://code.claude.com/docs/en/statusline) 명령에만 알려 줍니다. `hooks/claude_office_statusline.py` 를 상태 표시줄로 걸면 그 값을 `~/.claude-office/status/<세션 ID>.json` 에 남기고(사용률·초기화 시각·컨텍스트 창 크기·모델 이름만), 수집기가 읽어 빌딩 아래에 `사용 ▬ 23% 4h 27m · 주 41%` 한 줄로 보여 줍니다(계정이 여럿이면 `+1`). 누르면 계정마다 5시간·주간 막대, 초기화까지 남은 시간, 설정 폴더, 세션·프로젝트가 나오는 상세 창이 열립니다(Esc 로 닫기). 세션 탭에도 그 세션 계정의 값이 나오고, 컨텍스트 게이지의 창 크기도 짐작 대신 이 값을 씁니다.
 
 ```bash
 /usr/bin/python3 hooks/install_hooks.py --statusline            # 미리 보기

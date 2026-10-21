@@ -1039,34 +1039,63 @@ function untilShort(sec) {   // 칸이 좁아 큰 단위 하나만(자세한 건
   if (sec <= 0) return "곧";
   return sec >= 86400 ? `${Math.floor(sec / 86400)}일 뒤` : sec >= 3600 ? `${Math.floor(sec / 3600)}시간 뒤` : `${Math.max(1, Math.floor(sec / 60))}분 뒤`;
 }
-function renderLimits() {
-  // 상태 표시줄 값은 세션마다 '그 세션의 마지막 응답 때' 값이라, 오래 쉰 세션은 예전(작은) 값을 들고 있다.
-  // 같은 한도 창(같은 초기화 시각) 안에서 사용률은 늘기만 하므로 묶음마다 가장 큰 값을 쓴다
+function shortDur(sec) {   // 4h 29m · 3d 9h · 12m (Orca·Claude Code 와 같은 짧은 꼴)
+  if (sec <= 0) return "곧";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${Math.max(1, m)}m`;
+}
+// 상태 표시줄 값은 세션마다 '그 세션의 마지막 응답 때' 값이라, 오래 쉰 세션은 예전(작은) 값을 들고 있다.
+// 같은 한도 창(같은 초기화 시각) 안에서 사용률은 늘기만 하므로 묶음(컴퓨터 + 주간 초기화 시각 = 계정)마다 가장 큰 값을 쓴다
+function limitGroups() {
   const now = Date.now() / 1000 - skew, groups = new Map();
   const pick = (cur, w) => !w ? cur : !cur || (w.resets || 0) > (cur.resets || 0) || ((w.resets || 0) === (cur.resets || 0) && w.pct > cur.pct) ? w : cur;
   for (const a of state.agents) {
     const l = a.limits; if (!l || (!l.five_hour && !l.seven_day)) continue;
     const key = a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
-    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set(), profiles: new Set() };
+    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set(), profiles: new Set(), n: 0 };
     if (a.profile) g.profiles.add(a.profile);
     g.l = { five_hour: pick(g.l.five_hour, l.five_hour), seven_day: pick(g.l.seven_day, l.seven_day), ts: Math.max(g.l.ts || 0, l.ts || 0) };
-    g.projects.add(a.project); groups.set(key, g);
+    g.projects.add(a.project); g.n++; groups.set(key, g);
   }
   // 초기화가 지나 값이 0 이 된 오래된 묶음(같은 계정의 예전 창)은 새 값이 있으면 뺀다
   let list = [...groups.values()];
   if (list.some(g => g.l.seven_day && g.l.seven_day.resets)) list = list.filter(g => (g.l.seven_day && g.l.seven_day.resets) || now - (g.l.ts || 0) < 3600);
-  const perHost = new Map(); for (const g of list) perHost.set(g.host, (perHost.get(g.host) || 0) + 1);
-  const row = (label, w) => {
-    if (!w) return "";
-    const p = Math.round(w.pct), lv = p >= 85 ? "hi" : p >= 65 ? "mid" : "lo";
-    return `<div class="lr" data-lv="${lv}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, p)}%"></i></span><em>${p}%</em>
-<span class="rs" title="${w.resets ? untilText(w.resets - now) : ""}">${w.resets ? untilShort(w.resets - now) : ""}</span></div>`;
-  };
-  const html = list.map((g, i) => `<div class="acct"><h4><i class="fa-solid fa-gauge-high"></i>사용 한도<small title="${esc([...g.projects].join(", "))}">${esc(g.host)}${perHost.get(g.host) > 1 ? ` · ${esc(g.profiles.size ? [...g.profiles].join("·") : [...g.projects][0] + " 외")}` : ""}</small></h4>
-    ${row("5시간", g.l.five_hour)}${row("주간", g.l.seven_day)}</div>`).join("");
-  $("limits").hidden = !html;
-  setHTML($("limits"), html);
+  // 5시간 값이 있는(지금 쓰는) 계정, 그다음 최근에 받은 계정이 앞
+  return list.sort((x, y) => (!!y.l.five_hour - !!x.l.five_hour) || (y.l.ts || 0) - (x.l.ts || 0));
 }
+const limLv = p => p >= 85 ? "hi" : p >= 65 ? "mid" : "lo";
+const limName = g => `${g.host}${g.profiles.size ? " · " + [...g.profiles].join("·") : ""}`;
+// 빌딩 아래 한 줄: 사용 ▬ 21% 4h 29m · 주 40% (+1). 칸이 좁아 주간 초기화는 상세에서. 누르면 계정별 상세
+function renderLimits() {
+  const now = Date.now() / 1000 - skew, list = limitGroups();
+  $("limits").hidden = !list.length;
+  if (!list.length) { setHTML($("limits"), ""); return; }
+  const g = list[0], f = g.l.five_hour, w = g.l.seven_day, main = f || w;
+  const seg = x => x ? `<b class="lv-${limLv(x.pct)}">${Math.round(x.pct)}%</b>${x.resets ? ` <span>${shortDur(x.resets - now)}</span>` : ""}` : "";
+  setHTML($("limits"), `<button class="lim-line" id="limOpen" title="${esc(limName(g))} — 눌러서 계정별 상세">
+    <span class="lim-lab">사용</span><span class="lt" data-lv="${limLv(main.pct)}"><i style="width:${Math.min(100, Math.round(main.pct))}%"></i></span>
+    <span class="vals">${f ? seg(f) : ""}${f && w ? " · " : ""}${w ? (f ? `<span>주</span> <b class="lv-${limLv(w.pct)}">${Math.round(w.pct)}%</b>` : `주간 ${seg(w)}`) : ""}</span>${list.length > 1 ? `<em>+${list.length - 1}</em>` : ""}</button>`);
+  if (!$("limModal").hidden) renderLimitModal();
+}
+function renderLimitModal() {
+  const now = Date.now() / 1000 - skew, list = limitGroups();
+  const bar = (label, x) => x ? `<div class="lm-row" data-lv="${limLv(x.pct)}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, Math.round(x.pct))}%"></i></span>
+    <em>${Math.round(x.pct)}%</em><small>${x.resets ? `${shortDur(x.resets - now)} 뒤 초기화` : "초기화 시각 모름"}</small></div>` : `<div class="lm-row na"><b>${label}</b><small>값 없음(이 계정 세션이 아직 응답을 못 받음)</small></div>`;
+  setHTML($("limList"), list.map(g => `<li><div class="lm-h"><i class="fa-solid fa-gauge-high"></i><b>${esc(limName(g))}</b>
+      <small>${g.l.five_hour && g.l.five_hour.resets ? `5시간 창 ${shortDur(g.l.five_hour.resets - now)} 뒤 초기화` : ""}</small></div>
+      ${bar("5시간", g.l.five_hour)}${bar("주간", g.l.seven_day)}
+      <p class="lm-f">세션 ${g.n}개 · ${esc([...g.projects].slice(0, 6).join(", "))}${g.projects.size > 6 ? " 외" : ""} · 마지막 값 ${agoSpan(g.l.ts, " 전")}</p></li>`).join("")
+    || `<li class="muted">아직 받은 값이 없습니다.</li>`);
+  tickTimes($("limList"), now);
+}
+function setLimitModal(on) {
+  $("limModal").hidden = !on;
+  if (on) renderLimitModal();
+}
+document.addEventListener("click", e => {
+  if (e.target.closest("#limOpen")) { setLimitModal(true); return; }
+  if (e.target === $("limModal") || e.target.closest("#limModal .x")) setLimitModal(false);
+});
 
 const MAX_WINDOWS = 8;
 function renderFloors(fl) {
@@ -1855,7 +1884,7 @@ document.addEventListener("keydown", e => {
   if (!state) return;
   const k = e.key;
   if (k === "?") { toggleKeys(); }
-  else if (k === "Escape") { if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
+  else if (k === "Escape") { if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
   else if (k === "ArrowUp") stepFloor(1);
   else if (k === "ArrowDown") stepFloor(-1);
   else if (/^[1-9]$/.test(k)) { const f = floors().find(x => x.n === +k); if (f) jumpFloor(f.project); }

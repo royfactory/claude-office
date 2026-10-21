@@ -117,18 +117,36 @@
   .lobby .doors { width: 56px; height: 26px; border: 2px solid #475569; border-bottom: 0; background: linear-gradient(90deg, #7dd3fc33 49%, #475569 49%, #475569 51%, #7dd3fc33 51%); }
   .lobby small { color: var(--text-dim2); font-size: 10px; letter-spacing: .12em; }
   #lobbyHosts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
-  /* 사용 한도(상태 표시줄을 건 컴퓨터만): 계정마다 5시간·주간 막대 */
-  .limits { flex: none; margin-top: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11px; }
+  /* 사용 한도(상태 표시줄을 건 컴퓨터만): 빌딩 아래 한 줄, 누르면 계정별 상세 모달 */
+  .limits { flex: none; margin-top: 8px; }
   .limits[hidden] { display: none; }
-  .limits h4 { margin: 0 0 3px; font-size: 11px; color: var(--text-dim); display: flex; gap: 6px; align-items: center; }
-  .limits h4 small { margin-left: auto; color: var(--text-dim2); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
-  .limits .acct + .acct { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
-  .limits .lr { display: grid; grid-template-columns: 30px 1fr 30px 44px; gap: 6px; align-items: center; margin: 2px 0; }
-  .limits .lr b { color: var(--text-dim); font-weight: 600; } .limits .lr em { font-style: normal; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; }
-  .limits .lt { height: 6px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--border); overflow: hidden; }
-  .limits .lt i { display: block; height: 100%; background: var(--good); }
-  .limits .lr[data-lv=mid] .lt i { background: var(--warning); } .limits .lr[data-lv=hi] .lt i { background: var(--bad); }
-  .limits .rs { color: var(--text-dim2); font-size: 10px; text-align: right; white-space: nowrap; }
+  .lim-line { width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; font-size: 11.5px;
+              background: var(--surface); border: 1px solid var(--border); color: var(--text); white-space: nowrap; overflow: hidden; }
+  .lim-line:hover { background: var(--surface-2); border-color: var(--border-2); }
+  .lim-line .lim-lab { color: var(--text-dim); font-weight: 600; }
+  .lim-line .lt { flex: none; width: 26px; }
+  .lim-line .vals { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .lim-line .vals b { font-weight: 700; color: var(--text-hi); } .lim-line .vals span { color: var(--text-dim); }
+  .lim-line em { margin-left: auto; font-style: normal; font-size: 10px; color: var(--text-dim2); padding: 0 5px; border: 1px solid var(--border-2); border-radius: 999px; }
+  .lt { display: block; height: 6px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--border); overflow: hidden; }
+  .lt i { display: block; height: 100%; background: var(--good); }
+  [data-lv=mid] > .lt i, .lt[data-lv=mid] i { background: var(--warning); } [data-lv=hi] > .lt i, .lt[data-lv=hi] i { background: var(--bad); }
+  .vals b.lv-mid { color: var(--warning) !important; } .vals b.lv-hi { color: var(--bad) !important; }
+  #limModal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(2,6,23,.6); }
+  #limModal[hidden] { display: none; }
+  #limModal .box { width: min(440px, calc(100% - 32px)); max-height: 80vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border-2);
+                   border-radius: 14px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  #limModal h3 { margin: 0 0 10px; font-size: 14px; color: var(--text-hi); display: flex; align-items: center; gap: 8px; }
+  #limModal h3 .x { margin-left: auto; padding: 2px 8px; }
+  #limList > li { padding: 10px 0; border-top: 1px solid var(--border); } #limList > li:first-child { border-top: 0; padding-top: 2px; }
+  .lm-h { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; } .lm-h b { color: var(--text-hi); font-size: 13px; }
+  .lm-h i { color: var(--text-dim); } .lm-h small { margin-left: auto; color: var(--text-dim2); font-size: 11px; }
+  .lm-row { display: grid; grid-template-columns: 40px 1fr 38px 104px; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; }
+  .lm-row b { color: var(--text-dim); font-weight: 600; } .lm-row em { font-style: normal; text-align: right; color: var(--text-hi); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .lm-row small { color: var(--text-dim2); font-size: 11px; text-align: right; } .lm-row.na { grid-template-columns: 40px 1fr; }
+  .lm-row[data-lv=mid] em { color: var(--warning); } .lm-row[data-lv=hi] em { color: var(--bad); }
+  .lm-f { margin: 6px 0 0; color: var(--text-dim2); font-size: 11px; line-height: 1.5; }
+  .lm-note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-dim2); font-size: 11px; line-height: 1.55; }
   /* 로비는 빌딩 안 지상·지하 사이에 있다. 그 아래 지하 층: 창 없는 콘크리트, 번호판은 회색 */
   #floors .lobby { border-left: 0; border-right: 0; }
   #floors .street { margin: 0; border-radius: 0; height: 5px; }
@@ -534,6 +552,10 @@
       </div>
     </section>
   </main>
+  <!-- 사용 한도 상세: 빌딩 아래 한 줄을 누르면 -->
+  <div id="limModal" hidden role="dialog" aria-label="사용 한도"><div class="box"><h3><i class="fa-solid fa-gauge-high"></i> 사용 한도<button class="x" title="닫기">Esc</button></h3>
+    <ol id="limList"></ol>
+    <p class="lm-note">Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 컴퓨터와 주간 초기화 시각으로 묶고, 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의 세션만 보입니다(「안내」 탭 6번).</p></div></div>
 
   <aside class="right">
     <nav class="tabs" role="tablist" aria-label="오른쪽 패널">
