@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import signal
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -75,6 +76,7 @@ MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE = 4000
 OUTBOX_TTL_SEC = 60
 WAIT_MAX_SEC = 25   # /api/outbox/wait 롱폴링 최대 대기
+GRACEFUL_SEC = 3    # 종료 때 열린 연결(SSE·롱폴링)을 기다리는 최대 시간
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
@@ -236,6 +238,7 @@ class Hub:
         self.changed = asyncio.Condition()
         self.outbox: list[dict] = []   # 대시보드 → 세션 메시지(최근 것만, 메모리에만)
         self.queued = asyncio.Condition()   # 새 메시지가 큐에 들어오면 롱폴링 중인 수집기를 깨운다
+        self.closing = False   # 종료 신호를 받았다 — 열린 SSE·롱폴링을 바로 끝낸다
 
     @staticmethod
     def online(h: dict, now: float) -> bool:
@@ -260,6 +263,13 @@ class Hub:
         return {"version": self.version, "now": now, "hosts": hosts, "agents": agents,
                 "config": self.config, "messaging": {"ready": self.messaging_ready(), "auth": bool(TOKEN)},
                 "messages": msgs}
+
+    async def close(self) -> None:
+        """종료가 시작되면 기다리는 SSE·롱폴링을 모두 깨워 바로 끝나게 한다."""
+        self.closing = True
+        for cond in (self.changed, self.queued):
+            async with cond:
+                cond.notify_all()
 
     async def bump(self) -> None:
         async with self.changed:
@@ -297,10 +307,36 @@ async def _expire_loop() -> None:
             await hub.bump()
 
 
+def _hook_exit_signals(loop: asyncio.AbstractEventLoop) -> list:
+    """uvicorn 이 SIGTERM·SIGINT 로 종료를 시작할 때 hub.close() 도 부르게 처리기를 이어 단다.
+
+    uvicorn 은 열린 연결이 다 끝난 뒤에야 lifespan 종료를 부르므로, 그때 깨우면 늦다(대시보드 SSE 가 열려 있으면
+    끝나지 않는다). 그래서 신호 처리기 단계에서 깨운다. 앞선 처리기(uvicorn 의 handle_exit)는 그대로 부른다.
+    main 스레드가 아니거나(테스트) 앞선 처리기가 없으면 건드리지 않는다. 걸어 둔 신호 목록을 돌려준다."""
+    hooked = []
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):   # SIGBREAK 는 Windows
+        sig = getattr(signal, name, None)
+        prev = signal.getsignal(sig) if sig is not None else None
+        if not callable(prev):
+            continue
+
+        def handler(signum, frame, prev=prev):
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(hub.close()))
+            prev(signum, frame)
+        try:
+            signal.signal(sig, handler)
+        except ValueError:   # main 스레드가 아니면 신호 처리기를 바꿀 수 없다
+            continue
+        hooked.append(name)
+    return hooked
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     task = asyncio.create_task(_expire_loop())
+    _hook_exit_signals(asyncio.get_running_loop())   # uvicorn 은 serve 를 마치면 자기 처리기 이전 것으로 되돌린다
     yield
+    await hub.close()
     task.cancel()
 
 
@@ -367,7 +403,7 @@ async def state() -> dict:
 async def stream(request: Request) -> StreamingResponse:
     async def gen():
         seen = -1
-        while not await request.is_disconnected():
+        while not hub.closing and not await request.is_disconnected():
             if hub.version != seen:
                 seen = hub.version
                 yield f"data: {json.dumps(hub.snapshot(), ensure_ascii=False)}\n\n"
@@ -469,7 +505,7 @@ async def outbox_wait(p: Wait, request: Request) -> dict:
     while True:
         async with hub.queued:
             left = deadline - time.monotonic()
-            if not _has_queued(p.host) and left > 0:
+            if not _has_queued(p.host) and left > 0 and not hub.closing:
                 try:   # 5초마다 깨어 수집기가 끊었는지 본다
                     await asyncio.wait_for(hub.queued.wait(), timeout=min(left, 5))
                 except asyncio.TimeoutError:
@@ -479,7 +515,7 @@ async def outbox_wait(p: Wait, request: Request) -> dict:
             return {"messages": []}
         if _has_queued(p.host):
             return await _claim(p.host)
-        if deadline - time.monotonic() <= 0:
+        if deadline - time.monotonic() <= 0 or hub.closing:   # 허브가 끝나는 중이면 빈 응답으로 바로 돌려보낸다
             return {"messages": []}
 
 
@@ -610,4 +646,5 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=int(os.environ.get("OFFICE_PORT") or 3006))
     ap.add_argument("--log", help="출력을 이 파일에 이어 쓴다(1MB 넘으면 시작할 때 비움, 맨 위 _early_log 가 처리)")
     args = ap.parse_args()
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    # 열린 SSE·롱폴링 연결을 GRACEFUL_SEC 만 기다리고 끝낸다(Dockerfile CMD 의 --timeout-graceful-shutdown 과 같은 값)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning", timeout_graceful_shutdown=GRACEFUL_SEC)

@@ -1,6 +1,7 @@
 """hub/app.py 테스트(FastAPI TestClient). 허브 의존성(hub/requirements.txt)과 httpx 가 있어야 돈다."""
 import asyncio
 import json
+import signal
 import socket
 import threading
 import time
@@ -677,3 +678,91 @@ def test_expire_loop_keeps_bye_host_offline(authed):
     assert mod.Hub.online(h, time.time()) is False
     assert mod.Hub.online({"receivedAt": time.time()}, time.time()) is True
     assert mod.Hub.online({"receivedAt": time.time() - mod.HOST_STALE_SEC - 1}, time.time()) is False
+
+
+# ---------- 정상 종료: 열린 SSE·롱폴링이 종료를 막지 않는다 ----------
+# uvicorn 은 열린 연결이 다 끝난 뒤에야 lifespan 종료를 부른다. 그래서 종료 신호 단계에서 hub.close() 로 깨운다.
+
+def test_close_ends_open_sse_stream(hub):
+    mod, _ = hub
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=mod.app), base_url="http://hub") as ac:
+            stream = asyncio.create_task(ac.get("/api/stream"))   # ASGITransport 는 응답이 끝나야 돌려준다
+            await asyncio.sleep(0.2)
+            assert not stream.done()
+            await mod.hub.close()
+            return await asyncio.wait_for(stream, 2)
+
+    r = asyncio.run(go())
+    assert r.status_code == 200 and r.text.startswith("data: ")
+
+
+def test_close_ends_pending_wait_and_new_waits(authed):
+    mod, c = authed
+    _ready(c)
+
+    async def go():
+        async with _aclient(mod) as ac:
+            w = asyncio.create_task(ac.post("/api/outbox/wait", json={"host": "mac", "timeout": 20}))
+            await asyncio.sleep(0.2)
+            t0 = time.monotonic()
+            await mod.hub.close()
+            r = await asyncio.wait_for(w, 2)
+            again = await ac.post("/api/outbox/wait", json={"host": "mac", "timeout": 20})
+            return r, again, time.monotonic() - t0
+
+    r, again, took = asyncio.run(go())
+    assert r.json() == {"messages": []} and again.json() == {"messages": []} and took < 1
+
+
+def test_close_still_hands_over_queued_message(authed):
+    """끝나는 중이라도 이미 쌓인 메시지는 그대로 가져가게 한다(응답 형식 유지)."""
+    mod, c = authed
+    _ready(c)
+    c.post("/api/sessions/message", json=MSG, headers=AUTH)
+
+    async def go():
+        await mod.hub.close()
+        async with _aclient(mod) as ac:
+            return (await ac.post("/api/outbox/wait", json={"host": "mac", "timeout": 20})).json()
+
+    assert len(asyncio.run(go())["messages"]) == 1
+
+
+def test_lifespan_exit_marks_closing(make_hub):
+    mod, c = make_hub()
+    assert mod.hub.closing is False
+    c.__exit__(None, None, None)
+    assert mod.hub.closing is True
+
+
+def test_exit_signal_hook_wakes_hub_and_calls_previous_handler(hub):
+    mod, _ = hub
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    called = []
+    try:
+        for s in saved:
+            signal.signal(s, lambda signum, frame: called.append(signum))   # uvicorn 의 handle_exit 자리
+
+        async def go():
+            hooked = mod._hook_exit_signals(asyncio.get_running_loop())
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)       # 신호가 온 것처럼 처리기를 부른다
+            await asyncio.sleep(0.05)
+            return hooked
+
+        hooked = asyncio.run(go())
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+    assert {"SIGTERM", "SIGINT"} <= set(hooked)
+    assert called == [signal.SIGTERM] and mod.hub.closing is True
+
+
+def test_exit_signal_hook_skips_off_main_thread(hub):
+    mod, _ = hub
+    out = []
+    th = threading.Thread(target=lambda: out.append(mod._hook_exit_signals(asyncio.new_event_loop())))
+    th.start()
+    th.join(5)
+    assert out == [[]]
