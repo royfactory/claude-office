@@ -758,7 +758,7 @@ def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch)
 
 @pytest.mark.xfail(strict=False, reason="T2 검토(낮음): wait 가 바로 빈 응답을 돌려주는 허브·프록시를 만나면 pause=0 이라 "
                    "쉬지 않고 다시 걸어 CPU·허브를 두드린다. 롱폴링이 너무 빨리 끝나면 최소 간격을 두는 방어가 없다"
-                   "(collector/collector.py:593)")
+                   "(collector/collector.py:592)")
 def test_outbox_loop_does_not_spin_on_instant_empty_replies(collector, monkeypatch):
     calls, clock = run_loop(collector, monkeypatch, [], 20)
     assert sum(clock.sleeps) >= 1.0                          # 빈 응답 20번이면 적어도 1초는 쉬어야 한다
@@ -894,7 +894,7 @@ def test_main_on_nt_does_not_start_outbox_thread(collector, monkeypatch, main_en
 
 @pytest.mark.xfail(strict=False, reason="T2 검토(낮음): 메시지 스레드가 첫 collect() 전에 시작해 소켓 표가 비어 있다. "
                    "수집기가 비정상 종료 뒤 다시 뜨면(bye 없음, 허브엔 아직 온라인) 그 사이 쌓인 메시지를 첫 wait 가 곧바로 "
-                   "가져가 '수신함을 찾지 못했다' 로 실패시킨다(collector/collector.py:660)")
+                   "가져가 '수신함을 찾지 못했다' 로 실패시킨다(collector/collector.py:661)")
 def test_main_collects_once_before_outbox_thread(collector, monkeypatch, main_env):
     monkeypatch.setattr(collector, "MESSAGES", True)
     monkeypatch.setattr(collector, "WINDOWS", False)
