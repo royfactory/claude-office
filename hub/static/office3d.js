@@ -11,6 +11,11 @@ const COL = { A: [-17, -7.75], B: [-5.75, 2.75], C: [5, 17] };
 const ROW = { back: [-12, -4], mid: [-2, 5], front: [7, 12] };
 const CORR = { back: -3, mid: -3, front: 6 };
 const VX = [-6.75, 3.875];
+// 방 아이콘(Font Awesome Free solid). 3D 간판은 캔버스에 그려서 글리프 코드를 직접 쓴다
+const ROOM_ICON = { library: "book", dev: "laptop-code", server: "server", search: "globe", meeting: "people-group", mydesk: "user", lounge: "mug-hot" };
+const ROOM_GLYPH = { library: "\uf02d", dev: "\uf5fc", server: "\uf233", search: "\uf0ac", meeting: "\ue533", mydesk: "\uf007", lounge: "\uf7b6" };
+const FA_FONT = `"Font Awesome 7 Free"`;
+const toolIcon = tool => (cfg && ROOM_ICON[roomForTool(cfg, tool)]) || "wrench";
 const EN = { library: "LIBRARY", dev: "DEV", server: "SERVER", search: "SEARCH", meeting: "MEETING", mydesk: "MY DESK", lounge: "LOUNGE" };
 const LAYOUT = {
   library: { col: "A", row: "back", floor: 0xeadfca },
@@ -120,7 +125,7 @@ function desk(x, z) {
 // ---------- 글자 텍스처 ----------
 const FONT = `-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif`;
 const EMOJI_FONT = `"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-function signTexture(emoji, name, en) {
+function signTexture(glyph, name, en) {
   // 글자 길이에 맞춰 캔버스 폭을 정한다(간판 판의 가로세로 비율도 이걸 따른다)
   const c = document.createElement("canvas"), g = c.getContext("2d");
   g.font = `700 54px ${FONT}`; const wn = g.measureText(name).width;
@@ -128,7 +133,7 @@ function signTexture(emoji, name, en) {
   c.width = Math.ceil(112 + wn + 16 + we + 28); c.height = 104;
   g.fillStyle = "rgba(255,255,255,0.55)"; roundRect(g, 2, 2, c.width - 4, 100, 22); g.fill();  // 바탕만 반투명, 글자는 진하게
   g.textBaseline = "middle";
-  g.font = `60px ${EMOJI_FONT}`; g.fillText(emoji || "", 24, 56);
+  g.fillStyle = "#334155"; g.font = `900 50px ${FA_FONT}`; g.textAlign = "center"; g.fillText(glyph || "", 58, 56); g.textAlign = "left";
   g.fillStyle = "#1f2937"; g.font = `700 54px ${FONT}`; g.fillText(name, 104, 55);
   g.fillStyle = "#475569"; g.font = `600 34px ${FONT}`; g.fillText("· " + en, 104 + wn + 16, 57);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
@@ -523,7 +528,7 @@ function savePlay() { try { localStorage.setItem("office.play", playing ? "1" : 
 function setPlaying(on) {
   playing = on; rotateAt = Date.now(); lastInput = 0; pausedNow = false; savePlay();
   $("progress").parentElement.classList.remove("paused");
-  $("play").textContent = on ? "■ 정지" : "▶ 재생";
+  $("play").innerHTML = on ? '<i class="fa-solid fa-stop"></i> 정지' : '<i class="fa-solid fa-play"></i> 재생';
   $("play").classList.toggle("on", on);
   $("playHint").textContent = on ? "근무 중인 층을 돌아가며 보는 중" : "근무 중인 층 순회";
   $("progress").style.width = "0%";
@@ -540,8 +545,8 @@ function rotateTick() {
     rotateAt += dt;   // 멈춘 동안 흐른 시간만큼 미뤄 남은 시간을 그대로 둔다
     const ta = $("composeText");
     const left = Math.ceil((IDLE_RESUME_MS - (nowMs - lastInput)) / 1000);
-    $("playHint").textContent = document.activeElement === ta || (ta && ta.value.trim())
-      ? "⏸ 메시지를 쓰는 중이라 멈춤" : `⏸ 사용 중이라 잠깐 멈춤 · ${Math.max(1, left)}초 뒤 이어서`;
+    $("playHint").innerHTML = '<i class="fa-solid fa-circle-pause"></i>' + (document.activeElement === ta || (ta && ta.value.trim())
+      ? "메시지를 쓰는 중이라 멈춤" : `사용 중이라 잠깐 멈춤 · ${Math.max(1, left)}초 뒤 이어서`);
   } else if (pausedNow) {
     $("playHint").textContent = "근무 중인 층을 돌아가며 보는 중";
   }
@@ -572,9 +577,13 @@ function travelTo(project) {
   const from = (floors().find(x => x.project === floorKey) || {}).n;
   transit = { target: project, n: f.n, from, phase: "walk", t: performance.now() };
   me.actor.path = route("mydesk", "elevator", ELEV.inside);
-  mePill(`🛗 ${f.n}F로 가는 중`);
+  mePill(`${f.n}F로 가는 중`);
 }
-function mePill(text) { const p = me.actor.lab.querySelector(".pill"); p.textContent = text; p.dataset.st = text ? "trip" : ""; me.actor.lab._dirty = true; }
+function mePill(text) {
+  const p = me.actor.lab.querySelector(".pill");
+  p.innerHTML = text ? `<i class="fa-solid fa-elevator"></i>${esc(text)}` : "";
+  p.dataset.st = text ? "trip" : ""; me.actor.lab._dirty = true;
+}
 function stepTransit(t) {
   const m = me.actor, tr = transit;
   if (tr.phase === "walk") {
@@ -595,7 +604,9 @@ function stepTransit(t) {
     if (cur !== tr.shown) {
       tr.shown = cur;
       const arrow = tr.n > from ? "▲" : tr.n < from ? "▼" : "■";
-      $("ride").innerHTML = `🛗 <i>${arrow}</i> <b>${cur}F</b>` + (cur === tr.n ? ` <span>${esc(tr.target)}</span>` : ` <span>→ ${tr.n}F</span>`);
+      const icon = tr.n > from ? "fa-arrow-up" : tr.n < from ? "fa-arrow-down" : "fa-elevator";
+      $("ride").innerHTML = `<i class="fa-solid fa-elevator"></i> <i class="fa-solid ${icon}"></i> <b>${cur}F</b>` +
+        (cur === tr.n ? ` <span>${esc(tr.target)}</span>` : ` <span><i class="fa-solid fa-arrow-right"></i> ${tr.n}F</span>`);
       setElevSign(`${arrow}${cur}`, floorHue(cur));
     }
     if (p >= 1 && t - tr.t > tr.dur + 350) {
@@ -678,9 +689,9 @@ function gotoFloor(p) {
   apply(true);
 }
 
-function log(project, who, text, ts) {
+function log(project, who, text, ts, icon) {
   const l = logs.get(project) || [];
-  l.unshift({ ts: ts || Date.now() / 1000 - skew, who, text });
+  l.unshift({ ts: ts || Date.now() / 1000 - skew, who, text, icon });
   if (l.length > 60) l.length = 60;
   logs.set(project, l);
 }
@@ -693,14 +704,14 @@ function trackLogs(first) {
       const t = it.x.tool ? `${it.x.tool}${it.x.target ? " · " + it.x.target : ""}` : "";
       const was = prevTool.get(it.key);
       if (first) {
-        if (!it.sub) (it.x.recent || []).slice().reverse().forEach(r => log(a.project, it.who, `${r.tool}${r.target ? " · " + r.target : ""}`, r.ts));
-      } else if (was === undefined && it.sub) log(a.project, it.who, "🛗 출근");
-      else if (t && t !== was) log(a.project, it.who, t);
+        if (!it.sub) (it.x.recent || []).slice().reverse().forEach(r => log(a.project, it.who, `${r.tool}${r.target ? " · " + r.target : ""}`, r.ts, toolIcon(r.tool)));
+      } else if (was === undefined && it.sub) log(a.project, it.who, "출근", undefined, "elevator");
+      else if (t && t !== was) log(a.project, it.who, t, undefined, toolIcon(it.x.tool));
       prevTool.set(it.key, t);
     }
   }
   for (const k of [...prevTool.keys()]) if (!seen.has(k)) {
-    if (k.includes("/")) { const p = (state.agents.find(a => k.startsWith(a.id + "/")) || {}).project; if (p) log(p, "서브에이전트", "🛗 퇴근"); }
+    if (k.includes("/")) { const p = (state.agents.find(a => k.startsWith(a.id + "/")) || {}).project; if (p) log(p, "서브에이전트", "퇴근", undefined, "elevator"); }
     prevTool.delete(k);
   }
 }
@@ -772,7 +783,7 @@ function updateSigns() {
   updateSigns.sig = sig;
   for (const r of cfg.rooms) if (signs[r.id]) {
     const old = signs[r.id].material.map;
-    const t = signTexture(r.emoji, r.name, EN[r.id] || "");
+    const t = signTexture(ROOM_GLYPH[r.id], r.name, EN[r.id] || "");
     signs[r.id].material.map = t;
     signs[r.id].material.needsUpdate = true;
     signs[r.id].scale.set(1.2 * t.userData.aspect, 1.2, 1);
@@ -796,14 +807,14 @@ function updateMe() {
 
 // ---------- 화면 글자 ----------
 function stateHTML(a, st, now) {
-  if (st === "stalled") return `<i>🤔</i>턱 괴고 고민 중 <small>${ago(now - a.lastActivity)}</small>`;
+  if (st === "stalled") return `<i class="fa-solid fa-hourglass-half"></i>턱 괴고 고민 중 <small>${ago(now - a.lastActivity)}</small>`;
   if (st === "working") {
-    if (a.kind === "shell") return `<i>⌨️</i>셸 명령`;
-    const long = a.since && now - a.since > 120 ? ` <small>⏳${ago(now - a.since)}</small>` : "";
-    return `<i>🔧</i><code>${esc(a.tool)}</code>${a.target ? `<span class="tg">${esc(a.target)}</span>` : ""}${long}`;
+    if (a.kind === "shell") return `<i class="fa-solid fa-terminal"></i>셸 명령`;
+    const long = a.since && now - a.since > 120 ? ` <small><i class="fa-solid fa-clock"></i> ${ago(now - a.since)}</small>` : "";
+    return `<i class="fa-solid fa-${toolIcon(a.tool)}"></i><code>${esc(a.tool)}</code>${a.target ? `<span class="tg">${esc(a.target)}</span>` : ""}${long}`;
   }
-  if (st === "thinking") return `<i>💭</i>고민 중 <small>${ago(now - (a.since || now))}째</small>`;
-  return now - (a.since || now) > 600 ? `<i>💤</i>휴식 <small>${ago(now - a.since)}</small>` : `<i>☕</i>휴식 <small>${ago(now - (a.since || now))}</small>`;
+  if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${ago(now - (a.since || now))}째</small>`;
+  return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${ago(now - a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${ago(now - (a.since || now))}</small>`;
 }
 const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", idle: "#94a3b8" };
 function renderLabels() {
@@ -960,11 +971,19 @@ function updateCompose(a, now) {
   else if (!a.canMessage) note = "이 세션의 컴퓨터 수집기가 메시지를 받지 않습니다(그 컴퓨터 .env 의 CLAUDE_OFFICE_MESSAGES=on, Windows 는 아직 미지원).";
   else if (a.mode === "bypassPermissions") { can = true; warn = true; note = "이 세션은 권한 확인을 건너뛰는 모드라, 메시지가 그 터미널에서 승인을 기다립니다(5분 안에 승인하지 않으면 버려짐)."; }
   else { can = true; note = "받는 Claude 는 '다른 세션이 보낸 메시지'로 받습니다. 권한 승인이나 설정 변경은 메시지로 할 수 없습니다."; }
-  const np = $("composeNote"); np.textContent = note; np.classList.toggle("warn", warn);
+  const help = $("composeHelp");
+  help.dataset.tip = note;
+  help.classList.toggle("warn", can && warn);
+  help.classList.toggle("off", !can);
   $("composeText").disabled = !can; $("composeSend").disabled = !can;
+  $("composeText").placeholder = can ? "Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)" : "보낼 수 없음 · [?] 참고";
   const mine = (state.messages || []).filter(x => x.session === a.id).slice(-4).reverse();
   $("composeLog").innerHTML = mine.map(x => `<li title="${esc(x.error || "")}"><span class="s ${x.status}">${MSG_LABEL[x.status] || x.status}</span><span class="p">${esc(x.error && x.status !== "sent" ? x.error : x.preview)}</span><span class="muted">${ago((now || Date.now() / 1000 - skew) - x.createdAt)} 전</span></li>`).join("");
 }
+$("composeHelp").addEventListener("pointerdown", e => {
+  const h = e.currentTarget;
+  if (document.activeElement === h) { e.preventDefault(); h.blur(); }   // 열려 있으면 닫기
+});
 $("composeText").addEventListener("input", e => { $("composeCount").textContent = `${e.target.value.length} / 4000`; });
 $("composeText").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendCompose(); } });
 $("composeSend").onclick = () => sendCompose();
@@ -986,7 +1005,7 @@ async function sendCompose() {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert("보내지 못했습니다: " + (j.detail || r.statusText)); return; }
     $("composeText").value = ""; $("composeCount").textContent = "0 / 4000";
-    log(a.project, `나 → ${a.title || a.name}`, `💬 ${text.slice(0, 60)}`);
+    log(a.project, `나 → ${a.title || a.name}`, text.slice(0, 60), undefined, "comment");
     return;
   }
 }
@@ -994,14 +1013,14 @@ async function sendCompose() {
 function renderLog(floor) {
   const now = Date.now() / 1000 - skew;
   const l = floor ? (logs.get(floor.project) || []) : [];
-  $("log").innerHTML = l.slice(0, 30).map(x => `<li><span class="a">${ago(now - x.ts)} 전</span><span class="w">${esc(x.who)}</span><span class="x">${esc(x.text)}</span></li>`).join("") || `<li class="muted">아직 기록이 없습니다.</li>`;
+  $("log").innerHTML = l.slice(0, 30).map(x => `<li><span class="a">${ago(now - x.ts)} 전</span><span class="w">${esc(x.who)}</span><span class="x">${x.icon ? `<i class="fa-solid fa-${x.icon}"></i> ` : ""}${esc(x.text)}</span></li>`).join("") || `<li class="muted">아직 기록이 없습니다.</li>`;
 }
 function renderLegend() {
   const sig = JSON.stringify(cfg.rooms);
   if (renderLegend.sig === sig) return;
   renderLegend.sig = sig;
-  $("legend").innerHTML = cfg.rooms.map(r => `<li><span class="emo">${esc(r.emoji)}</span><b>${esc(r.name)}</b><span>${esc(r.desc || "")}</span></li>`).join("") +
-    `<li><span class="emo">🛗</span><b>엘리베이터</b><span>서브에이전트 출퇴근</span></li>`;
+  $("legend").innerHTML = cfg.rooms.map(r => `<li><i class="fa-solid fa-${ROOM_ICON[r.id]}"></i><b>${esc(r.name)}</b><span>${esc(r.desc || "")}</span></li>`).join("") +
+    `<li><i class="fa-solid fa-elevator"></i><b>엘리베이터</b><span>서브에이전트 출퇴근</span></li>`;
 }
 
 // 이름표·말풍선이 겹치면 뒤에 선 사람(화면 위쪽) 것을 위로 비켜 올린다. 크기는 글이 바뀔 때만 잰다.
@@ -1069,6 +1088,8 @@ function frame(t) {
 }
 
 // ---------- 시작 ----------
+// 웹폰트가 늦게 오면 간판을 다시 그린다(캔버스는 폰트가 준비된 뒤에만 아이콘 글리프를 그린다)
+document.fonts.load(`900 50px ${FA_FONT}`).then(() => { updateSigns.sig = null; if (cfg) updateSigns(); }).catch(() => {});
 buildOffice();
 new ResizeObserver(resize).observe(stage);
 resize();

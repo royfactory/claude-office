@@ -204,3 +204,4 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 ## 라이선스
 
 three.js(MIT)를 `hub/static/vendor/` 에 포함합니다 — [LICENSE-three.js.txt](hub/static/vendor/LICENSE-three.js.txt).
+Font Awesome Free 7.3.1(solid 아이콘·웹폰트, 아이콘 CC BY 4.0 · 폰트 SIL OFL 1.1 · 코드 MIT)을 `hub/static/vendor/fontawesome/` 에 포함합니다 — [LICENSE.txt](hub/static/vendor/fontawesome/LICENSE.txt).

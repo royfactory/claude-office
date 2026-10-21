@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude 사무실</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🏢%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/vendor/fontawesome/css/fontawesome.min.css">
+<link rel="stylesheet" href="/static/vendor/fontawesome/css/solid.min.css">
 <link rel="stylesheet" href="/static/theme.css">
 <style>
   html, body { height: 100%; overflow: hidden; }
@@ -19,6 +21,7 @@
                  color: var(--text-dim); display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
   .tabs button:hover { background: var(--surface-2); color: var(--text-hi); }
   .tabs button.on { background: var(--surface-3); color: var(--text-hi); box-shadow: inset 0 -2px 0 var(--brand); }
+  .tabs button i { font-size: 11px; opacity: .8; }
   .tabs em { font-style: normal; font-weight: 700; font-size: 10px; color: var(--text-dim2); }
   .tabs button.on em { color: var(--brand-light); }
   .tabs em.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
@@ -44,7 +47,8 @@
   /* 빌딩 */
   aside.left { display: flex; flex-direction: column; gap: 10px; }
   .player { display: flex; align-items: center; gap: 8px; }
-  .player button { padding: 5px 12px; font-weight: 700; }
+  .player button { padding: 5px 12px; font-weight: 700; white-space: nowrap; }
+  .player .ph2 i { margin-right: 3px; }
   .player button.on { background: var(--brand-dark); border-color: var(--brand); color: #04120d; }
   .player select { padding: 4px 6px; font-size: 12px; }
   .player .ph2 { font-size: 11px; color: var(--text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -126,7 +130,7 @@
   /* 상태 배지: 지금 하는 일. 상태마다 색이 다르고, 도구 이름은 고정폭 */
   .lab .pill { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 11px; font-weight: 600;
                padding: 2px 9px 2px 6px; border-radius: 6px; border: 1px solid; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
-  .lab .pill i { font-style: normal; }
+  .lab .pill i { font-style: normal; font-size: 10px; opacity: .85; }
   .lab .pill small { font-weight: 500; opacity: .75; }
   .lab .pill code { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 4px; border-radius: 3px; background: rgba(255,255,255,.65); }
   .lab .pill .tg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
@@ -154,6 +158,7 @@
           box-shadow: 0 0 18px rgba(251,191,36,.35); white-space: nowrap; }
   #ride.on { opacity: 1; transform: translate(-50%, 0); }
   #ride { z-index: 6; font-variant-numeric: tabular-nums; } #ride i { font-style: normal; color: #fbbf24; }
+  #ride > i { color: #fbbf24; margin-right: 2px; }
   #ride b { color: #fbbf24; display: inline-block; min-width: 2.4em; text-align: center; } #ride span { color: #cbd5e1; font-size: 13px; margin-left: 4px; }
   #floorBadge small { color: #64748b; }
   .topr { top: 14px; right: 14px; display: flex; gap: 8px; }
@@ -199,8 +204,20 @@
                       border: 1px solid var(--border-2); border-radius: 8px; padding: 8px; font: 13px/1.45 var(--font); }
   #compose textarea:disabled { opacity: .5; }
   #compose .crow { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-  #compose p.muted { margin: 0 0 8px; line-height: 1.45; }
-  #compose p.warn { color: var(--warning); }
+  /* [?] 도움말: 올리거나(포커스) 누르면 안내 말풍선. 색으로 상태를 미리 알린다(주황 = 승인 필요, 빨강 = 보낼 수 없음) */
+  #compose h3 { position: relative; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .help { position: static; display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
+          font-size: 11px; font-weight: 800; color: var(--text-dim); border: 1.5px solid var(--border-2); cursor: help; outline: none; }
+  .help.warn { color: var(--warning); border-color: var(--warning); }
+  .help.off { color: var(--bad); border-color: var(--bad); }
+  .help::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 20;
+                 padding: 9px 11px; border-radius: 9px; background: var(--surface-3); border: 1px solid var(--border-2);
+                 color: var(--text-hi); font-size: 12px; font-weight: 500; line-height: 1.5; white-space: normal; text-align: left;
+                 box-shadow: 0 6px 20px rgba(0,0,0,.4); opacity: 0; pointer-events: none; transform: translateY(-3px);
+                 transition: opacity .15s, transform .15s; }
+  .help.warn::after { border-color: var(--warning); }
+  .help.off::after { border-color: var(--bad); }
+  .help:hover::after, .help:focus::after { opacity: 1; transform: none; }
   #composeLog { margin-top: 8px; font-size: 12px; }
   #composeLog li { display: flex; gap: 8px; padding: 3px 0; border-top: 1px solid var(--border); }
   #composeLog .s { flex: none; min-width: 52px; font-weight: 700; }
@@ -213,6 +230,7 @@
   #log li { flex-wrap: wrap; gap: 2px 8px; }
   #log .a { color: var(--text-dim2); font-size: 11px; min-width: 44px; } #log .w { color: var(--text-hi); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #log .x { color: var(--text); flex-basis: 100%; padding-left: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #legend li i, #log li .x i { color: var(--text-dim); width: 16px; text-align: center; }
   #legend li { display: grid; grid-template-columns: 22px 70px 1fr; gap: 4px; font-size: 12px; padding: 3px 0; align-items: center; }
   #legend b { color: var(--text-hi); font-weight: 600; } #legend span:last-child { color: var(--text-dim); }
 
@@ -234,14 +252,14 @@
 <div class="app">
   <aside class="left">
     <div class="player">
-      <button id="play" title="근무 중인 층을 아래층부터 돌아가며 보기">▶ 재생</button>
+      <button id="play" title="근무 중인 층을 아래층부터 돌아가며 보기"><i class="fa-solid fa-play"></i> 재생</button>
       <select id="rotate" title="층을 넘기는 간격"><option value="10">10초</option><option value="20">20초</option><option value="30">30초</option><option value="60">1분</option></select>
       <span class="ph2" id="playHint">근무 중인 층 순회</span>
     </div>
     <div class="bar"><i id="progress"></i></div>
     <div class="bldg">
       <div class="roof"><span class="antenna"></span><span class="sign">CLAUDE OFFICE</span></div>
-      <div class="tower"><div id="floors"></div><div id="car">🛗</div></div>
+      <div class="tower"><div id="floors"></div><div id="car"><i class="fa-solid fa-elevator"></i></div></div>
       <div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts"></span></div>
       <div class="street"></div>
     </div>
@@ -252,8 +270,8 @@
     <div id="labels"></div>
     <div class="ov" id="floorBadge"></div>
     <div class="ov" id="ride"></div>
-    <div class="ov topr"><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin">⚙️ 캐릭터 관리</a></div>
-    <div class="ov zoom"><button id="zin" title="확대">＋</button><button id="zout" title="축소">－</button><button id="zreset" title="원위치">⟲</button></div>
+    <div class="ov topr"><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin"><i class="fa-solid fa-gear"></i> 캐릭터 관리</a></div>
+    <div class="ov zoom"><button id="zin" title="확대"><i class="fa-solid fa-plus"></i></button><button id="zout" title="축소"><i class="fa-solid fa-minus"></i></button><button id="zreset" title="원위치"><i class="fa-solid fa-rotate-left"></i></button></div>
     <div class="ov hint">드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다</div>
     <div class="center-msg" id="empty">수집기에서 아직 소식이 없습니다.<br>메인 맥에서 수집기가 돌고 있는지 확인하세요.</div>
     <div class="center-msg" id="nogl">이 브라우저에서는 3D를 그릴 수 없습니다(WebGL 꺼짐).</div>
@@ -261,10 +279,10 @@
 
   <aside class="right">
     <nav class="tabs" role="tablist" aria-label="오른쪽 패널">
-      <button role="tab" data-tab="people">사람들<em id="tabPeopleN"></em></button>
-      <button role="tab" data-tab="session">세션<em id="tabSessionDot"></em></button>
-      <button role="tab" data-tab="log">활동 로그</button>
-      <button role="tab" data-tab="legend">안내</button>
+      <button role="tab" data-tab="people"><i class="fa-solid fa-users"></i>사람들<em id="tabPeopleN"></em></button>
+      <button role="tab" data-tab="session"><i class="fa-solid fa-id-card"></i>세션<em id="tabSessionDot"></em></button>
+      <button role="tab" data-tab="log"><i class="fa-solid fa-list"></i>로그</button>
+      <button role="tab" data-tab="legend"><i class="fa-solid fa-circle-info"></i>안내</button>
     </nav>
 
     <section class="pane" data-pane="people" role="tabpanel">
@@ -277,8 +295,7 @@
       <div id="detail"></div>
       <!-- 고른 세션에 메시지 보내기. 1초마다 다시 그리는 상세 카드와 따로 둬서 입력 중인 글이 지워지지 않는다 -->
       <section class="card" id="compose" hidden>
-        <h3>💬 이 세션에 메시지<small id="composeTarget"></small></h3>
-        <p class="muted" id="composeNote"></p>
+        <h3><i class="fa-solid fa-comment"></i> Prompt <span class="help" id="composeHelp" tabindex="0" role="button" aria-label="도움말">?</span><small id="composeTarget"></small></h3>
         <textarea id="composeText" rows="3" maxlength="4000" placeholder="Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)"></textarea>
         <div class="crow"><span class="muted" id="composeCount">0 / 4000</span><button class="primary" id="composeSend">보내기</button></div>
         <ol id="composeLog"></ol>
