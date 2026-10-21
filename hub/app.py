@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import sys
@@ -46,7 +47,7 @@ if __name__ == "__main__":
 from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent   # 저장소 루트(도커 안에서는 / 이라 data 가 /data 가 된다)
 
@@ -447,14 +448,24 @@ async def outbox_pull(p: Pull) -> dict:
 
 class Wait(BaseModel):
     host: str = Field(min_length=1, max_length=40)
-    timeout: float = WAIT_MAX_SEC
+    timeout: float = Field(WAIT_MAX_SEC, strict=True)   # 숫자만 — 문자열("nan"·"5")·참거짓은 422
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _finite(cls, v):
+        # NaN 이면 deadline 비교가 늘 거짓이라 끝없이 돈다. 422 로 돌려주면 응답에 NaN 이 실려 직렬화가 깨지므로
+        # 유한한 값으로 바꾼다: NaN·-무한 → 0(바로 빈 응답), +무한 → 상한
+        if isinstance(v, float) and not math.isfinite(v):
+            return WAIT_MAX_SEC if v > 0 else 0.0
+        return v
 
 
 @app.post("/api/outbox/wait", dependencies=[Depends(require_write)])
 async def outbox_wait(p: Wait, request: Request) -> dict:
     """롱폴링: 그 컴퓨터 앞으로 쌓인 메시지가 있으면 바로, 없으면 생길 때까지(최대 25초) 기다렸다 돌려준다."""
     _require_messaging()
-    deadline = time.monotonic() + min(max(p.timeout, 0.0), WAIT_MAX_SEC)
+    wait = p.timeout if math.isfinite(p.timeout) else 0.0
+    deadline = time.monotonic() + min(max(wait, 0.0), WAIT_MAX_SEC)
     while True:
         async with hub.queued:
             left = deadline - time.monotonic()

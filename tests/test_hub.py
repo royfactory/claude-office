@@ -1,7 +1,6 @@
 """hub/app.py 테스트(FastAPI TestClient). 허브 의존성(hub/requirements.txt)과 httpx 가 있어야 돈다."""
 import asyncio
 import json
-import math
 import socket
 import threading
 import time
@@ -527,16 +526,50 @@ def test_wait_releases_condition_after_timeout(authed):
     assert asyncio.run(go()) == (0, False)
 
 
-@pytest.mark.xfail(strict=False, reason="T2 검토: timeout 에 NaN(\"nan\" 문자열도 float 로 받음)이 오면 "
-                   "deadline 비교가 늘 거짓이라 outbox_wait 가 기다리지도 끝나지도 않고 연결이 열린 동안 CPU 를 쓰며 돈다 "
-                   "(hub/app.py:457, math.isfinite 검사 필요)")
-def test_wait_nan_timeout_returns(authed):
+@pytest.mark.parametrize("raw,ok", [(b'{"host":"mac","timeout":NaN}', True), (b'{"host":"mac","timeout":-Infinity}', True),
+                                    (b'{"host":"mac","timeout":"nan"}', False), (b'{"host":"mac","timeout":"5"}', False),
+                                    (b'{"host":"mac","timeout":true}', False)])
+def test_wait_non_finite_returns_at_once_and_non_number_is_422(authed, raw, ok):
+    """NaN 이면 deadline 비교가 늘 거짓이라 끝없이 돌았다(T4 검토). NaN·-무한은 0 으로 바꿔 바로 빈 응답, 숫자가 아니면 422."""
+    _, c = authed
+    _ready(c)
+    t0 = time.monotonic()
+    r = c.post("/api/outbox/wait", content=raw, headers={**AUTH, "Content-Type": "application/json"})
+    assert time.monotonic() - t0 < 2
+    if ok:
+        assert r.status_code == 200 and r.json() == {"messages": []}
+    else:
+        assert r.status_code == 422
+
+
+def test_wait_infinity_is_capped(authed, monkeypatch):
     mod, c = authed
     _ready(c)
-    p = mod.Wait(host="mac", timeout="nan")
-    assert math.isnan(p.timeout)
-    out = asyncio.run(mod.outbox_wait(p, FakeRequest()))
-    assert out == {"messages": []}
+    assert mod.Wait(host="h", timeout=float("inf")).timeout == 25
+    monkeypatch.setattr(mod, "WAIT_MAX_SEC", 0.2)
+    t0 = time.monotonic()
+    r = c.post("/api/outbox/wait", content=b'{"host":"mac","timeout":Infinity}',
+               headers={**AUTH, "Content-Type": "application/json"})
+    assert r.json() == {"messages": []} and time.monotonic() - t0 < 2
+
+
+def test_wait_nan_timeout_returns_even_past_validation(authed):
+    """검증을 거치지 않고 NaN 이 들어와도(직접 호출) 돌지 않고 바로 끝난다."""
+    mod, c = authed
+    _ready(c)
+    p = mod.Wait.model_construct(host="mac", timeout=float("nan"))
+    req = FakeRequest()
+    assert asyncio.run(mod.outbox_wait(p, req)) == {"messages": []}
+    assert req.calls == 1
+
+
+def test_wait_huge_timeout_is_capped(authed, monkeypatch):
+    mod, c = authed
+    _ready(c)
+    monkeypatch.setattr(mod, "WAIT_MAX_SEC", 0.2)
+    t0 = time.monotonic()
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": 1e308}, headers=AUTH).json() == {"messages": []}
+    assert time.monotonic() - t0 < 2
 
 
 # 실제 소켓으로 '끊긴 연결'을 만들려면 진짜 서버가 있어야 한다(ASGITransport 는 연결을 끊지 못한다).

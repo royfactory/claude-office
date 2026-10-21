@@ -498,6 +498,8 @@ class Clock:
     def time(self):
         return self.now
 
+    monotonic = time
+
     def sleep(self, sec):
         self.sleeps.append(sec)
         self.now += sec
@@ -537,7 +539,7 @@ def test_outbox_loop_waits_and_hands_messages_over(collector, monkeypatch):
     calls, clock = run_loop(collector, monkeypatch, [{"messages": [msg]}, {"messages": []}], 2, handled)
     assert calls[0] == ("/api/outbox/wait", {"host": "mac", "timeout": 25}, 35)   # 허브 상한 25초 + 여유
     assert handled == [[msg]]                                # 빈 응답은 handle 로 넘기지 않는다
-    assert clock.sleeps == [0.0, 0.0]                        # 롱폴링은 쉬지 않고 바로 다시 건다
+    assert clock.sleeps == [0.0, 1.0]                        # 받으면 바로 다시 걸고, 곧바로 온 빈 응답이면 1초 쉰다
 
 
 @pytest.mark.parametrize("code", [401, 403])
@@ -551,7 +553,7 @@ def test_outbox_loop_backoff_doubles_to_30_and_resets(collector, monkeypatch):
     import urllib.error
     errs = [http_error(500)] + [urllib.error.URLError("down")] * 6 + [OSError("reset")]
     calls, clock = run_loop(collector, monkeypatch, errs + [{"messages": []}, http_error(502)], 10)
-    assert clock.sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 0.0, 1.0]   # 성공하면 1초로 돌아간다
+    assert clock.sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 1.0, 1.0]   # 성공하면 1초로 돌아간다
 
 
 def test_outbox_loop_logs_connection_failure_once(collector, monkeypatch, capsys):
@@ -728,10 +730,7 @@ def test_collect_swaps_socket_table_whole(collector, home, monkeypatch):
     assert col.sockets == {SID: "/tmp/cc-socks/whatever"}
 
 
-@pytest.mark.xfail(strict=False, reason="T2 검토: handle_outbox 에서 /api/outbox/result 보고가 실패(허브 잠깐 끊김·5xx)하면 "
-                   "예외가 묶음 전체를 빠져나가 남은 메시지는 전달도 보고도 안 되고, 허브에는 'sending' 으로 남았다가 "
-                   "60초 뒤 '가져가지 않았다' 로 만료된다(collector/collector.py:575)")
-def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch):
+def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch, capsys):
     import urllib.error
     monkeypatch.setattr(collector, "MESSAGES", True)
     monkeypatch.setattr(collector, "WINDOWS", False)
@@ -748,20 +747,49 @@ def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch)
     monkeypatch.setattr(collector, "api", flaky_api)
     col = collector.Collector("basic")
     col.sockets = {"a": "/sock/a", "b": "/sock/b"}
-    try:
-        collector.handle_outbox("http://hub", "mac", col, [{"id": "1", "session": "a", "text": "x"},
-                                                           {"id": "2", "session": "b", "text": "y"}])
-    except Exception:
-        pass
+    collector.handle_outbox("http://hub", "mac", col, [{"id": "1", "session": "a", "text": "x"},
+                                                       {"id": "2", "session": "b", "text": "y"}])
     assert delivered == ["x", "y"] and reported == ["1", "2"]
+    assert capsys.readouterr().out.count("메시지 결과 보고 실패") == 1
 
 
-@pytest.mark.xfail(strict=False, reason="T2 검토(낮음): wait 가 바로 빈 응답을 돌려주는 허브·프록시를 만나면 pause=0 이라 "
-                   "쉬지 않고 다시 걸어 CPU·허브를 두드린다. 롱폴링이 너무 빨리 끝나면 최소 간격을 두는 방어가 없다"
-                   "(collector/collector.py:592)")
+def test_handle_outbox_deliver_error_fails_only_that_message(collector, monkeypatch):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    monkeypatch.setattr(collector, "socket_ok", lambda p: True)
+    delivered, results = [], []
+
+    def deliver(sock, text):
+        if text == "bad":
+            "\ud800".encode("utf-8")                        # 짝 없는 서로게이트 → UnicodeEncodeError(OSError 아님)
+        delivered.append(text)
+    monkeypatch.setattr(collector, "deliver", deliver)
+    monkeypatch.setattr(collector, "api", lambda hub, path, payload, timeout=5: results.append(payload))
+    col = collector.Collector("basic")
+    col.sockets = {"a": "/sock/a", "b": "/sock/b"}
+    collector.handle_outbox("http://hub", "mac", col, [{"id": "1", "session": "a", "text": "bad"},
+                                                       {"id": "2", "session": "b", "text": "good"}])
+    assert delivered == ["good"]
+    assert [(r["id"], r["ok"]) for r in results] == [("1", False), ("2", True)]
+    assert "전달 실패" in results[0]["error"]
+
+
 def test_outbox_loop_does_not_spin_on_instant_empty_replies(collector, monkeypatch):
     calls, clock = run_loop(collector, monkeypatch, [], 20)
-    assert sum(clock.sleeps) >= 1.0                          # 빈 응답 20번이면 적어도 1초는 쉬어야 한다
+    assert clock.sleeps == [1.0] * 20                        # 곧바로 온 빈 응답마다 1초 쉰다(바쁜 고리 없음)
+
+
+def test_outbox_loop_no_pause_after_real_long_poll(collector, monkeypatch):
+    clock = Clock(3)
+    monkeypatch.setattr(collector, "time", clock)
+
+    def slow_empty(hub, path, payload, timeout=5):
+        clock.now += 25                                      # 허브가 25초 붙잡았다가 빈 응답
+        return {"messages": []}
+    monkeypatch.setattr(collector, "api", slow_empty)
+    with pytest.raises(StopLoop):
+        collector.outbox_loop("http://hub", "mac", collector.Collector("basic"))
+    assert clock.sleeps == [0.0, 0.0, 0.0]
 
 
 # 떠남·종료 신호
@@ -892,9 +920,6 @@ def test_main_on_nt_does_not_start_outbox_thread(collector, monkeypatch, main_en
     assert started == []
 
 
-@pytest.mark.xfail(strict=False, reason="T2 검토(낮음): 메시지 스레드가 첫 collect() 전에 시작해 소켓 표가 비어 있다. "
-                   "수집기가 비정상 종료 뒤 다시 뜨면(bye 없음, 허브엔 아직 온라인) 그 사이 쌓인 메시지를 첫 wait 가 곧바로 "
-                   "가져가 '수신함을 찾지 못했다' 로 실패시킨다(collector/collector.py:661)")
 def test_main_collects_once_before_outbox_thread(collector, monkeypatch, main_env):
     monkeypatch.setattr(collector, "MESSAGES", True)
     monkeypatch.setattr(collector, "WINDOWS", False)
@@ -904,6 +929,18 @@ def test_main_collects_once_before_outbox_thread(collector, monkeypatch, main_en
         main_env["order"].append("collect")
         return real_collect(self)
     monkeypatch.setattr(collector.Collector, "collect", collect)
-    monkeypatch.setattr(collector, "run", lambda args, col: col.collect())
+    monkeypatch.setattr(collector, "run", lambda args, col: None)
     collector.main()
-    assert main_env["order"][0] == "collect"
+    assert main_env["order"] == ["collect", "thread"]
+
+
+def test_main_outbox_thread_starts_even_if_first_collect_fails(collector, monkeypatch, main_env, capsys):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+
+    def boom(self):
+        raise ValueError("이상한 세션 파일")
+    monkeypatch.setattr(collector.Collector, "collect", boom)
+    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    collector.main()
+    assert main_env["order"] == ["thread"] and "수집 오류" in capsys.readouterr().out

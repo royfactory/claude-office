@@ -595,10 +595,13 @@ def handle_outbox(hub, host, col, items):
             try:
                 deliver(sock, text)
                 ok = True
-            except OSError as e:
+            except Exception as e:   # OSError 말고도(UnicodeEncodeError 등) 이 메시지만 실패로 보고 다음으로
                 err = f"전달 실패: {e}"
-        print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지", "전달" if ok else "실패", m.get("session", "")[:8], err, flush=True)
-        api(hub, "/api/outbox/result", {"host": host, "id": m.get("id"), "ok": ok, "error": err})
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지", "전달" if ok else "실패", str(m.get("session", ""))[:8], err, flush=True)
+        try:   # 보고가 실패해도 남은 메시지는 계속 전달한다(허브는 그 메시지를 60초 뒤 만료로 본다)
+            api(hub, "/api/outbox/result", {"host": host, "id": m.get("id"), "ok": ok, "error": err})
+        except Exception as e:
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지 결과 보고 실패:", repr(e), flush=True)
 
 
 def outbox_loop(hub, host, col):
@@ -613,9 +616,11 @@ def outbox_loop(hub, host, col):
                 items = api(hub, "/api/outbox/pull", {"host": host}).get("messages", [])
                 pause = 1.0
             else:
+                started = time.monotonic()
                 items = api(hub, "/api/outbox/wait", {"host": host, "timeout": WAIT_SEC},
                             timeout=WAIT_SEC + 10).get("messages", [])
-                pause = 0.0
+                # 롱폴링인데 곧바로 빈 응답이면(이상한 허브·프록시) 쉬지 않고 두드리지 않게 1초 쉰다
+                pause = 1.0 if not items and time.monotonic() - started < 1.0 else 0.0
             if items:
                 handle_outbox(hub, host, col, items)
             delay, failing = 1.0, False
@@ -683,9 +688,14 @@ def main():
         signal.signal(signal.SIGTERM, _exit_on_signal)
     except (ValueError, OSError, AttributeError):
         pass
-    if MESSAGES and not WINDOWS:
-        threading.Thread(target=outbox_loop, args=(args.hub, args.host, col), name="outbox", daemon=True).start()
     try:
+        if MESSAGES and not WINDOWS:
+            # 소켓 표를 먼저 채운다 — 비어 있으면 재시작 직후 허브에 쌓여 있던 메시지가 '수신함을 찾지 못했다' 로 실패한다
+            try:
+                col.collect()
+            except Exception as e:
+                print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집 오류:", repr(e), flush=True)
+            threading.Thread(target=outbox_loop, args=(args.hub, args.host, col), name="outbox", daemon=True).start()
         run(args, col)
     except (KeyboardInterrupt, SystemExit):
         say_bye(args.hub, args.host)
