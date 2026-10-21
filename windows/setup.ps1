@@ -1,5 +1,5 @@
 ﻿# claude-office 를 이 Windows 컴퓨터 하나에서 다 돌린다: 허브 + 수집기 + 브라우저.
-# 보통은 저장소 루트의 windows-start.bat / windows-stop.bat 을 더블클릭한다. 이 스크립트를 직접 부를 때:
+# 보통은 저장소 루트의 start.bat / stop.bat / status.bat 을 더블클릭한다. 이 스크립트를 직접 부를 때:
 #   powershell -ExecutionPolicy Bypass -File windows\setup.ps1              설치·갱신·시작
 #   powershell -ExecutionPolicy Bypass -File windows\setup.ps1 -Status      상태
 #   powershell -ExecutionPolicy Bypass -File windows\setup.ps1 -Uninstall   멈추고 등록 지우기
@@ -53,7 +53,7 @@ function Get-HubUrl {
 }
 
 function Test-Hub($url) {
-    try { $r = Invoke-RestMethod -Uri "$url/health" -TimeoutSec 2; return [bool]$r.ok } catch { return $false }
+    try { $r = Invoke-RestMethod -Uri "$url/health" -TimeoutSec 2 -UseBasicParsing; return [bool]$r.ok } catch { return $false }
 }
 
 # ── 내리기 ─────────────────────────────────────────────
@@ -110,7 +110,8 @@ if (-not (Test-Path $Marker) -or (Get-Content $Marker -Raw).Trim() -ne $ReqHash)
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 $VenvPyW = Join-Path $Venv "Scripts\pythonw.exe"
 if (-not (Test-Path $VenvPyW)) { $VenvPyW = $VenvPy }
-$Arg = '"{0}" --log "{1}"' -f (Join-Path $Repo "hub\app.py"), $HubLog
+# -X utf8: Windows 기본 인코딩(cp949) 대신 UTF-8 로 파일을 읽고 쓴다(.env·설정의 한글·이모지)
+$Arg = '-X utf8 "{0}" --log "{1}"' -f (Join-Path $Repo "hub\app.py"), $HubLog
 $Action    = New-ScheduledTaskAction -Execute $VenvPyW -Argument $Arg -WorkingDirectory $Repo
 $Trigger   = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
@@ -129,8 +130,20 @@ Say "허브가 뜨기를 기다린다: $url"
 $ok = $false
 for ($i = 0; $i -lt 30; $i++) { if (Test-Hub $url) { $ok = $true; break }; Start-Sleep -Seconds 1 }
 if (-not $ok) {
-    if (Test-Path $HubLog) { Get-Content $HubLog -Tail 15 -Encoding UTF8 }
-    throw "허브가 30초 안에 응답하지 않았다. 위 로그($HubLog)를 확인한다. 포트($url)를 다른 프로그램이 쓰고 있을 수도 있다."
+    $info = Get-ScheduledTaskInfo -TaskName $HubTask -ErrorAction SilentlyContinue
+    Say ("허브 작업 상태: {0}, 마지막 결과 코드 {1}" -f (Get-ScheduledTask -TaskName $HubTask).State, $info.LastTaskResult)
+    if (Test-Path $HubLog) { Say "허브 로그($HubLog) 끝부분:"; Get-Content $HubLog -Tail 15 -Encoding UTF8 }
+    # 원인을 화면에 보이려고 같은 허브를 창 있는 python 으로 8초 띄워 오류 출력을 받는다
+    Stop-ScheduledTask -TaskName $HubTask -ErrorAction SilentlyContinue
+    $errFile = Join-Path $DataDir "hub-diagnose.txt"
+    $p = Start-Process -FilePath $VenvPy -ArgumentList @("-X", "utf8", "`"$(Join-Path $Repo 'hub\app.py')`"") `
+           -WorkingDirectory $Repo -RedirectStandardError $errFile -RedirectStandardOutput "$errFile.out" -PassThru -NoNewWindow
+    Start-Sleep -Seconds 8
+    $alive = -not $p.HasExited
+    if ($alive) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    Say ("진단 실행: {0}" -f $(if ($alive) { "8초 동안 살아 있었다(작업 스케줄러 쪽 문제일 수 있다)" } else { "바로 죽었다, 종료 코드 $($p.ExitCode)" }))
+    if (Test-Path $errFile) { Get-Content $errFile -Tail 25 -Encoding UTF8 }
+    throw "허브가 30초 안에 응답하지 않았다($url). 위 출력을 확인하거나 status.bat 결과와 함께 알려 준다."
 }
 Say "허브 OK"
 
@@ -140,4 +153,4 @@ Say "허브 OK"
 # ── 5) 화면 ────────────────────────────────────────────
 Say "사무실 화면을 연다: $url  (캐릭터 관리: $url/admin)"
 Start-Process $url
-Say "끝. 다음부터는 로그온하면 허브와 수집기가 저절로 뜬다. 멈추려면 windows-stop.bat."
+Say "끝. 다음부터는 로그온하면 허브와 수집기가 저절로 뜬다. 상태는 status.bat, 멈추려면 stop.bat."

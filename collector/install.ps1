@@ -65,7 +65,8 @@ Copy-Item $EnvFile $AppEnv -Force
 & icacls $AppEnv /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
 
 # ── 작업 스케줄러 등록 ────────────────────────────────
-$Arg = '"{0}" --env "{1}" --log "{2}"' -f (Join-Path $AppDir "collector.py"), $AppEnv, $Log
+# -X utf8: Windows 기본 인코딩(cp949) 대신 UTF-8 로 읽고 쓴다
+$Arg = '-X utf8 "{0}" --env "{1}" --log "{2}"' -f (Join-Path $AppDir "collector.py"), $AppEnv, $Log
 $Action    = New-ScheduledTaskAction -Execute $PyW -Argument $Arg -WorkingDirectory $AppDir
 $Trigger   = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited

@@ -25,7 +25,7 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 | 수집기 (macOS) | `/usr/bin/python3`(명령줄 도구, 없으면 `xcode-select --install`) |
 | 수집기 (Windows) | Windows 10/11 + [Python](https://www.python.org/downloads/windows/) 3.9 이상(허브까지 돌리면 3.10 이상, 설치할 때 「py launcher」 포함), PowerShell(기본 설치). 관리자 권한은 필요 없습니다 |
 | 수집기 (리눅스) | `python3` 3.9 이상. 직접 실행으로 동작할 것으로 보이나 시험하지 않았습니다 |
-| 허브 | Docker(Compose) 또는 [uv](https://docs.astral.sh/uv/). Windows 는 `windows-start.bat` 이 Python 가상환경으로 띄운다 |
+| 허브 | Docker(Compose) 또는 [uv](https://docs.astral.sh/uv/). Windows 는 `start.bat` 이 Python 가상환경으로 띄운다 |
 | 브라우저 | WebGL 이 되는 최신 브라우저 |
 
 ## Windows: 한 컴퓨터에서 한 번에
@@ -34,9 +34,9 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 
 1. [Python](https://www.python.org/downloads/windows/) 3.10 이상을 설치합니다(설치 화면에서 「py launcher」 포함).
 2. 저장소를 받습니다: `git clone https://github.com/royfactory/claude-office.git` (또는 GitHub 의 Code → Download ZIP 을 풀기)
-3. 폴더에서 **`windows-start.bat` 을 더블클릭**합니다.
+3. 폴더에서 **`start.bat` 을 더블클릭**합니다(Windows 전용 실행 파일입니다).
 
-`windows-start.bat` 이 하는 일:
+`start.bat` 이 하는 일:
 - `.env` 가 없으면 기본값으로 만듭니다(허브 `127.0.0.1:3006`, 수집기도 그 주소로).
 - 저장소의 `.venv` 에 허브 의존성을 설치합니다(처음 한 번 1~2분, 인터넷 필요).
 - 허브와 수집기를 작업 스케줄러(`claude-office-hub`, `claude-office-collector`)에 등록하고 띄웁니다. 다음부터는 로그온하면 창 없이 저절로 뜹니다.
@@ -44,9 +44,9 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 
 | 파일 | 하는 일 |
 |---|---|
-| `windows-start.bat` | 설치·갱신·시작(코드를 `git pull` 한 뒤 다시 누르면 새 코드로 다시 뜬다) |
-| `windows-status.bat` | 허브·수집기가 도는지와 최근 로그 |
-| `windows-stop.bat` | 둘 다 멈추고 작업 스케줄러 등록을 지움(설정·캐릭터 이미지는 `data\` 에 남음) |
+| `start.bat` | 설치·갱신·시작(코드를 `git pull` 한 뒤 다시 누르면 새 코드로 다시 뜬다) |
+| `status.bat` | 허브·수집기가 도는지와 최근 로그 |
+| `stop.bat` | 둘 다 멈추고 작업 스케줄러 등록을 지움(설정·캐릭터 이미지는 `data\` 에 남음) |
 
 설정·캐릭터 이미지는 `data\`, 허브 로그는 `data\hub.log`, 수집기 로그는 `%USERPROFILE%\.claude-office\collector.log` 에 있습니다.
 
@@ -179,6 +179,7 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 
 - **세션이 안 보임**: `--dump` 에 그 세션이 나오는지 봅니다. 안 나오면 그 세션의 `CLAUDE_CONFIG_DIR` 을 `CLAUDE_OFFICE_ROOTS` 에 더합니다.
 - **Windows 에서 `install.ps1` 이 막힘**: 「스크립트를 실행할 수 없습니다」면 위처럼 `-ExecutionPolicy Bypass` 를 붙여 실행합니다. 「Python 3.9 이상을 찾지 못했다」면 python.org 설치본을 설치합니다(Microsoft Store 의 바로가기 `python` 은 쓰지 않습니다).
+- **Windows 에서 「허브가 30초 안에 응답하지 않았다」**: `start.bat` 이 실패하면서 진단 실행 결과(허브 오류 출력)를 보여 줍니다. 그 내용과 `data\hub.log` 를 확인합니다. `Address already in use`·`10048` 이면 포트를 다른 프로그램이 쓰고 있으니 `.env` 의 `OFFICE_PORT` 와 `CLAUDE_OFFICE_HUB` 의 포트를 함께 바꿉니다.
 - **Windows 에서 세션이 0개**: `py -3 collector\collector.py --dump` 결과를 봅니다. Claude Code 를 WSL 안에서 쓰면 세션 기록이 WSL 쪽에 있으니 수집기도 WSL(리눅스)에서 돌립니다.
 - **로비에 컴퓨터가 「끊김」**: 상태 명령(`--status` / `-Status`)의 로그를 봅니다. `HTTP Error 401` 이면 `OFFICE_TOKEN` 이 허브와 다르고, `Connection refused`·시간 초과면 `CLAUDE_OFFICE_HUB` 주소나 허브의 `OFFICE_BIND`·방화벽을 확인합니다.
 - **관리 화면에서 저장이 안 됨**: 토큰을 물으면 허브의 `OFFICE_TOKEN` 값을 넣습니다. 잘못 넣었으면 다시 저장할 때 다시 묻습니다.

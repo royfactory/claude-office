@@ -20,10 +20,33 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+
+def _early_log() -> None:
+    """--log 가 있으면 다른 모듈을 읽기 전에 출력을 그 파일로 돌린다.
+
+    창 없는 pythonw(Windows 작업 스케줄러)로 뜨면 시작 중 오류가 어디에도 남지 않아서,
+    import·설정 읽기에서 죽어도 원인이 로그에 남도록 맨 먼저 한다."""
+    if "--log" not in sys.argv[:-1]:
+        if sys.stdout is None:
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        return
+    path = sys.argv[sys.argv.index("--log") + 1]
+    try:
+        if os.path.getsize(path) > 1024 * 1024:   # 1MB 넘으면 비우고 시작
+            open(path, "w").close()
+    except OSError:
+        pass
+    sys.stdout = sys.stderr = open(path, "a", encoding="utf-8", buffering=1)
+    print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 시작", sys.executable, flush=True)
+
+
+if __name__ == "__main__":
+    _early_log()
+
+from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent   # 저장소 루트(도커 안에서는 / 이라 data 가 /data 가 된다)
 
@@ -31,7 +54,8 @@ ROOT = Path(__file__).resolve().parent.parent   # 저장소 루트(도커 안에
 def _load_env(path: Path) -> None:
     if not path.is_file():
         return
-    for line in path.read_text().splitlines():
+    # Windows 기본 인코딩(cp949)으로 읽으면 한글 주석에서 죽는다 — 늘 UTF-8(메모장 BOM 포함)
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -178,7 +202,7 @@ def load_config() -> dict:
     cfg = default_config()
     if CONFIG_PATH.is_file():
         try:
-            saved = json.loads(CONFIG_PATH.read_text())
+            saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             saved = {}
         # 방 구성이 바뀐 옛 설정이면 방·도구 매핑만 기본값으로 바꾸고 캐릭터·규칙은 살린다
@@ -192,7 +216,7 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1))
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(CONFIG_PATH)
 
 
@@ -423,15 +447,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=os.environ.get("OFFICE_BIND") or "127.0.0.1")
     ap.add_argument("--port", type=int, default=int(os.environ.get("OFFICE_PORT") or 3006))
-    ap.add_argument("--log", help="출력을 이 파일에 이어 쓴다(1MB 넘으면 시작할 때 비움). Windows 작업 스케줄러용")
+    ap.add_argument("--log", help="출력을 이 파일에 이어 쓴다(1MB 넘으면 시작할 때 비움, 맨 위 _early_log 가 처리)")
     args = ap.parse_args()
-    if args.log:
-        try:
-            if os.path.getsize(args.log) > 1024 * 1024:
-                open(args.log, "w").close()
-        except OSError:
-            pass
-        sys.stdout = sys.stderr = open(args.log, "a", encoding="utf-8", buffering=1)
-    elif sys.stdout is None:   # 창 없는 pythonw 로 떴는데 --log 가 없으면 출력은 버린다
-        sys.stdout = sys.stderr = open(os.devnull, "w")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
