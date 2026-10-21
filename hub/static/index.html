@@ -109,6 +109,7 @@
   .win.lit { background: #fde68a; border-color: #f59e0b; box-shadow: 0 0 6px rgba(253,230,138,.7); }
   .win.lit.w-thinking { background: #ddd6fe; border-color: #a78bfa; box-shadow: 0 0 6px rgba(196,181,253,.7); }
   .win.lit.w-stalled { background: #fed7aa; border-color: #fb923c; }
+  .win.lit.w-approval { background: #fdba74; border-color: #ea580c; box-shadow: 0 0 7px rgba(249,115,22,.85); }
   .win.more { width: auto; padding: 0 4px; font-family: var(--font); font-size: 10px; color: var(--text-dim); }
   #car { position: absolute; right: 3px; top: 0; width: 20px; border-radius: 3px; background: #475569; border: 1px solid #94a3b8;
          transition: transform .7s cubic-bezier(.45,.05,.35,1), height .3s; z-index: 2; display: grid; place-items: center; font-size: 11px; }
@@ -147,6 +148,11 @@
   .lab .pill[data-st=thinking] { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
   .lab .pill[data-st=stalled]  { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
   .lab .pill[data-st=waiting]  { background: #ccfbf1; color: #115e59; border-color: #2dd4bf; }
+  /* 승인 대기: 사람이 손대야 하는 상태라 진한 주황으로 채우고 살짝 맥박 친다(막힘의 연노랑과 구별) */
+  .lab .pill[data-st=approval] { background: #f97316; color: #fff; border-color: #c2410c; animation: apprPulse 1.6s ease-in-out infinite; }
+  .lab .pill[data-st=approval] code { color: #fff; background: rgba(0,0,0,.18); }
+  @keyframes apprPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(249,115,22,.55); } 50% { box-shadow: 0 0 0 5px rgba(249,115,22,0); } }
+  @media (prefers-reduced-motion: reduce) { .lab .pill[data-st=approval] { animation: none; } }
   .lab .pill[data-st=idle]     { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
   .lab .pill[data-st=trip]     { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
   .lab .pill:empty { display: none; }
@@ -218,7 +224,7 @@
   #feedList li:hover { background: var(--surface-2); }
   #feedList li.unseen { box-shadow: inset 3px 0 0 var(--brand); }
   #feedList .ic { text-align: center; }
-  #feedList .ic.done { color: var(--good); } #feedList .ic.start { color: var(--info); } #feedList .ic.new { color: var(--accent-alt); } #feedList .ic.end { color: var(--text-dim2); }
+  #feedList .ic.done { color: var(--good); } #feedList .ic.start { color: var(--info); } #feedList .ic.new { color: var(--accent-alt); } #feedList .ic.end { color: var(--text-dim2); } #feedList .ic.approval { color: #f97316; }
   #feedList .t { color: var(--text-dim2); white-space: nowrap; }
   #feedList .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
   #feedList .who b { color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
@@ -248,6 +254,11 @@
   .st-thinking { color: var(--accent-alt); border-color: rgba(167,139,250,.4); }
   .st-stalled { color: var(--warning); border-color: rgba(251,191,36,.45); }
   .st-waiting { color: #2dd4bf; border-color: rgba(45,212,191,.45); }
+  .st-approval { color: #fff; background: #ea580c; border-color: #f97316; }
+  .approval-note { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(249,115,22,.55);
+                   background: rgba(249,115,22,.12); color: #fdba74; font-size: 12px; line-height: 1.5; }
+  .approval-note i { color: #f97316; }
+  .approval-note small { display: block; color: var(--text-dim); font-size: 11px; }
   .todos { margin: 0 0 4px; }
   .todos li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px; line-height: 1.45; color: var(--text-hi); }
   .todos li i { flex: none; width: 14px; font-size: 11px; text-align: center; }
@@ -309,6 +320,7 @@
   #legend li i, #log li .x i { color: var(--text-dim); width: 16px; text-align: center; }
   #legend li { display: grid; grid-template-columns: 22px 70px 1fr; gap: 4px; font-size: 12px; padding: 3px 0; align-items: center; }
   #legend b { color: var(--text-hi); font-weight: 600; } #legend span:last-child { color: var(--text-dim); }
+  #legend li.appr { align-items: start; } #legend li.appr i { color: #f97316; }
 
   @media (max-width: 1100px) { .app { --lw: 220px; --rw: 290px; } .app.left-closed { --lw: 0px; } .app.right-closed { --rw: 0px; } }
   @media (max-width: 860px) {

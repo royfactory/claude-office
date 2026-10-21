@@ -406,7 +406,7 @@ def test_installed_hook_exits_zero_when_script_is_gone(inst, tmp_path, events):
 
 
 def test_installed_hook_handles_quotes_in_path(inst, tmp_path, events):
-    d = tmp_path / "it's \"odd\" dir"
+    d = tmp_path / ("it's odd dir" if os.name == "nt" else "it's \"odd\" dir")   # Windows 파일 이름에는 " 를 못 쓴다
     d.mkdir()
     (d / "claude_office_hook.py").write_bytes(HOOK_PY.read_bytes())
     h = inst.hook_entry(script=str(d / "claude_office_hook.py"))

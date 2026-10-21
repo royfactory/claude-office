@@ -774,6 +774,8 @@ function followCar() {
 setInterval(rotateTick, 200);
 
 function stateOf(a) {
+  // 권한 창을 띄우고 사용자의 승인을 기다리는 중(선택 훅을 넣은 컴퓨터만 보낸다). 그 도구의 방에 서서 기다린다
+  if (a.kind === "approval") return "approval";
   if (a.stalled) return "stalled";
   if (a.kind === "working" || a.kind === "shell") return "working";
   if (a.kind === "waiting") return "waiting";   // 턴은 끝났지만 백그라운드 작업을 기다리는 중(불은 켜 둔다)
@@ -940,6 +942,7 @@ function stateHTML(a, st, now) {
     const n = (a.bg || []).length, b = (a.bg || [])[0];
     return `<i class="fa-solid fa-hourglass-half"></i>백그라운드 기다리는 중${n ? ` <small>${n}개${b ? " · " + esc(b.target || b.tool) : ""}</small>` : ""}`;
   }
+  if (st === "approval") return `<i class="fa-solid fa-hand"></i>승인 대기${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""} · <small>${agoSpan(a.since || null, "째")}</small>`;
   if (st === "stalled") return `<i class="fa-solid fa-hourglass-end"></i>턱 괴고 고민 중 <small>${agoSpan(a.lastActivity)}</small>`;
   if (st === "working") {
     if (a.kind === "shell") return `<i class="fa-solid fa-terminal"></i>셸 명령`;
@@ -949,7 +952,8 @@ function stateHTML(a, st, now) {
   if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${agoSpan(a.since || null, "째")}</small>`;
   return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${agoSpan(a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${agoSpan(a.since || null)}</small>`;
 }
-const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", waiting: "#2dd4bf", idle: "#94a3b8" };
+const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", waiting: "#2dd4bf", approval: "#f97316", idle: "#94a3b8" };
+const STATE_WORD = { working: "근무", thinking: "고민", stalled: "막힘", waiting: "대기", approval: "승인", idle: "휴식" };
 function renderLabels() {
   const now = Date.now() / 1000 - skew;
   let changed = false;
@@ -1011,7 +1015,7 @@ function renderFloors(fl) {
     const wins = ws.slice(0, MAX_WINDOWS).map(a => {
       const ch = chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
       const face = l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt="">` : esc(l.emoji || "🙂");
-      return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}" title="${esc(a.title || a.name)} · ${{ working: "근무", thinking: "고민", stalled: "막힘", idle: "휴식" }[st]}">${face}</span>`;
+      return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}" title="${esc(a.title || a.name)} · ${STATE_WORD[st]}">${face}</span>`;
     }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more">+${ws.length - MAX_WINDOWS}</span>` : "");
     return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}" data-p="${esc(f.project)}">
       <span class="no" style="--h:${(f.n * 47) % 360}">${f.n}F</span>
@@ -1054,8 +1058,9 @@ function renderPeople(floor, chars) {
   updateSessionTab(a);
 }
 function personRow(key, a, ch, st, title, sub, now, isSub) {
-  const label = { working: "근무", thinking: "고민", stalled: "막힘", waiting: "대기", idle: "휴식" }[st];
-  const line = st === "working" ? `${a.tool || "셸"}${a.target ? " · " + a.target : ""}` : (a.say || "");
+  const label = STATE_WORD[st];
+  const line = st === "working" ? `${a.tool || "셸"}${a.target ? " · " + a.target : ""}`
+    : st === "approval" ? `승인 대기${a.tool ? " · " + a.tool : ""}${a.target ? " · " + a.target : ""}` : (a.say || "");
   return `<li data-k="${esc(key)}" class="${isSub ? "sub" : ""}${selected === key ? " on" : ""}">
     <span class="av" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, st) : ""}</span>
     <span class="body"><span class="r1"><b>${esc(title)}</b><span class="st st-${st}">${label}</span></span>
@@ -1116,6 +1121,7 @@ function detailCard(a, ch, now) {
   const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? agoSpan(r.ts) : ""}</span></li>`).join("");
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
+    ${a.kind === "approval" ? `<p class="approval-note"><i class="fa-solid fa-hand"></i> 권한 승인을 기다리는 중${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, "째")}<small>그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.</small></p>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
     ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
@@ -1216,7 +1222,8 @@ function renderLegend() {
   if (renderLegend.sig === sig) return;
   renderLegend.sig = sig;
   $("legend").innerHTML = cfg.rooms.map(r => `<li><i class="fa-solid fa-${ROOM_ICON[r.id]}"></i><b>${esc(r.name)}</b><span>${esc(r.desc || "")}</span></li>`).join("") +
-    `<li><i class="fa-solid fa-elevator"></i><b>엘리베이터</b><span>서브에이전트 출퇴근</span></li>`;
+    `<li><i class="fa-solid fa-elevator"></i><b>엘리베이터</b><span>서브에이전트 출퇴근</span></li>` +
+    `<li class="appr"><i class="fa-solid fa-hand"></i><b>승인 대기</b><span>권한 창 앞에서 기다리는 세션(주황 배지). 선택 기능이라 그 컴퓨터에 훅을 넣어야 보입니다 — README 「선택: 승인 대기 감지(훅)」</span></li>`;
 }
 
 // 이름표·말풍선이 겹치면 뒤에 선 사람(화면 위쪽) 것을 위로 비켜 올린다. 크기는 글이 바뀔 때만 잰다.
@@ -1248,12 +1255,13 @@ function layoutLabels(list) {
 // 모든 층의 세션이 일을 마친(근무 → 휴식) 때, 시작한(휴식 → 근무) 때, 새로 생기거나 끝난 때를 최신 순으로 모은다.
 // 처음 열 때는 지금 상태로 채운다: 쉬는 세션 = 마지막으로 마친 시각, 일하는 세션 = 시작 시각(근사).
 const FEED_MAX = 300;
-const feed = [];                 // {ts, type: done|start|new|end, id, project, title, say}
+const feed = [];                 // {ts, type: done|start|new|end|approval, id, project, title, say, tool}
 const feedKind = new Map();      // 세션 id -> 지난번 근무 여부
+const feedAppr = new Map();      // 세션 id -> 지난번 승인 대기 여부
 let feedOpen = false, feedFilter = "all", feedSeenTs = 0;
 try { feedOpen = localStorage.getItem("office.feed") === "1"; feedSeenTs = +localStorage.getItem("office.feedSeen") || 0; } catch (_) {}
-const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off" };
-const FEED_WORD = { done: "작업 완료", start: "작업 시작", new: "새 세션", end: "세션 종료" };
+const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off", approval: "hand" };
+const FEED_WORD = { done: "작업 완료", start: "작업 시작", new: "새 세션", end: "세션 종료", approval: "승인 대기" };
 function feedPush(e) { feed.push(e); if (feed.length > FEED_MAX) feed.splice(0, feed.length - FEED_MAX); }
 function trackFeed(first) {
   const now = Date.now() / 1000 - skew, seen = new Set();
@@ -1269,11 +1277,16 @@ function trackFeed(first) {
       feedPush({ ...base, type: busy ? "start" : "done", ts: now, say: busy ? "" : a.say });
     }
     feedKind.set(a.id, busy);
+    // 승인 대기에 들어간 순간 한 줄(풀릴 때는 따로 남기지 않는다)
+    const appr = a.kind === "approval";
+    // 같은 순간의 '작업 시작'보다 위에 오게 아주 조금 뒤 시각으로 둔다
+    if (appr && !feedAppr.get(a.id)) feedPush({ ...base, type: "approval", ts: ((first ? a.since : now) || now) + 0.001, tool: a.tool || "" });
+    feedAppr.set(a.id, appr);
   }
   for (const id of [...feedKind.keys()]) if (!seen.has(id)) {
     const last = [...feed].reverse().find(e => e.id === id);
     if (last) feedPush({ id, project: last.project, title: last.title, type: "end", ts: now });
-    feedKind.delete(id);
+    feedKind.delete(id); feedAppr.delete(id);
   }
   renderFeed();
 }
@@ -1293,7 +1306,8 @@ function renderFeed() {
   const list = sorted.filter(e => feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter));
   setHTML($("feedList"), list.slice(0, 120).map(e => {
     const n = floorN.get(e.project);
-    const what = e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
+    const what = e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>`
+      : e.type === "approval" && e.tool ? `${FEED_WORD[e.type]} · <code>${esc(e.tool)}</code> · ${esc(e.project)}` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
     return `<li data-id="${esc(e.id)}" data-p="${esc(e.project)}" class="${e.ts > feedSeenTs ? "unseen" : ""}">
       <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${agoSpan(e.ts, " 전")}</span>
       <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b>${esc(e.title)}</b></span>

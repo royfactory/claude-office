@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest -q tests/test_collector.py
+      - run: python -m pytest -q tests/test_collector.py tests/test_hooks.py
 
   hub:
     name: hub (ubuntu-latest, py3.12)
