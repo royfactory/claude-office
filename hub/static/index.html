@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude 사무실</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🏢%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/theme.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  .app { display: grid; grid-template-columns: 260px minmax(0, 1fr) 330px; height: 100vh; }
+  aside { background: var(--bg-2); overflow-y: auto; padding: 14px 12px; }
+  aside.left { border-right: 1px solid var(--border); }
+  aside.right { border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  aside.right > .card { display: flex; flex-direction: column; min-height: 0; }
+  aside.right > .card > ol { overflow-y: auto; min-height: 0; flex: 1; margin-right: -6px; padding-right: 6px; }
+  #peopleBox { flex: 1.4 1 0; }
+  #logBox { flex: 1 1 0; }
+  #legendBox { flex: 0 0 172px; }
+  #legend li { padding: 1px 0; }
+  #detail { flex: none; max-height: 26vh; overflow-y: auto; }
+  .ph { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; font-size: 13px; color: var(--text-hi); font-weight: 700; }
+  .ph small { margin-left: auto; color: var(--text-dim2); font-weight: 600; font-size: 10px; letter-spacing: .08em; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--text-hi); display: flex; align-items: center; }
+  .card h3 small { margin-left: auto; color: var(--text-dim); font-weight: 500; font-size: 12px; }
+  .muted { color: var(--text-dim2); font-size: 12px; }
+  ol { list-style: none; margin: 0; padding: 0; }
+
+  .badge { display: inline-grid; place-items: center; min-width: 34px; height: 24px; padding: 0 6px; border-radius: 7px; font-weight: 800;
+           font-size: 12px; color: #fff; background: hsl(var(--h, 200) 60% 42%); }
+  /* 빌딩 */
+  aside.left { display: flex; flex-direction: column; gap: 10px; }
+  .player { display: flex; align-items: center; gap: 8px; }
+  .player button { padding: 5px 12px; font-weight: 700; }
+  .player button.on { background: var(--brand-dark); border-color: var(--brand); color: #04120d; }
+  .player select { padding: 4px 6px; font-size: 12px; }
+  .player .ph2 { font-size: 11px; color: var(--text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: -4px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--brand); transition: width .2s linear; }
+  .bldg { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: stretch; }
+  .roof { position: relative; height: 54px; flex: none; }
+  .roof .antenna { position: absolute; left: 50%; top: 0; width: 2px; height: 22px; background: #64748b; }
+  .roof .antenna::before { content: ""; position: absolute; left: -3px; top: -4px; width: 8px; height: 8px; border-radius: 50%;
+                           background: #ef4444; animation: blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .roof .sign { position: absolute; left: 14px; right: 14px; bottom: 0; height: 32px; border-radius: 8px 8px 0 0;
+                background: #0f172a; border: 1px solid #334155; border-bottom: 0; display: grid; place-items: center;
+                font-weight: 800; letter-spacing: .14em; font-size: 12px; color: #fbbf24; text-shadow: 0 0 8px rgba(251,191,36,.6); }
+  /* 오른쪽 26px 은 엘리베이터 통로. background-attachment: local 이라 층과 함께 스크롤된다 */
+  .tower { position: relative; flex: 1; min-height: 0; overflow-y: auto; border: 1px solid #334155; border-radius: 4px 4px 0 0;
+           padding-right: 26px; scrollbar-width: thin;
+           background: linear-gradient(to left, #111827 25px, #334155 25px, #334155 26px, #1e293b 26px) local; }
+  #floors { position: relative; }
+  /* 층 = 불 꺼진 사무실이 기본. 근무 중인 층(.busy)만 불이 켜져 따뜻한 빛이 돈다 */
+  .story { display: flex; gap: 8px; padding: 8px 8px 7px; border-bottom: 3px solid #05080f; cursor: pointer; position: relative;
+           background: linear-gradient(#0f1522, #0c111c); transition: background .6s, box-shadow .6s; }
+  .story .info b { color: #64748b; }
+  .story .info small { color: #475569; }
+  .story:hover { background: linear-gradient(#161e2f, #121927); }
+  .story.busy { background: linear-gradient(#4a3c1c, #3a2f17); box-shadow: inset 0 0 22px rgba(253,224,71,.22), inset 0 -2px 0 rgba(253,224,71,.25); }
+  .story.busy::before { content: ""; position: absolute; left: 30%; right: 18%; top: 0; height: 3px; border-radius: 0 0 4px 4px;
+                        background: #fde68a; box-shadow: 0 0 14px 4px rgba(253,224,71,.55); }   /* 천장 조명 */
+  .story.busy:hover { background: linear-gradient(#55461f, #43361a); }
+  .story.busy .info b { color: #fef3c7; }
+  .story.busy .info small { color: #e7d7a8; } .story.busy .info em { color: #bef264; }
+  .story.cur { box-shadow: inset 4px 0 0 var(--warning); }
+  .story.cur:not(.busy) { background: linear-gradient(#1b2436, #161e2d); }
+  .story.cur:not(.busy) .info b { color: #cbd5e1; }
+  .story.busy.cur { box-shadow: inset 4px 0 0 var(--warning), inset 0 0 22px rgba(253,224,71,.22); }
+  .story .no { flex: none; width: 34px; height: 22px; border-radius: 5px; display: grid; place-items: center; font-weight: 800; font-size: 11px;
+               color: #fff; background: hsl(var(--h, 200) 60% 42%); margin-top: 1px; }
+  .story:not(.busy) .no { filter: saturate(.25) brightness(.55); }
+  .story .info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .story .info b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .story .info small { font-size: 10.5px; } .story .info em { font-style: normal; }
+  .wins { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+  .win { width: 20px; height: 18px; border-radius: 2px; display: grid; place-items: center; font-family: var(--emoji); font-size: 11px;
+         background: #0b1220; border: 1px solid #334155; overflow: hidden; }
+  .win > * , .win { line-height: 1; }
+  .win img { width: 100%; height: 100%; object-fit: contain; }
+  .win:not(.lit) { filter: grayscale(.85) brightness(.4); background: #05080f; border-color: #1e293b; }
+  .win.lit { background: #fde68a; border-color: #f59e0b; box-shadow: 0 0 6px rgba(253,230,138,.7); }
+  .win.lit.w-thinking { background: #ddd6fe; border-color: #a78bfa; box-shadow: 0 0 6px rgba(196,181,253,.7); }
+  .win.lit.w-stalled { background: #fed7aa; border-color: #fb923c; }
+  .win.more { width: auto; padding: 0 4px; font-family: var(--font); font-size: 10px; color: var(--text-dim); }
+  #car { position: absolute; right: 3px; top: 0; width: 20px; border-radius: 3px; background: #475569; border: 1px solid #94a3b8;
+         transition: transform .7s cubic-bezier(.45,.05,.35,1), height .3s; z-index: 2; display: grid; place-items: center; font-size: 11px; }
+  .lobby { flex: none; background: #1e293b; border: 1px solid #334155; border-top: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .lobby .doors { width: 56px; height: 26px; border: 2px solid #475569; border-bottom: 0; background: linear-gradient(90deg, #7dd3fc33 49%, #475569 49%, #475569 51%, #7dd3fc33 51%); }
+  .lobby small { color: var(--text-dim2); font-size: 10px; letter-spacing: .12em; }
+  #lobbyHosts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  .street { flex: none; height: 6px; background: repeating-linear-gradient(90deg, #475569 0 14px, transparent 14px 22px); border-radius: 3px; margin-top: 3px; }
+
+  /* 무대 */
+  /* 배경도 층 색조(--fh)와 높이(--fl, 위층일수록 밝음)를 따른다 */
+  .stage { position: relative; overflow: hidden; --fh: 215; --fl: 18%;
+           background: radial-gradient(ellipse at 50% 40%, hsl(var(--fh) 38% var(--fl)) 0%, #0b1324 72%); transition: background 1.2s; }
+  .stage::after { content: ""; position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .6s; z-index: 4; }
+  .stage.riding::after { opacity: .62; }   /* 엘리베이터 안: 사무실이 어두워졌다가 새 층의 빛으로 밝아진다 */
+  #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #scene:active { cursor: grabbing; }
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+  .lab { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; white-space: nowrap; transition: opacity .4s; }
+  .lab.gone { opacity: 0; }
+  /* 말풍선: Claude가 한 말. 흰 만화 말풍선 + 아래 꼬리, 글은 한 줄 말줄임 */
+  .lab .say { position: relative; max-width: 250px; background: #fff; color: #1f2937; border-radius: 14px; padding: 6px 11px;
+              font-size: 12.5px; line-height: 1.35; box-shadow: 0 3px 12px rgba(0,0,0,.28); margin-bottom: 5px; }
+  .lab .say::after { content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+                     border: 7px solid transparent; border-top-color: #fff; border-bottom: 0; }
+  .lab .say .q { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lab .say .q::before { content: "“"; color: #94a3b8; font-weight: 800; margin-right: 1px; }
+  /* 상태 배지: 지금 하는 일. 상태마다 색이 다르고, 도구 이름은 고정폭 */
+  .lab .pill { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; font-size: 11px; font-weight: 600;
+               padding: 2px 9px 2px 6px; border-radius: 6px; border: 1px solid; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+  .lab .pill i { font-style: normal; }
+  .lab .pill small { font-weight: 500; opacity: .75; }
+  .lab .pill code { font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 4px; border-radius: 3px; background: rgba(255,255,255,.65); }
+  .lab .pill .tg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .lab .pill[data-st=working]  { background: #e0f2fe; color: #075985; border-color: #38bdf8; }
+  .lab .pill[data-st=thinking] { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
+  .lab .pill[data-st=stalled]  { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
+  .lab .pill[data-st=idle]     { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
+  .lab .pill[data-st=trip]     { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
+  .lab .pill:empty { display: none; }
+  /* 명찰: 누구인지. 어두운 판 + 왼쪽에 캐릭터 색 띠 */
+  .lab .tag { display: flex; align-items: center; background: rgba(15,23,42,.9); color: #f8fafc; font-size: 11px; font-weight: 600;
+              border-radius: 4px; padding: 1px 7px 1px 6px; max-width: 170px; border-left: 4px solid var(--c, #64748b); }
+  .lab .tag .t { overflow: hidden; text-overflow: ellipsis; }
+  .lab.sub .tag { font-size: 10px; font-weight: 500; background: rgba(51,65,85,.9); border-left-width: 3px; border-left-style: dashed; }
+  .lab.idle .tag { opacity: .85; max-width: 104px; font-size: 10px; }
+  .lab.quiet { opacity: 0; }
+  .lab.sel .tag { background: #0369a1; box-shadow: 0 0 0 2px #38bdf8; }
+  .lab.me .tag { background: #9a3412; }
+  .ov { position: absolute; z-index: 5; }
+  #floorBadge { top: 14px; left: 14px; display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,.95); color: #0f172a;
+                padding: 7px 12px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25); font-size: 13px; }
+  #floorBadge:empty { display: none; }
+  #ride { top: 64px; left: 50%; transform: translate(-50%, -8px); opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none;
+          background: rgba(15,23,42,.92); color: #f8fafc; border: 1px solid #fbbf24; border-radius: 12px; padding: 8px 16px; font-size: 15px;
+          box-shadow: 0 0 18px rgba(251,191,36,.35); white-space: nowrap; }
+  #ride.on { opacity: 1; transform: translate(-50%, 0); }
+  #ride { z-index: 6; font-variant-numeric: tabular-nums; } #ride i { font-style: normal; color: #fbbf24; }
+  #ride b { color: #fbbf24; display: inline-block; min-width: 2.4em; text-align: center; } #ride span { color: #cbd5e1; font-size: 13px; margin-left: 4px; }
+  #floorBadge small { color: #64748b; }
+  .topr { top: 14px; right: 14px; display: flex; gap: 8px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.95); color: #166534; font-weight: 700;
+          font-size: 11px; padding: 4px 10px; border-radius: 999px; }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
+  .live.off { color: #991b1b; } .live.off::before { background: #ef4444; }
+  .topr a { background: rgba(255,255,255,.95); color: #0f172a; font-size: 12px; padding: 4px 10px; border-radius: 999px; text-decoration: none; }
+  .zoom { left: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .zoom button { width: 34px; height: 34px; padding: 0; border-radius: 9px; background: rgba(255,255,255,.95); color: #0f172a; border: 0; font-size: 17px; }
+  .hint { right: 14px; bottom: 12px; font-size: 11px; color: #94a3b8; }
+  .center-msg { position: absolute; inset: 0; display: none; place-items: center; color: var(--text); font-size: 14px; text-align: center; padding: 16px; z-index: 6; }
+
+  /* 오른쪽 */
+  #people li { display: flex; gap: 9px; padding: 8px 6px; border-radius: 9px; cursor: pointer; }
+  #people li:hover, #people li.on { background: var(--surface-2); }
+  #people li.sub { margin-left: 18px; }
+  .av { width: 32px; height: 32px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--bg-2);
+        border: 2px solid var(--c); overflow: hidden; }
+  .av.big { width: 44px; height: 44px; }
+  .av img { width: 100%; height: 100%; object-fit: contain; }
+  .av .emo, .emo { font-family: var(--emoji); font-size: 17px; line-height: 1; }
+  .av.big .emo { font-size: 25px; }
+  .body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+  .r1 { display: flex; gap: 6px; align-items: center; }
+  .r1 b { color: var(--text-hi); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .r2 { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r3 { font-size: 11px; color: var(--text-dim2); }
+  .st { flex: none; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px solid; }
+  .st-working { color: var(--info); border-color: rgba(56,189,248,.4); }
+  .st-thinking { color: var(--accent-alt); border-color: rgba(167,139,250,.4); }
+  .st-stalled { color: var(--warning); border-color: rgba(251,191,36,.45); }
+  .st-idle { color: var(--text-dim); border-color: var(--border-2); }
+  .detail .dh { display: flex; gap: 10px; align-items: center; }
+  .detail .dh b { display: block; color: var(--text-hi); }
+  .detail .dh small { color: var(--text-dim); font-size: 11px; }
+  .detail .quote { margin: 10px 0 0; font-size: 12px; color: var(--text-hi); background: var(--bg-2); border-radius: 8px; padding: 8px; }
+  .detail h4 { margin: 10px 0 4px; font-size: 11px; color: var(--text-dim); }
+  #detail:not(:empty) { background: var(--surface); border: 1px solid var(--info); border-radius: 12px; padding: 12px; }
+  .recent li, #log li { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .recent .t { color: var(--info); min-width: 60px; } .recent .g { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .recent .a { color: var(--text-dim2); }
+  #log li { flex-wrap: wrap; gap: 2px 8px; }
+  #log .a { color: var(--text-dim2); font-size: 11px; min-width: 44px; } #log .w { color: var(--text-hi); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #log .x { color: var(--text); flex-basis: 100%; padding-left: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #legend li { display: grid; grid-template-columns: 22px 70px 1fr; gap: 4px; font-size: 12px; padding: 3px 0; align-items: center; }
+  #legend b { color: var(--text-hi); font-weight: 600; } #legend span:last-child { color: var(--text-dim); }
+
+  @media (max-width: 1100px) { .app { grid-template-columns: 220px minmax(0, 1fr) 290px; } }
+  @media (max-width: 860px) {
+    html, body { overflow: auto; height: auto; }
+    .app { display: flex; flex-direction: column; height: auto; }
+    .stage { height: max(340px, 96vw); order: 1; }
+    #floorBadge { display: none; }
+    .topr { top: auto; bottom: 14px; }
+    aside.left { order: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; }
+    aside.right { order: 2; border-left: 0; padding: 12px 16px; overflow: visible; }
+    #peopleBox, #logBox { flex: none; height: 320px; }
+    #legendBox { flex: none; height: 200px; }
+    #detail { max-height: none; }
+    .tower { max-height: 300px; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="left">
+    <div class="player">
+      <button id="play" title="근무 중인 층을 아래층부터 돌아가며 보기">▶ 재생</button>
+      <select id="rotate" title="층을 넘기는 간격"><option value="10">10초</option><option value="20">20초</option><option value="30">30초</option><option value="60">1분</option></select>
+      <span class="ph2" id="playHint">근무 중인 층 순회</span>
+    </div>
+    <div class="bar"><i id="progress"></i></div>
+    <div class="bldg">
+      <div class="roof"><span class="antenna"></span><span class="sign">CLAUDE OFFICE</span></div>
+      <div class="tower"><div id="floors"></div><div id="car">🛗</div></div>
+      <div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts"></span></div>
+      <div class="street"></div>
+    </div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <canvas id="scene"></canvas>
+    <div id="labels"></div>
+    <div class="ov" id="floorBadge"></div>
+    <div class="ov" id="ride"></div>
+    <div class="ov topr"><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin">⚙️ 캐릭터 관리</a></div>
+    <div class="ov zoom"><button id="zin" title="확대">＋</button><button id="zout" title="축소">－</button><button id="zreset" title="원위치">⟲</button></div>
+    <div class="ov hint">드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다</div>
+    <div class="center-msg" id="empty">수집기에서 아직 소식이 없습니다.<br>메인 맥에서 수집기가 돌고 있는지 확인하세요.</div>
+    <div class="center-msg" id="nogl">이 브라우저에서는 3D를 그릴 수 없습니다(WebGL 꺼짐).</div>
+  </main>
+
+  <aside class="right">
+    <div id="detail"></div>
+    <section class="card" id="peopleBox"><h3>사무실 사람들<small id="peopleHead"></small></h3><ol id="people"></ol></section>
+    <section class="card" id="logBox"><h3>활동 로그</h3><ol id="log"></ol></section>
+    <section class="card" id="legendBox"><h3>어디서 무엇을 하나</h3><ol id="legend"></ol></section>
+  </aside>
+</div>
+<script src="/static/shared.js"></script>
+<script type="module" src="/static/office3d.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# claude-office 허브. 저장소 루트에서 `docker compose up -d --build`.
+# 설정은 같은 폴더의 .env(.env.example 참고)에서 읽는다.
+name: claude-office
+
+services:
+  hub:
+    build: ./hub
+    image: claude-office-hub:local
+    restart: unless-stopped
+    ports:
+      # 기본은 이 컴퓨터에서만 열린다. 다른 컴퓨터의 수집기를 받으려면 OFFICE_BIND 를 바꾼다(README '허브를 서버에').
+      - "${OFFICE_BIND:-127.0.0.1}:${OFFICE_PORT:-3006}:3006"
+    volumes:
+      - office_data:/data
+    environment:
+      OFFICE_DATA: /data
+      OFFICE_TOKEN: ${OFFICE_TOKEN:-}
+      TZ: ${TZ:-Asia/Seoul}
+    cpus: 0.5
+    mem_limit: 192m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  office_data:

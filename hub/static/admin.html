@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>캐릭터 관리</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🏢%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/theme.css">
+<style>
+  main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 96px; }
+  section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  section.card > h2 { margin: 0 0 4px; font-size: 15px; color: var(--text-hi); }
+  .help { margin: 0 0 12px; font-size: 12px; color: var(--text-dim); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  .chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .ch { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .ch .head { display: flex; gap: 10px; align-items: center; }
+  .av { width: 56px; height: 56px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--surface); border: 2px solid var(--c, var(--border-2)); overflow: hidden; }
+  .av .av-emo { font-size: 32px; }
+  .av.sm { width: 30px; height: 30px; border-width: 1.5px; } .av.sm .av-emo { font-size: 17px; }
+  .ch label { display: grid; grid-template-columns: 64px 1fr; gap: 6px; align-items: center; font-size: 12px; color: var(--text-dim); }
+  .ch input[type=color] { padding: 0; height: 28px; width: 44px; }
+  .ch .imgbtn { display: flex; gap: 6px; }
+  .ch .imgbtn button { flex: 1; font-size: 12px; padding: 4px 6px; }
+  .ch details { font-size: 12px; }
+  .ch summary { cursor: pointer; color: var(--text-dim); }
+  .ch .st { display: grid; grid-template-columns: 52px 30px 1fr auto; gap: 6px; align-items: center; margin-top: 6px; }
+  .ch .st input { width: 100%; }
+  .ch .foot { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .ch .id { color: var(--text-dim2); font-size: 11px; }
+
+  .lib { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
+  .lib .it { background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; text-align: center; font-size: 11px; color: var(--text-dim2); }
+  .lib .it .img { height: 64px; display: grid; place-items: center; }
+  .lib .it img { max-width: 100%; max-height: 64px; }
+  .lib .it.pick { cursor: pointer; } .lib .it.pick:hover { border-color: var(--info); }
+  .drop { border: 1.5px dashed var(--border-2); border-radius: 10px; padding: 14px; text-align: center; color: var(--text-dim); margin-bottom: 12px; }
+  .drop.over { border-color: var(--info); color: var(--text-hi); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--text-dim2); font-weight: 500; font-size: 12px; padding: 4px 6px; }
+  td { padding: 4px 6px; border-top: 1px solid var(--border); }
+  td input, td select { width: 100%; }
+  td.btns { white-space: nowrap; width: 1%; }
+  td.btns button { padding: 3px 8px; }
+
+  .preview { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pv { display: flex; gap: 8px; align-items: center; background: var(--bg-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px 3px 3px; font-size: 12px; }
+  .pv .n { color: var(--text-hi); } .pv .p { color: var(--text-dim2); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+  .rooms .r { display: grid; grid-template-columns: 44px 1fr; gap: 6px; margin-bottom: 6px; }
+
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-2); border-top: 1px solid var(--border-2); padding: 10px 16px; display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+  .savebar .msg { margin-right: auto; font-size: 13px; }
+  .msg.err { color: var(--bad); } .msg.ok { color: var(--good); } .msg.dirty { color: var(--warning); }
+
+  dialog { background: var(--surface-3); color: var(--text); border: 1px solid var(--border-2); border-radius: 12px; width: min(640px, calc(100vw - 32px)); padding: 16px; }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h3 { margin: 0 0 10px; color: var(--text-hi); font-size: 15px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>⚙️ 캐릭터 관리</h1>
+  <span class="spacer"></span>
+  <a class="chip" href="/">🏢 사무실로</a>
+</header>
+<main>
+  <section class="card">
+    <h2>지금 배정 미리보기</h2>
+    <p class="help">저장하기 전 설정으로 계산한 결과입니다. 지금 떠 있는 세션과 서브에이전트에 어떤 캐릭터가 붙는지 바로 보여 줍니다.</p>
+    <div class="preview" id="preview"></div>
+  </section>
+
+  <section class="card">
+    <h2>캐릭터</h2>
+    <p class="help">이모지나 이미지 중 하나로 모습을 정합니다(둘 다 있으면 이미지). '자동 배정'에 넣은 캐릭터는 규칙에 걸리지 않은 세션에 겹치지 않게 돌아가며 붙습니다. 상태별 모습을 비워 두면 기본 모습을 씁니다.</p>
+    <div class="chars" id="chars"></div>
+    <div class="row" style="margin-top:12px"><button id="addChar">＋ 캐릭터 추가</button></div>
+  </section>
+
+  <section class="card">
+    <h2>이미지 보관함</h2>
+    <p class="help">PNG·JPG·GIF·WEBP, 장당 2MB까지. 정사각형 투명 배경이 가장 잘 어울립니다. 업로드한 이미지는 허브가 돌고 있는 컴퓨터(OFFICE_DATA)에 저장됩니다. 캐릭터가 쓰고 있는 이미지는 지울 수 없습니다.</p>
+    <div class="drop" id="drop">여기에 이미지를 끌어다 놓거나 <button id="pickFiles">파일 고르기</button><input type="file" id="files" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden></div>
+    <div class="lib" id="lib"></div>
+  </section>
+
+  <section class="card">
+    <h2>배정 규칙</h2>
+    <p class="help">위에서부터 처음 맞는 규칙이 이깁니다. 값 끝에 <code>*</code>를 붙이면 앞부분이 같은 것을 모두 고릅니다(예: <code>myproject-*</code>). 대소문자는 가리지 않습니다. 세션 이름은 Claude가 다시 시작될 때마다 바뀔 수 있으니 오래 쓸 규칙은 프로젝트로 거세요.</p>
+    <table><thead><tr><th style="width:150px">무엇으로</th><th>값</th><th style="width:180px">캐릭터</th><th></th></tr></thead><tbody id="rules"></tbody></table>
+    <div class="row" style="margin-top:10px">
+      <button id="addRule">＋ 규칙 추가</button>
+      <span class="spacer" style="flex:1"></span>
+      <label class="row" style="font-size:13px">서브에이전트 기본 캐릭터 <select id="subChar"></select></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>화면 설정</h2>
+    <p class="help">말풍선을 켜면 Claude가 마지막으로 한 말의 앞 80자가 머리 위에 뜹니다. 끄면 수집기가 30초 안에 그 글을 보내지 않게 됩니다(허브에도 남지 않음). 사용자 메시지·명령 원문·파일 내용은 켜도 보내지 않습니다.</p>
+    <div class="row" style="gap:18px">
+      <label class="row" style="font-size:13px"><input type="checkbox" id="speech"> 말풍선에 Claude가 한 말 보이기</label>
+      <label class="row" style="font-size:13px">내 자리에 앉은 '나' 이름 <input id="meName" maxlength="12" style="width:110px"></label>
+      <label class="row" style="font-size:13px">'나' 캐릭터 <select id="meChar"></select></label>
+    </div>
+  </section>
+
+  <section class="card grid2">
+    <div>
+      <h2>방 이름</h2>
+      <p class="help">방 7개의 이름·이모지·설명입니다. 배치(3D 평면도)는 고정입니다. 라운지는 쉬는 세션이 가는 곳이라 도구를 배정할 수 없습니다.</p>
+      <div class="rooms" id="rooms"></div>
+      <h2 style="margin-top:16px">어느 방에도 안 맞는 도구</h2>
+      <div class="row"><select id="defaultRoom"></select></div>
+    </div>
+    <div>
+      <h2>도구 → 방</h2>
+      <p class="help">도구 이름이 맞으면 그 방으로 걸어갑니다. <code>mcp__*</code>처럼 <code>*</code>로 앞부분을 맞출 수 있습니다. 쉬는 세션은 늘 라운지로 갑니다.</p>
+      <table><thead><tr><th>도구</th><th style="width:130px">방</th><th></th></tr></thead><tbody id="tools"></tbody></table>
+      <div class="row" style="margin-top:10px"><button id="addTool">＋ 도구 추가</button></div>
+    </div>
+  </section>
+</main>
+
+<div class="savebar">
+  <span class="msg" id="msg"></span>
+  <button class="danger" id="reset">기본값으로</button>
+  <button id="revert">되돌리기</button>
+  <button class="primary" id="save">저장</button>
+</div>
+
+<dialog id="picker">
+  <h3>이미지 고르기</h3>
+  <div class="lib" id="pickLib"></div>
+  <div class="row" style="margin-top:12px; justify-content:flex-end">
+    <button id="pickUpload">새로 올리기</button>
+    <button id="pickNone">이미지 빼기</button>
+    <button id="pickClose">닫기</button>
+  </div>
+</dialog>
+
+<script src="/static/shared.js"></script>
+<script>
+"use strict";
+const { assignCharacters, avatarHTML, esc } = Office;
+const $ = id => document.getElementById(id);
+const STATES = [["working", "작업 중"], ["thinking", "생각 중"], ["stalled", "막힘"], ["idle", "휴식"]];
+const MATCH = [["project", "프로젝트 폴더"], ["session", "세션 이름"], ["agentType", "서브에이전트 종류"], ["host", "맥(수집기)"]];
+let cfg = null, saved = "", assets = [], agents = [];
+
+const clone = o => JSON.parse(JSON.stringify(o));
+const dirty = () => JSON.stringify(cfg) !== saved;
+
+// 허브에 OFFICE_TOKEN 이 있으면 쓰기에 토큰이 필요하다. 처음 401 을 받으면 물어보고 이 브라우저에 기억한다.
+let token = "";
+try { token = localStorage.getItem("office.token") || ""; } catch (_) {}
+async function api(method, url, body, raw, retried) {
+  const headers = raw ? {} : (body ? { "Content-Type": "application/json" } : {});
+  if (token) headers["X-Office-Token"] = token;
+  const r = await fetch(url, { method, headers, body: raw ? body : (body ? JSON.stringify(body) : undefined) });
+  if (r.status === 401 && !retried) {
+    const t = prompt("이 허브는 쓰기에 토큰이 필요합니다. OFFICE_TOKEN 값을 넣어 주세요.");
+    if (t) { token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {} return api(method, url, body, raw, true); }
+  }
+  const txt = await r.text();
+  let j = null; try { j = JSON.parse(txt); } catch (_) {}
+  if (!r.ok) {
+    let d = j && j.detail;
+    if (Array.isArray(d)) d = d.map(x => `${(x.loc || []).slice(1).join(".")}: ${x.msg}`).join(" / ");
+    if (r.status === 401) { token = ""; try { localStorage.removeItem("office.token"); } catch (_) {} }
+    throw new Error(d || txt || r.statusText);
+  }
+  return j;
+}
+
+function say(text, cls) { const m = $("msg"); m.textContent = text; m.className = "msg " + (cls || ""); }
+function markDirty() { if (dirty()) say("저장하지 않은 변경이 있습니다", "dirty"); else say(""); }
+
+function charOptions(sel, withNone) {
+  return (withNone ? `<option value="">(자동 배정에서 고르기)</option>` : "") +
+    cfg.characters.map(c => `<option value="${esc(c.id)}"${c.id === sel ? " selected" : ""}>${esc(c.emoji || "🖼️")} ${esc(c.name)}</option>`).join("");
+}
+function roomOptions(sel, withLounge) {
+  return cfg.rooms.filter(r => withLounge || r.id !== "lounge")
+    .map(r => `<option value="${r.id}"${r.id === sel ? " selected" : ""}>${esc(r.emoji)} ${esc(r.name)}</option>`).join("");
+}
+
+function renderChars() {
+  $("chars").innerHTML = cfg.characters.map((c, i) => `
+    <div class="ch" data-c="${i}">
+      <div class="head">
+        <div class="av${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, "")}</div>
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px">
+          <input data-f="name" value="${esc(c.name)}" maxlength="24" aria-label="이름">
+          <span class="id">id: ${esc(c.id)}</span>
+        </div>
+      </div>
+      <label>이모지 <input data-f="emoji" value="${esc(c.emoji)}" maxlength="16" placeholder="예: 🦊"></label>
+      <label>이미지 <span class="imgbtn"><button data-act="img">${c.image ? "바꾸기" : "고르기"}</button>${c.image ? `<button data-act="noimg">빼기</button>` : ""}</span></label>
+      <label>테두리색 <span class="row"><input type="color" data-f="color" value="${c.color}"><span class="id">${c.color}</span></span></label>
+      <details${Object.values(c.states || {}).some(s => s.emoji || s.image) ? " open" : ""}>
+        <summary>상태별 모습</summary>
+        ${STATES.map(([k, label]) => {
+          const s = (c.states || {})[k] || {};
+          return `<div class="st" data-s="${k}"><span>${label}</span>
+            <div class="av sm${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, k)}</div>
+            <input data-sf="emoji" value="${esc(s.emoji || "")}" maxlength="16" placeholder="이모지">
+            <button data-act="simg" title="이미지">${s.image ? "🖼️✓" : "🖼️"}</button></div>`;
+        }).join("")}
+      </details>
+      <div class="foot">
+        <span class="row" style="gap:12px">
+          <label style="display:flex; gap:4px"><input type="checkbox" data-f="inPool"${c.inPool ? " checked" : ""}>자동 배정</label>
+          <label style="display:flex; gap:4px" title="픽셀아트를 확대해도 뭉개지지 않게"><input type="checkbox" data-f="pixel"${c.pixel ? " checked" : ""}>픽셀</label>
+        </span>
+        <button class="danger" data-act="del">삭제</button>
+      </div>
+    </div>`).join("");
+}
+
+function renderRules() {
+  $("rules").innerHTML = cfg.assignments.map((a, i) => `
+    <tr data-r="${i}">
+      <td><select data-f="match">${MATCH.map(([k, l]) => `<option value="${k}"${a.match === k ? " selected" : ""}>${l}</option>`).join("")}</select></td>
+      <td><input data-f="value" value="${esc(a.value)}" list="dl-${a.match}" maxlength="80"></td>
+      <td><select data-f="character">${charOptions(a.character)}</select></td>
+      <td class="btns"><button data-act="up" title="위로">↑</button> <button data-act="down" title="아래로">↓</button> <button class="danger" data-act="del" title="삭제">✕</button></td>
+    </tr>`).join("") || `<tr><td colspan="4" style="color:var(--text-dim2)">규칙이 없습니다. 모든 세션이 자동 배정됩니다.</td></tr>`;
+  $("subChar").innerHTML = charOptions(cfg.subagentCharacter, true);
+  $("meChar").innerHTML = `<option value="">🧑‍💻 (기본)</option>` + charOptions(cfg.meCharacter, false);
+  $("speech").checked = cfg.speech !== false;
+  $("meName").value = cfg.meName || "나";
+}
+
+function renderRooms() {
+  $("rooms").innerHTML = cfg.rooms.map((r, i) => `
+    <div class="r" data-room="${i}"><input data-f="emoji" value="${esc(r.emoji)}" maxlength="16" aria-label="이모지"><input data-f="name" value="${esc(r.name)}" maxlength="12" aria-label="이름"><input data-f="desc" value="${esc(r.desc || "")}" maxlength="40" placeholder="설명(오른쪽 안내에 보임)" style="grid-column:1/-1"></div>`).join("");
+  $("defaultRoom").innerHTML = roomOptions(cfg.defaultRoom);
+  $("tools").innerHTML = cfg.toolRooms.map((t, i) => `
+    <tr data-t="${i}"><td><input data-f="pattern" value="${esc(t.pattern)}" maxlength="64" list="dl-tools"></td>
+      <td><select data-f="room">${roomOptions(t.room)}</select></td>
+      <td class="btns"><button class="danger" data-act="del">✕</button></td></tr>`).join("");
+}
+
+function renderLib() {
+  const used = new Set();
+  cfg.characters.forEach(c => { used.add(c.image); Object.values(c.states || {}).forEach(s => used.add(s.image)); });
+  $("lib").innerHTML = assets.map(a => `
+    <div class="it"><div class="img"><img src="${a.url}" alt=""></div>
+      <div>${Math.round(a.bytes / 1024)}KB</div>
+      ${used.has(a.name) ? `<div style="color:var(--good)">사용 중</div>` : `<button class="danger" data-del="${esc(a.name)}" style="font-size:11px;padding:2px 6px;margin-top:4px">지우기</button>`}
+    </div>`).join("") || `<div style="grid-column:1/-1; color:var(--text-dim2); font-size:13px">아직 올린 이미지가 없습니다.</div>`;
+}
+
+function renderDatalists() {
+  const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
+  const lists = {
+    project: uniq(agents.map(a => a.project)), session: uniq(agents.map(a => a.name)),
+    agentType: uniq(agents.flatMap(a => (a.subagents || []).map(s => s.type))), host: uniq(agents.map(a => a.host)),
+    tools: uniq(agents.flatMap(a => (a.recent || []).map(r => r.tool))),
+  };
+  let html = "";
+  for (const [k, v] of Object.entries(lists)) html += `<datalist id="dl-${k}">${v.map(x => `<option value="${esc(x)}">`).join("")}</datalist>`;
+  let d = $("datalists"); if (!d) { d = document.createElement("div"); d.id = "datalists"; document.body.appendChild(d); }
+  d.innerHTML = html;
+}
+
+function renderPreview() {
+  if (!agents.length) { $("preview").innerHTML = `<span style="color:var(--text-dim2); font-size:13px">지금 보이는 세션이 없습니다.</span>`; return; }
+  const m = assignCharacters(cfg, agents);
+  const pill = (key, name, sub) => {
+    const c = m.get(key);
+    return `<span class="pv"><span class="av sm${c && c.pixel ? " pixel" : ""}" style="--c:${c ? c.color : "#243858"}">${c ? avatarHTML(c, "") : ""}</span><span class="n">${esc(name)}</span><span class="p">${esc(sub)}</span></span>`;
+  };
+  $("preview").innerHTML = agents.map(a =>
+    pill(a.id, a.name, `${a.project} · ${m.get(a.id) ? m.get(a.id).name : ""}`) +
+    (a.subagents || []).map(s => pill(a.id + "/" + s.id, "↳ " + s.type, m.get(a.id + "/" + s.id) ? m.get(a.id + "/" + s.id).name : "")).join("")
+  ).join("");
+}
+
+function renderAll() { renderChars(); renderRules(); renderRooms(); renderLib(); renderDatalists(); renderPreview(); markDirty(); }
+function light() { renderPreview(); markDirty(); }
+
+// ---- 입력 반영 ----
+document.addEventListener("input", e => {
+  const t = e.target;
+  const ch = t.closest("[data-c]"), rule = t.closest("[data-r]"), room = t.closest("[data-room]"), tool = t.closest("[data-t]");
+  const val = t.type === "checkbox" ? t.checked : t.value;
+  if (ch) {
+    const c = cfg.characters[+ch.dataset.c];
+    if (t.dataset.f) c[t.dataset.f] = val;
+    if (t.dataset.sf) {
+      const k = t.closest("[data-s]").dataset.s;
+      c.states = c.states || {}; c.states[k] = { ...(c.states[k] || { image: "" }), emoji: val };
+    }
+    if (t.dataset.f === "color") t.nextElementSibling.textContent = val;
+    // 카드 안 모습만 다시 그린다(입력 중 포커스를 잃지 않게)
+    ch.querySelector(".head .av").outerHTML = `<div class="av${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, "")}</div>`;
+    ch.querySelectorAll(".st").forEach(s => s.querySelector(".av").outerHTML =
+      `<div class="av sm${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, s.dataset.s)}</div>`);
+    if (t.dataset.f === "name" || t.dataset.f === "emoji") { renderRules(); }
+  } else if (rule) {
+    cfg.assignments[+rule.dataset.r][t.dataset.f] = val;
+    if (t.dataset.f === "match") rule.querySelector("[data-f=value]").setAttribute("list", "dl-" + val);
+  } else if (room) {
+    cfg.rooms[+room.dataset.room][t.dataset.f] = val;
+  } else if (tool) {
+    cfg.toolRooms[+tool.dataset.t][t.dataset.f] = val;
+  } else if (t.id === "subChar") cfg.subagentCharacter = val;
+  else if (t.id === "meChar") cfg.meCharacter = val;
+  else if (t.id === "speech") cfg.speech = val;
+  else if (t.id === "meName") cfg.meName = val;
+  else if (t.id === "defaultRoom") cfg.defaultRoom = val;
+  light();
+});
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const ch = b.closest("[data-c]"), rule = b.closest("[data-r]"), tool = b.closest("[data-t]");
+  const act = b.dataset.act;
+  if (ch && act) {
+    const i = +ch.dataset.c, c = cfg.characters[i];
+    if (act === "del") {
+      if (cfg.characters.length === 1) return say("캐릭터는 하나 이상 있어야 합니다", "err");
+      const n = cfg.assignments.filter(a => a.character === c.id).length;
+      if (!confirm(`'${c.name}' 캐릭터를 지울까요?${n ? `\n이 캐릭터를 쓰는 배정 규칙 ${n}개도 함께 지워집니다.` : ""}`)) return;
+      cfg.characters.splice(i, 1);
+      cfg.assignments = cfg.assignments.filter(a => a.character !== c.id);
+      if (cfg.subagentCharacter === c.id) cfg.subagentCharacter = "";
+      if (cfg.meCharacter === c.id) cfg.meCharacter = "";
+    } else if (act === "img") { const n = await pick(); if (n === undefined) return; c.image = n || ""; }
+    else if (act === "noimg") c.image = "";
+    else if (act === "simg") {
+      const k = b.closest("[data-s]").dataset.s, n = await pick(); if (n === undefined) return;
+      c.states = c.states || {}; c.states[k] = { ...(c.states[k] || { emoji: "" }), image: n || "" };
+    }
+    renderAll(); return;
+  }
+  if (rule && act) {
+    const i = +rule.dataset.r, a = cfg.assignments;
+    if (act === "del") a.splice(i, 1);
+    if (act === "up" && i > 0) [a[i - 1], a[i]] = [a[i], a[i - 1]];
+    if (act === "down" && i < a.length - 1) [a[i + 1], a[i]] = [a[i], a[i + 1]];
+    renderRules(); light(); return;
+  }
+  if (tool && act === "del") { cfg.toolRooms.splice(+tool.dataset.t, 1); renderRooms(); light(); return; }
+  if (b.dataset.del) {
+    try { await api("DELETE", "/api/assets/" + encodeURIComponent(b.dataset.del)); await loadAssets(); renderLib(); }
+    catch (err) { say("지우지 못함: " + err.message, "err"); }
+  }
+});
+
+$("addChar").onclick = () => {
+  cfg.characters.push({ id: "c" + Date.now().toString(36), name: "새 캐릭터", emoji: "🙂", image: "", color: "#38bdf8", inPool: true, pixel: false, states: {} });
+  renderAll();
+  $("chars").lastElementChild.scrollIntoView({ behavior: "smooth", block: "center" });
+  $("chars").lastElementChild.querySelector("[data-f=name]").select();
+};
+$("addRule").onclick = () => {
+  const proj = agents[0] ? agents[0].project : "";
+  cfg.assignments.push({ match: "project", value: proj || "프로젝트이름", character: cfg.characters[0].id });
+  renderRules(); light();
+};
+$("addTool").onclick = () => { cfg.toolRooms.push({ pattern: "", room: "dev" }); renderRooms(); light(); };
+
+$("save").onclick = async () => {
+  try {
+    cfg = await api("PUT", "/api/config", cfg); saved = JSON.stringify(cfg);
+    renderAll(); say("저장했습니다. 사무실 화면에 바로 반영됩니다.", "ok");
+  } catch (err) { say("저장하지 못함: " + err.message, "err"); }
+};
+$("revert").onclick = () => { cfg = JSON.parse(saved); renderAll(); say("마지막으로 저장한 상태로 되돌렸습니다.", "ok"); };
+$("reset").onclick = async () => {
+  if (!confirm("캐릭터·규칙·방 이름을 모두 기본값으로 되돌릴까요? 올린 이미지는 보관함에 남습니다.")) return;
+  try { cfg = await api("POST", "/api/config/reset"); saved = JSON.stringify(cfg); renderAll(); say("기본값으로 되돌렸습니다.", "ok"); }
+  catch (err) { say(err.message, "err"); }
+};
+addEventListener("beforeunload", e => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---- 이미지 ----
+async function loadAssets() { assets = await api("GET", "/api/assets"); }
+async function upload(files) {
+  let ok = 0, last = null;
+  for (const f of files) {
+    try { const r = await api("POST", "/api/assets", f, true); ok++; last = r.name; }
+    catch (err) { say(`${f.name}: ${err.message}`, "err"); }
+  }
+  await loadAssets(); renderLib();
+  if (ok) say(`이미지 ${ok}장을 올렸습니다.`, "ok");
+  return last;
+}
+$("pickFiles").onclick = () => $("files").click();
+$("files").onchange = e => { upload([...e.target.files]); e.target.value = ""; };
+const drop = $("drop");
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); upload([...e.dataTransfer.files]); });
+
+// 이미지 고르기 대화상자. 이름을 돌려주고, "빼기"는 "", 닫기는 undefined.
+function pick() {
+  return new Promise(resolve => {
+    const dlg = $("picker");
+    const draw = () => {
+      $("pickLib").innerHTML = assets.map(a => `<div class="it pick" data-n="${esc(a.name)}"><div class="img"><img src="${a.url}" alt=""></div></div>`).join("")
+        || `<div style="color:var(--text-dim2); font-size:13px">보관함이 비어 있습니다. 새로 올려 주세요.</div>`;
+    };
+    draw();
+    const done = v => { dlg.close(); cleanup(); resolve(v); };
+    const onPick = e => { const it = e.target.closest("[data-n]"); if (it) done(it.dataset.n); };
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.onchange = async () => { const n = await upload([...input.files]); if (n) done(n); };
+    const handlers = [[$("pickLib"), "click", onPick], [$("pickNone"), "click", () => done("")],
+      [$("pickClose"), "click", () => done(undefined)], [$("pickUpload"), "click", () => input.click()],
+      [dlg, "cancel", () => done(undefined)]];
+    handlers.forEach(([el, ev, fn]) => el.addEventListener(ev, fn));
+    function cleanup() { handlers.forEach(([el, ev, fn]) => el.removeEventListener(ev, fn)); }
+    dlg.showModal();
+  });
+}
+
+// ---- 시작 ----
+(async () => {
+  try {
+    const [c, s] = await Promise.all([api("GET", "/api/config"), api("GET", "/api/state"), loadAssets()]);
+    cfg = c; saved = JSON.stringify(cfg); agents = s.agents;
+    renderAll();
+  } catch (err) { say("불러오지 못함: " + err.message, "err"); return; }
+  // 세션 목록만 실시간으로 받는다(편집 중인 설정은 덮어쓰지 않는다)
+  const es = new EventSource("/api/stream");
+  es.onmessage = e => {
+    const s = JSON.parse(e.data);
+    const sig = JSON.stringify(s.agents.map(a => [a.id, a.name, a.project, (a.subagents || []).map(x => x.id)]));
+    if (sig === renderPreview._sig) return;
+    renderPreview._sig = sig; agents = s.agents; renderDatalists(); renderPreview();
+  };
+})();
+</script>
+</body>
+</html>

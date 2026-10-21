@@ -1,0 +1,58 @@
+/* 색 토큰(다크 전용). 화면 색은 여기서만 정한다. */
+:root {
+  color-scheme: dark;
+  --bg: #070d1a;
+  --bg-2: #091121;
+  --surface: #0c1526;
+  --surface-2: #101e35;
+  --surface-3: #152440;
+  --border: #1a2d4a;
+  --border-2: #243858;
+  --brand: #00C896;
+  --brand-dark: #00A07A;
+  --brand-light: #33D4A8;
+  --text-hi: #e2e8f0;
+  --text: #94a3b8;
+  --text-dim: #8496b0;
+  --text-dim2: #5a6d8c;
+  --good: #34d399;
+  --warning: #fbbf24;
+  --bad: #f87171;
+  --info: #38bdf8;
+  --accent-alt: #a78bfa;
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Segoe UI", sans-serif;
+  --emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+a { color: var(--brand-light); }
+button, input, select { font: inherit; color: var(--text-hi); }
+button {
+  background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 8px;
+  padding: 6px 12px; cursor: pointer;
+}
+button:hover { background: var(--surface-3); }
+button.primary { background: var(--brand-dark); border-color: var(--brand); color: #04120d; font-weight: 600; }
+button.primary:hover { background: var(--brand); }
+button.danger { border-color: #7f1d1d; color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+input, select {
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 6px; padding: 5px 8px; min-width: 0;
+}
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.topbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+}
+.topbar h1 { margin: 0; font-size: 16px; color: var(--text-hi); font-weight: 700; }
+.topbar .spacer { flex: 1; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); font-size: 12px; color: var(--text);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim2); display: inline-block; }
+.dot.on { background: var(--good); }
+.dot.off { background: var(--bad); }
+.av-emo { font-family: var(--emoji); line-height: 1; }
+.av-img { width: 100%; height: 100%; object-fit: contain; }
+.pixel .av-img { image-rendering: pixelated; }
