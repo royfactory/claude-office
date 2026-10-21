@@ -4,6 +4,25 @@ import * as THREE from "/static/vendor/three.module.min.js";
 
 const { roomForTool, assignCharacters, lookFor, esc, ago } = window.Office;
 const $ = id => document.getElementById(id);
+// 내용이 바뀐 때만 DOM 을 고쳐 쓴다(SSE·타이머가 같은 내용을 다시 그려도 화면은 건드리지 않게)
+function setHTML(el, html) { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; }
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+function setStyle(el, prop, v) { if (el.style.getPropertyValue(prop) !== v) el.style.setProperty(prop, v); }
+// 3D 화면을 잠깐(ms 동안) 매 프레임 그리게 깨운다. 그 밖에는 frame() 이 낮은 빈도로만 그린다
+let wakeUntil = 0;
+function kick(ms = 250) { const u = performance.now() + ms; if (u > wakeUntil) wakeUntil = u; }
+// 'n초 전' 같은 시간 글자: HTML 에는 시각(data-ts)만 넣어 내용 비교에서 빼고, 글자는 tickTimes 가 그 칸만 채운다.
+// ts 가 없으면 '지금'(0초)으로 본다
+const agoSpan = (ts, sfx = "") => `<span data-ts="${ts == null ? "" : ts}"${sfx ? ` data-sfx="${sfx}"` : ""}></span>`;
+function tickTimes(root, now) {
+  let changed = false;
+  for (const s of root.querySelectorAll("[data-ts]")) {
+    const ts = s.dataset.ts === "" ? now : +s.dataset.ts;
+    const txt = ago(now - ts) + (s.dataset.sfx || "");
+    if (s.textContent !== txt) { s.textContent = txt; changed = true; }
+  }
+  return changed;
+}
 
 // ---------- 평면도 ----------
 // 3열(A·B·C) × 3줄(뒤·가운데·앞). 줄 사이는 가로 복도(z=-3, z=6), 열 사이는 세로 복도(x=-6.75, x=3.875).
@@ -50,6 +69,7 @@ renderer.localClippingEnabled = true;
 // 바닥(y=0) 아래는 그리지 않는 면. 엘리베이터가 내려갈 때 '나'와 바닥판이 구멍 속으로 잘려 들어가게 한다
 const FLOOR_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 renderer.shadowMap.type = THREE.PCFShadowMap;
+window.__office = { renderer };   // 성능·누수 점검용(브라우저 콘솔에서 renderer.info 를 본다)
 
 const scene = new THREE.Scene();
 // 층 하나(바닥·벽·가구·사람)는 officeRoot 에 담는다. 엘리베이터를 탈 때 카메라·탑승칸은 그대로 두고
@@ -400,6 +420,7 @@ function placeCamera() {
   camera.position.copy(target).add(CAM_OFFSET);
   camera.lookAt(target);
   camera.zoom = zoom; camera.updateProjectionMatrix();
+  kick();
 }
 function resetCamera() { target.set(0, 0, 0.5); zoom = 1; placeCamera(); }
 const RIGHT = new THREE.Vector3(1, 0, -1).normalize(), UPG = new THREE.Vector3(-1, 0, -1).normalize();
@@ -471,11 +492,11 @@ function setLook(a, ch, st) {
   const k = `${l.image}|${l.emoji}|${ch.color}|${ch.pixel}|${l.image && imageTexture(l.image, ch.pixel).userData.ready}`;
   if (a.lookKey === k) return;
   a.lookKey = k;
-  a.look.traverse(m => { if (m.isSprite) m.material.dispose(); });
+  a.look.traverse(disposeOwnMat);
   a.look.clear(); a.head = null;
   if (l.image) {
     const tex = imageTexture(l.image, ch.pixel);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 }));
+    const sp = new THREE.Sprite(perActor(new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 })));
     const img = tex.image, asp = img && img.width ? img.width / img.height : 1;
     const h = 2.0;
     sp.scale.set(h * asp, h, 1); sp.center.set(0.5, 0); sp.position.y = 0.05;
@@ -484,16 +505,25 @@ function setLook(a, ch, st) {
     const body = new THREE.Mesh(CAPSULE, mat(new THREE.Color(ch.color).getHex()));
     body.position.y = 0.6; body.castShadow = true;
     a.look.add(body);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture(l.emoji || "🙂"), transparent: true }));
+    const sp = new THREE.Sprite(perActor(new THREE.SpriteMaterial({ map: emojiTexture(l.emoji || "🙂"), transparent: true })));
     sp.scale.set(0.95, 0.95, 1); sp.position.y = 1.5;
     a.look.add(sp); a.head = sp;
   }
+  kick();
 }
+// 사람마다 따로 만든 재질(얼굴 스프라이트, 흐리게 하려고 복제한 재질)은 그 사람이 없어질 때 함께 버린다.
+// 공용 재질(mat() 캐시, 그림자·고리)과 텍스처 캐시(emoji·이미지)는 버리지 않는다
+const perActor = m => { m.userData.perActor = true; return m; };
+function disposeOwnMat(m) { if (m.material && (m.userData.own || m.material.userData.perActor)) m.material.dispose(); }
 function setOpacity(a, o) {
   a.opacity = o;
   a.group.traverse(m => {
     if (!m.material || m === a.hit) return;
-    if (!m.userData.own) { m.userData.base = m.material.opacity; m.material = m.material.clone(); m.userData.own = true; }
+    if (!m.userData.own) {
+      const orig = m.material;
+      m.userData.base = orig.opacity; m.material = orig.clone(); m.userData.own = true;
+      if (orig.userData.perActor) orig.dispose();   // 복제로 바꿔 끼운 원본 스프라이트 재질
+    }
     m.material.transparent = true;
     m.material.opacity = m.userData.base * o;
   });
@@ -508,7 +538,7 @@ function setClip(a, on) {
 }
 function disposeActor(a) {
   a.group.removeFromParent();   // 사람은 층 묶음(officeRoot) 안에 있다
-  a.group.traverse(m => { if (m.userData.own) m.material.dispose(); });
+  a.group.traverse(disposeOwnMat);
   a.lab.remove();
 }
 
@@ -572,7 +602,7 @@ function setPlaying(on) {
   $("progress").parentElement.classList.remove("paused");
   $("play").innerHTML = on ? '<i class="fa-solid fa-stop"></i> 정지' : '<i class="fa-solid fa-play"></i> 재생';
   $("play").classList.toggle("on", on);
-  $("playHint").textContent = on ? "근무 중인 층을 돌아가며 보는 중" : "근무 중인 층 순회";
+  setHTML($("playHint"), on ? "근무 중인 층을 돌아가며 보는 중" : "근무 중인 층 순회");
   $("progress").style.width = "0%";
 }
 $("play").onclick = () => setPlaying(!playing);
@@ -581,16 +611,17 @@ $("rotate").onchange = e => { rotateSec = +e.target.value; rotateAt = Date.now()
 function rotateTick() {
   const nowMs = Date.now(), dt = nowMs - lastTick;
   lastTick = nowMs;
+  if (document.hidden) { rotateAt += dt; return; }   // 탭이 숨겨진 동안은 순회도 멈춘다(남은 시간 그대로)
   if (!playing || !state) return;
   const busy = userBusy() && !transit;
   if (busy) {
     rotateAt += dt;   // 멈춘 동안 흐른 시간만큼 미뤄 남은 시간을 그대로 둔다
     const ta = $("composeText");
     const left = Math.ceil((IDLE_RESUME_MS - (nowMs - lastInput)) / 1000);
-    $("playHint").innerHTML = '<i class="fa-solid fa-circle-pause"></i>' + (document.activeElement === ta || (ta && ta.value.trim())
-      ? "메시지를 쓰는 중이라 멈춤" : `사용 중이라 잠깐 멈춤 · ${Math.max(1, left)}초 뒤 이어서`);
+    setHTML($("playHint"), '<i class="fa-solid fa-circle-pause"></i>' + (document.activeElement === ta || (ta && ta.value.trim())
+      ? "메시지를 쓰는 중이라 멈춤" : `사용 중이라 잠깐 멈춤 · ${Math.max(1, left)}초 뒤 이어서`));
   } else if (pausedNow) {
-    $("playHint").textContent = "근무 중인 층을 돌아가며 보는 중";
+    setHTML($("playHint"), "근무 중인 층을 돌아가며 보는 중");
   }
   if (busy !== pausedNow) { pausedNow = busy; $("progress").parentElement.classList.toggle("paused", busy); }
   if (busy) return;
@@ -623,8 +654,7 @@ function travelTo(project) {
 }
 function mePill(text) {
   const p = me.actor.lab.querySelector(".pill");
-  p.innerHTML = text ? `<i class="fa-solid fa-elevator"></i>${esc(text)}` : "";
-  p.dataset.st = text ? "trip" : ""; me.actor.lab._dirty = true;
+  if (setHTML(p, text ? `<i class="fa-solid fa-elevator"></i>${esc(text)}` : "")) { p.dataset.st = text ? "trip" : ""; me.actor.lab._dirty = true; kick(); }
 }
 function stepTransit(t) {
   const m = me.actor, tr = transit;
@@ -721,10 +751,10 @@ function endRide() {
 function placeCar(project, ms) {
   const story = [...$("floors").querySelectorAll(".story")].find(x => x.dataset.p === project);
   const car = $("car");
-  if (ms) car.style.transitionDuration = `${ms}ms, .3s`;
-  else if (!(transit && transit.phase === "ride")) car.style.transitionDuration = "";
-  if (story) { car.style.display = ""; car.style.transform = `translateY(${story.offsetTop}px)`; car.style.height = story.offsetHeight + "px"; }
-  else car.style.display = "none";
+  if (ms) setStyle(car, "transition-duration", `${ms}ms, .3s`);
+  else if (!(transit && transit.phase === "ride")) setStyle(car, "transition-duration", "");
+  if (story) { setStyle(car, "display", ""); setStyle(car, "transform", `translateY(${story.offsetTop}px)`); setStyle(car, "height", story.offsetHeight + "px"); }
+  else setStyle(car, "display", "none");
   // 층이 바뀌었을 때만 그 층이 보이게 빌딩을 스크롤한다(매초 갱신마다 붙잡으면 손으로 스크롤할 수 없다).
   // 엘리베이터가 움직이는 동안은 frame() 의 followCar 가 칸을 따라간다
   if (story && project !== placeCar.last && !ms) {
@@ -873,7 +903,8 @@ function apply(instant) {
   renderLog(floor);
   renderLegend();
   renderRuleBox();
-  $("empty").style.display = state.hosts.some(h => h.online) ? "none" : "grid";
+  setStyle($("empty"), "display", state.hosts.some(h => h.online) ? "none" : "grid");
+  kick();
 }
 
 function updateSigns() {
@@ -899,9 +930,9 @@ function updateMe() {
   }
   setLook(me.actor, ch, "idle");
   const nm = cfg.meName || "나";
-  me.actor.lab.querySelector(".t").textContent = nm === "나" ? "나" : `${nm} (나)`;
-  me.actor.lab.style.setProperty("--c", "#f97316");
-  me.actor.lab.querySelector(".say").style.display = "none";
+  setText(me.actor.lab.querySelector(".t"), nm === "나" ? "나" : `${nm} (나)`);
+  setStyle(me.actor.lab, "--c", "#f97316");
+  setStyle(me.actor.lab.querySelector(".say"), "display", "none");
 }
 
 // ---------- 화면 글자 ----------
@@ -910,38 +941,48 @@ function stateHTML(a, st, now) {
     const n = (a.bg || []).length, b = (a.bg || [])[0];
     return `<i class="fa-solid fa-hourglass-half"></i>백그라운드 기다리는 중${n ? ` <small>${n}개${b ? " · " + esc(b.target || b.tool) : ""}</small>` : ""}`;
   }
-  if (st === "stalled") return `<i class="fa-solid fa-hourglass-end"></i>턱 괴고 고민 중 <small>${ago(now - a.lastActivity)}</small>`;
+  if (st === "stalled") return `<i class="fa-solid fa-hourglass-end"></i>턱 괴고 고민 중 <small>${agoSpan(a.lastActivity)}</small>`;
   if (st === "working") {
     if (a.kind === "shell") return `<i class="fa-solid fa-terminal"></i>셸 명령`;
-    const long = a.since && now - a.since > 120 ? ` <small><i class="fa-solid fa-clock"></i> ${ago(now - a.since)}</small>` : "";
+    const long = a.since && now - a.since > 120 ? ` <small><i class="fa-solid fa-clock"></i> ${agoSpan(a.since)}</small>` : "";
     return `<i class="fa-solid fa-${toolIcon(a.tool)}"></i><code>${esc(a.tool)}</code>${a.target ? `<span class="tg">${esc(a.target)}</span>` : ""}${long}`;
   }
-  if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${ago(now - (a.since || now))}째</small>`;
-  return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${ago(now - a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${ago(now - (a.since || now))}</small>`;
+  if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${agoSpan(a.since || null, "째")}</small>`;
+  return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${agoSpan(a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${agoSpan(a.since || null)}</small>`;
 }
 const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", waiting: "#2dd4bf", idle: "#94a3b8" };
 function renderLabels() {
   const now = Date.now() / 1000 - skew;
+  let changed = false;
   for (const ac of actors.values()) {
     const it = ac.item; if (!it) continue;
     const lab = ac.lab;
     const say = cfg.speech !== false && it.a.say && (it.st !== "idle" || selected === it.key) ? it.a.say : "";
-    lab.querySelector(".q").textContent = say;
-    lab.querySelector(".say").style.display = say ? "" : "none";
-    const pill = lab.querySelector(".pill");
-    pill.innerHTML = stateHTML(it.a, it.st, now);
-    pill.dataset.st = it.st;
-    pill.style.display = it.st === "idle" && selected !== it.key ? "none" : "";
-    lab.querySelector(".t").textContent = it.sub ? `${it.a.type}${it.a.description ? " · " + it.a.description : ""}` : (it.a.title || it.a.name);
-    lab.style.setProperty("--c", it.ch ? it.ch.color : "#64748b");   // 명찰 띠 = 캐릭터 색
-    lab.classList.toggle("sel", selected === it.key);
-    lab.classList.toggle("idle", it.st === "idle");
+    const pillHTML = stateHTML(it.a, it.st, now), pillOff = it.st === "idle" && selected !== it.key;
+    const title = it.sub ? `${it.a.type}${it.a.description ? " · " + it.a.description : ""}` : (it.a.title || it.a.name);
+    const color = it.ch ? it.ch.color : "#64748b";
     // 쉬는 사람은 라운지에 몰려 이름표가 겹친다 — 올리거나 고르거나 크게 확대했을 때만 보인다
-    lab.classList.toggle("quiet", it.st === "idle" && selected !== it.key && hovered !== it.key && zoom < 1.8);
-    if (hovered === it.key) lab.style.zIndex = "100000";
-    ac.ring.visible = selected === it.key;
-    lab._dirty = true;
+    const sel = selected === it.key, quiet = it.st === "idle" && !sel && hovered !== it.key && zoom < 1.8;
+    const sig = [say, pillHTML, it.st, pillOff, title, color, sel, quiet].join("\u0001");
+    if (lab._sig !== sig) {   // 내용이 같으면 손대지 않는다(크기를 다시 재는 일도 없다)
+      lab._sig = sig;
+      lab.querySelector(".q").textContent = say;
+      lab.querySelector(".say").style.display = say ? "" : "none";
+      const pill = lab.querySelector(".pill");
+      pill.innerHTML = pillHTML;
+      pill.dataset.st = it.st;
+      pill.style.display = pillOff ? "none" : "";
+      lab.querySelector(".t").textContent = title;
+      lab.style.setProperty("--c", color);   // 명찰 띠 = 캐릭터 색
+      lab.classList.toggle("sel", sel);
+      lab.classList.toggle("idle", it.st === "idle");
+      lab.classList.toggle("quiet", quiet);
+      ac.ring.visible = sel;
+      lab._dirty = changed = true;
+    }
+    if (tickTimes(lab, now)) lab._dirty = changed = true;
   }
+  if (changed) kick();
 }
 function autoPick(floor) {
   if (!floor || !floor.agents.length) return;
@@ -966,7 +1007,7 @@ function renderFloors(fl) {
   const now = Date.now() / 1000 - skew;
   const chars = assignCharacters(cfg, state.agents);
   // 창문 하나 = 세션 하나. 근무 중이면 불이 켜지고 그 세션의 캐릭터가 창가에 선다
-  $("floors").innerHTML = fl.slice().reverse().map(f => {
+  setHTML($("floors"), fl.slice().reverse().map(f => {
     const ws = f.agents.slice().sort((a, b) => (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0));
     const wins = ws.slice(0, MAX_WINDOWS).map(a => {
       const ch = chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
@@ -975,14 +1016,15 @@ function renderFloors(fl) {
     }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more">+${ws.length - MAX_WINDOWS}</span>` : "");
     return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}" data-p="${esc(f.project)}">
       <span class="no" style="--h:${(f.n * 47) % 360}">${f.n}F</span>
-      <span class="info"><b>${esc(f.project)}</b><small>${f.busy ? `<em>${f.busy}명 근무 중</em> · ` : ""}세션 ${f.agents.length}개${f.busy ? "" : " · " + ago(now - f.last) + " 전"}</small>
+      <span class="info"><b>${esc(f.project)}</b><small>${f.busy ? `<em>${f.busy}명 근무 중</em> · ` : ""}세션 ${f.agents.length}개${f.busy ? "" : " · " + agoSpan(f.last, " 전")}</small>
       <span class="wins">${wins}</span></span></div>`;
-  }).join("") || `<div class="muted" style="padding:16px">보이는 세션이 없습니다.</div>`;
-  $("lobbyHosts").innerHTML = state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" ");
+  }).join("") || `<div class="muted" style="padding:16px">보이는 세션이 없습니다.</div>`);
+  tickTimes($("floors"), now);
+  setHTML($("lobbyHosts"), state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" "));
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
   const f = fl.find(x => x.project === floorKey);
-  $("floorBadge").innerHTML = f ? `<span class="badge" style="--h:${(f.n * 47) % 360}">${f.n}F</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · 세션 ${f.agents.length}개</small>` : "";
+  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${(f.n * 47) % 360}">${f.n}F</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · 세션 ${f.agents.length}개</small>` : "");
 }
 $("floors").addEventListener("click", e => {
   const f = e.target.closest("[data-p]");
@@ -995,18 +1037,20 @@ setPlaying(playing);
 
 function renderPeople(floor, chars) {
   const now = Date.now() / 1000 - skew;
-  if (!floor) { $("people").innerHTML = ""; $("detail").innerHTML = ""; updateCompose(null); updateSessionTab(null); return; }
+  if (!floor) { setHTML($("people"), ""); setHTML($("detail"), ""); updateCompose(null); updateSessionTab(null); return; }
   const rows = [];
   for (const a of floor.agents) {
     rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.name, now, false));
     for (const s of a.subagents || []) rows.push(personRow(a.id + "/" + s.id, { ...s, kind: s.tool ? "working" : "thinking", lastActivity: s.since }, chars.get(a.id + "/" + s.id), s.tool ? "working" : "thinking", `${s.type}${s.description ? " · " + s.description : ""}`, "서브에이전트", now, true));
   }
   const busy = floor.agents.filter(a => a.kind !== "idle").length;
-  $("peopleHead").textContent = `${floor.agents.length}명 · ${busy}명 근무 중`;
-  $("tabPeopleN").textContent = floor.agents.length || "";
-  $("people").innerHTML = rows.join("");
+  setText($("peopleHead"), `${floor.agents.length}명 · ${busy}명 근무 중`);
+  setText($("tabPeopleN"), String(floor.agents.length || ""));
+  setHTML($("people"), rows.join(""));
+  tickTimes($("people"), now);
   const a = floor.agents.find(x => x.id === selected) || floor.agents.find(x => selected && selected.startsWith(x.id + "/"));
-  $("detail").innerHTML = a ? detailCard(a, chars.get(a.id), now) : "";
+  setHTML($("detail"), a ? detailCard(a, chars.get(a.id), now) : "");
+  tickTimes($("detail"), now);
   updateCompose(a, now);
   updateSessionTab(a);
 }
@@ -1017,7 +1061,7 @@ function personRow(key, a, ch, st, title, sub, now, isSub) {
     <span class="av" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, st) : ""}</span>
     <span class="body"><span class="r1"><b>${esc(title)}</b><span class="st st-${st}">${label}</span></span>
     <span class="r2">${esc(line)}</span>
-    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${ago(now - (a.since || now))}${todoCount(a.todos)}</span></span></li>`;
+    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${agoSpan(a.since || null)}${todoCount(a.todos)}</span></span></li>`;
 }
 function avatarSmall(ch, st) {
   const l = lookFor(ch, st);
@@ -1070,7 +1114,7 @@ function todoList(todos) {
     `<li class="${t.st}"><i class="fa-solid fa-${icon[t.st] || "circle"}"></i><span>${esc(t.s)}</span></li>`).join("") + `</ol>`;
 }
 function detailCard(a, ch, now) {
-  const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? ago(now - r.ts) : ""}</span></li>`).join("");
+  const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? agoSpan(r.ts) : ""}</span></li>`).join("");
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
@@ -1093,8 +1137,8 @@ function showTab(name) {
 }
 document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) showTab(b.dataset.tab); });
 function updateSessionTab(a) {
-  $("sessionEmpty").hidden = !!a;
-  $("tabSessionDot").className = a ? "dot" : "";   // 고른 세션이 있으면 탭에 점
+  if ($("sessionEmpty").hidden !== !!a) $("sessionEmpty").hidden = !!a;
+  if ($("tabSessionDot").className !== (a ? "dot" : "")) $("tabSessionDot").className = a ? "dot" : "";   // 고른 세션이 있으면 탭에 점
 }
 let savedTab = "people";
 try { savedTab = localStorage.getItem("office.tab") || "people"; } catch (_) {}
@@ -1110,10 +1154,10 @@ let composeFor = null;
 const MSG_LABEL = { queued: "대기", sending: "전달 중", sent: "전달함", failed: "실패", expired: "만료" };
 function updateCompose(a, now) {
   const box = $("compose");
-  if (!a) { box.hidden = true; composeFor = null; return; }
-  box.hidden = false;
+  if (!a) { if (!box.hidden) box.hidden = true; composeFor = null; return; }
+  if (box.hidden) box.hidden = false;
   if (composeFor !== a.id) { composeFor = a.id; $("composeText").value = ""; $("composeCount").textContent = "0 / 4000"; }
-  $("composeTarget").textContent = `${a.title || a.name} @${a.host}`;
+  setText($("composeTarget"), `${a.title || a.name} @${a.host}`);
   const m = state.messaging || {};
   let note = "", warn = false, can = false;
   if (!m.auth) note = "허브에 OFFICE_TOKEN 이 없어 꺼져 있습니다(.env 에 정하고 허브를 다시 띄우세요).";
@@ -1122,13 +1166,15 @@ function updateCompose(a, now) {
   else if (a.mode === "bypassPermissions") { can = true; warn = true; note = "이 세션은 권한 확인을 건너뛰는 모드라, 메시지가 그 터미널에서 승인을 기다립니다(5분 안에 승인하지 않으면 버려짐)."; }
   else { can = true; note = "받는 Claude 는 '다른 세션이 보낸 메시지'로 받습니다. 권한 승인이나 설정 변경은 메시지로 할 수 없습니다."; }
   const help = $("composeHelp");
-  help.dataset.tip = note;
+  if (help.dataset.tip !== note) help.dataset.tip = note;
   help.classList.toggle("warn", can && warn);
   help.classList.toggle("off", !can);
-  $("composeText").disabled = !can; $("composeSend").disabled = !can;
-  $("composeText").placeholder = can ? "Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)" : "보낼 수 없음 · [?] 참고";
+  const ta = $("composeText"), ph = can ? "Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)" : "보낼 수 없음 · [?] 참고";
+  if (ta.disabled !== !can) { ta.disabled = !can; $("composeSend").disabled = !can; }
+  if (ta.placeholder !== ph) ta.placeholder = ph;
   const mine = (state.messages || []).filter(x => x.session === a.id).slice(-4).reverse();
-  $("composeLog").innerHTML = mine.map(x => `<li title="${esc(x.error || "")}"><span class="s ${x.status}">${MSG_LABEL[x.status] || x.status}</span><span class="p">${esc(x.error && x.status !== "sent" ? x.error : x.preview)}</span><span class="muted">${ago((now || Date.now() / 1000 - skew) - x.createdAt)} 전</span></li>`).join("");
+  setHTML($("composeLog"), mine.map(x => `<li title="${esc(x.error || "")}"><span class="s ${x.status}">${MSG_LABEL[x.status] || x.status}</span><span class="p">${esc(x.error && x.status !== "sent" ? x.error : x.preview)}</span><span class="muted">${agoSpan(x.createdAt, " 전")}</span></li>`).join(""));
+  tickTimes($("composeLog"), now || Date.now() / 1000 - skew);
 }
 $("composeHelp").addEventListener("pointerdown", e => {
   const h = e.currentTarget;
@@ -1163,7 +1209,8 @@ async function sendCompose() {
 function renderLog(floor) {
   const now = Date.now() / 1000 - skew;
   const l = floor ? (logs.get(floor.project) || []) : [];
-  $("log").innerHTML = l.slice(0, 30).map(x => `<li><span class="a">${ago(now - x.ts)} 전</span><span class="w">${esc(x.who)}</span><span class="x">${x.icon ? `<i class="fa-solid fa-${x.icon}"></i> ` : ""}${esc(x.text)}</span></li>`).join("") || `<li class="muted">아직 기록이 없습니다.</li>`;
+  setHTML($("log"), l.slice(0, 30).map(x => `<li><span class="a">${agoSpan(x.ts, " 전")}</span><span class="w">${esc(x.who)}</span><span class="x">${x.icon ? `<i class="fa-solid fa-${x.icon}"></i> ` : ""}${esc(x.text)}</span></li>`).join("") || `<li class="muted">아직 기록이 없습니다.</li>`);
+  tickTimes($("log"), now);
 }
 function renderLegend() {
   const sig = JSON.stringify(cfg.rooms);
@@ -1191,8 +1238,10 @@ function layoutLabels(list) {
       }
       boxes.push({ x0: p.x - lab._w / 2, x1: p.x + lab._w / 2, y0: y - lab._h, y1: y });
     }
-    lab.style.transform = `translate(${p.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
-    lab.style.zIndex = p.ac.key === hovered || p.ac.key === selected ? "100000" : String(Math.round(p.y));
+    const tf = `translate(${p.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+    if (lab._tf !== tf) { lab._tf = tf; lab.style.transform = tf; }
+    const z = p.ac.key === hovered || p.ac.key === selected ? "100000" : String(Math.round(p.y));
+    if (lab._z !== z) { lab._z = z; lab.style.zIndex = z; }
   }
 }
 
@@ -1236,20 +1285,22 @@ function renderFeed() {
   const sorted = [...feed].sort((a, b) => b.ts - a.ts);
   const recent = sorted.filter(e => now - e.ts < 3600);
   const done = recent.filter(e => e.type === "done").length, start = recent.filter(e => e.type === "start").length;
-  $("feedCounts").innerHTML = (done ? `<span class="done" title="최근 1시간 완료">완료 ${done}</span>` : "") +
-    (start ? `<span class="start" title="최근 1시간 시작">시작 ${start}</span>` : "");
+  setHTML($("feedCounts"), (done ? `<span class="done" title="최근 1시간 완료">완료 ${done}</span>` : "") +
+    (start ? `<span class="start" title="최근 1시간 시작">시작 ${start}</span>` : ""));
   const top = sorted[0];
-  $("feedLatest").innerHTML = top ? `<i class="fa-solid fa-${FEED_ICON[top.type]}"></i> ${esc(top.title)} · ${FEED_WORD[top.type]} · ${ago(now - top.ts)} 전` : "";
+  setHTML($("feedLatest"), top ? `<i class="fa-solid fa-${FEED_ICON[top.type]}"></i> ${esc(top.title)} · ${FEED_WORD[top.type]} · ${agoSpan(top.ts, " 전")}` : "");
+  tickTimes($("feedLatest"), now);
   if (!feedOpen) return;
   const list = sorted.filter(e => feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter));
-  $("feedList").innerHTML = list.slice(0, 120).map(e => {
+  setHTML($("feedList"), list.slice(0, 120).map(e => {
     const n = floorN.get(e.project);
     const what = e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
     return `<li data-id="${esc(e.id)}" data-p="${esc(e.project)}" class="${e.ts > feedSeenTs ? "unseen" : ""}">
-      <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${ago(now - e.ts)} 전</span>
+      <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${agoSpan(e.ts, " 전")}</span>
       <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b>${esc(e.title)}</b></span>
       <span class="what">${what}</span></li>`;
-  }).join("") || `<li class="empty">아직 소식이 없습니다.</li>`;
+  }).join("") || `<li class="empty">아직 소식이 없습니다.</li>`);
+  tickTimes($("feedList"), now);
 }
 // 끌어서 정한 높이(px). 0 이면 기본(무대의 42%)
 let feedH = 0;
@@ -1282,6 +1333,7 @@ $("feedGrip").addEventListener("pointerdown", e => {
     h = Math.max(FEED_MIN, Math.min(st.clientHeight - 90, startH + (startY - ev.clientY)));
     if (!feedOpen && h > FEED_CLOSE_BELOW) { feedOpen = true; st.classList.add("feed-open"); renderFeed(); }
     st.style.setProperty("--feedH", h + "px");
+    kick();
   };
   const up = () => {
     grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up);
@@ -1325,12 +1377,23 @@ $("feedList").addEventListener("click", e => {
   if (selected !== li.dataset.id) select(li.dataset.id);
 });
 setFeedOpen(feedOpen);
-setInterval(() => { if (state) renderFeed(); }, 15000);   // '몇 분 전' 갱신
 
 // ---------- 매 프레임 ----------
+// 움직이는 것(걷는 사람, 엘리베이터 연출·문, 카메라 이동·확대, 서랍 끌기, 화면 내용 변경)이 있으면 매 프레임,
+// 없으면 초당 8번만 그린다(LED 깜빡임·지구본·고민 중 고개 정도). 탭이 숨겨지면 브라우저가 프레임을 멈춘다
 const tmp = new THREE.Vector3();
+const IDLE_FRAME_MS = 125;
 let lastT = performance.now();
+function busyScene(t) {
+  if (transit || t < wakeUntil) return true;
+  for (const ac of actors.values()) if (ac.path.length || ac.fade !== undefined) return true;
+  if (me.actor && me.actor.path.length) return true;
+  const open = t < doorOpenUntil;
+  return doors.some(d => Math.abs(d.base + (open ? d.dir * 1.6 : 0) - d.m.position.x) > 0.003);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { lastT = performance.now(); kick(); } });
 function frame(t) {
+  if (!busyScene(t) && t - lastT < IDLE_FRAME_MS) { requestAnimationFrame(frame); return; }
   const dt = Math.min(0.12, (t - lastT) / 1000); lastT = t;  // 느린 기기에서도 걸음이 늦어지지 않게
   const w = stage.clientWidth, h = stage.clientHeight;
   const all = me.actor ? [...actors.values(), me.actor] : [...actors.values()];
@@ -1376,21 +1439,103 @@ buildOffice();
 new ResizeObserver(resize).observe(stage);
 resize();
 requestAnimationFrame(frame);
-setInterval(() => { if (state) { renderLabels(); const fl = floors(); renderFloors(fl); const f = fl.find(x => x.project === floorKey); renderPeople(f, assignCharacters(cfg, state.agents)); renderLog(f); } }, 5000);
+// 5초마다 시간에 따라 바뀌는 글자('n초 전', 오래 걸림 표시, 최근 1시간 수)를 맞춘다. 내용이 같으면 DOM 은 그대로
+setInterval(() => {
+  if (!state || document.hidden) return;
+  renderLabels(); const fl = floors(); renderFloors(fl); const f = fl.find(x => x.project === floorKey);
+  renderPeople(f, assignCharacters(cfg, state.agents)); renderLog(f); renderFeed();
+}, 5000);
 
-let seeded = false;
-function connect() {
-  const es = new EventSource("/api/stream");
-  let first = true;
-  es.onopen = () => { $("live").className = "live on"; $("liveText").textContent = "LIVE"; };
-  es.onmessage = e => {
-    state = JSON.parse(e.data);
-    skew = Date.now() / 1000 - state.now;
-    cfg = state.config;
-    trackLogs(!seeded); trackFeed(!seeded); seeded = true;
-    apply(first);
-    first = false;
-  };
-  es.onerror = () => { $("live").className = "live off"; $("liveText").textContent = "다시 연결 중"; };
+// ---------- 허브 연결 ----------
+// 짧은 끊김은 EventSource 의 기본 재연결에 맡긴다. 그동안 화면 위에 '연결 끊김 · n초 전 데이터'를 띄우고,
+// 다시 받은 상태를 반영하면 지운다. 오래 못 붙거나(브라우저가 포기했거나 계속 실패) 허브가 오래 조용한데
+// /health 도 답이 없으면 EventSource 를 닫고 지수 백오프(1→2→4…30초)로 직접 다시 연다.
+// 활동 로그·최근 소식은 처음 한 번만 채우고(seeded), 다시 붙은 뒤에는 바뀐 것만 더한다. 허브가 막 다시 떠서
+// 수집기 보고가 아직 없는 빈 상태는 잠깐 미뤄, 세션이 다 끝났다가 다시 생긴 것처럼 소식이 쌓이지 않게 한다.
+const PROBE_AFTER_MS = 25000, GIVEUP_MS = 12000, RESYNC_MS = 8000, BACKOFF_MAX = 30000;
+let seeded = false, es = null, aliveAt = Date.now(), lostAt = 0, retryMs = 1000, retryTimer = 0;
+let connectingSince = 0, resyncUntil = 0, knownHosts = [], held = null, probing = false, hiddenDirty = false;
+function setLive(on) {
+  const el = $("live"), cls = on ? "live on" : "live off";
+  if (el.className !== cls) el.className = cls;
+  setText($("liveText"), on ? "LIVE" : "다시 연결 중");
 }
+function showStale() {
+  const el = $("stale");
+  if (!lostAt) { el.classList.remove("on"); return; }
+  setText($("staleText"), `연결 끊김 · ${ago(Math.max(0, (Date.now() - aliveAt) / 1000))} 전 데이터`);
+  el.classList.add("on");
+}
+function markLost() {
+  if (!lostAt) lostAt = Date.now();
+  setLive(false); showStale();
+}
+function scheduleReconnect() {
+  if (es) { es.close(); es = null; }
+  clearTimeout(retryTimer);
+  const wait = retryMs * (0.8 + Math.random() * 0.4);
+  retryMs = Math.min(BACKOFF_MAX, retryMs * 2);
+  markLost();
+  retryTimer = setTimeout(connect, wait);
+}
+function connect() {
+  clearTimeout(retryTimer);
+  if (es) es.close();
+  const src = es = new EventSource("/api/stream");
+  let first = true;   // 이 연결의 첫 상태: 새로 보이는 사람은 걸어 들어오지 않고 제자리에 둔다
+  connectingSince = Date.now();
+  src.onopen = () => {
+    if (es !== src) return;
+    connectingSince = 0; retryMs = 1000; setLive(true);
+    if (seeded && lostAt) resyncUntil = Date.now() + RESYNC_MS;
+  };
+  src.onmessage = e => {
+    if (es !== src) return;
+    if (onState(JSON.parse(e.data), first)) first = false;
+  };
+  src.onerror = () => {
+    if (es !== src) return;
+    if (!lostAt && !connectingSince) aliveAt = Date.now();   // 열려 있다 방금 끊김: 그때까지 받은 상태는 최신이었다
+    markLost();
+    if (!connectingSince) connectingSince = Date.now();
+    // 브라우저가 포기했거나(허브가 오류 응답) 한동안 계속 실패하면 직접 백오프로
+    if (src.readyState === EventSource.CLOSED || Date.now() - lostAt > GIVEUP_MS) scheduleReconnect();
+  };
+}
+function onState(s, first, force) {
+  // 다시 붙은 직후, 전에 보던 컴퓨터가 아직 다 보고하지 않았으면(허브 재시작 직후) 잠깐 기다린다
+  if (!force && seeded && Date.now() < resyncUntil &&
+      !knownHosts.every(h => s.hosts.some(x => x.host === h && x.online))) { held = { s, first }; return false; }
+  held = null; resyncUntil = 0;
+  state = s;
+  skew = Date.now() / 1000 - state.now;
+  cfg = state.config;
+  knownHosts = state.hosts.filter(h => h.online).map(h => h.host);
+  trackLogs(!seeded); trackFeed(!seeded); seeded = true;
+  if (document.hidden) hiddenDirty = true;   // 숨겨진 동안은 상태만 받아 두고, 다시 보일 때 한 번에 그린다
+  else apply(first);
+  aliveAt = Date.now(); lostAt = 0; retryMs = 1000; setLive(true); showStale();
+  return true;
+}
+// 1초마다: 끊김 표시의 초를 올리고, 막힌 연결을 정리하고, 오래 조용하면 허브가 살아 있는지 묻는다
+setInterval(() => {
+  const now = Date.now();
+  if (held && now >= resyncUntil) onState(held.s, held.first, true);
+  if (lostAt && !document.hidden) showStale();
+  if (es && connectingSince && lostAt && now - connectingSince > GIVEUP_MS) { scheduleReconnect(); return; }
+  if (es && es.readyState === EventSource.OPEN && !lostAt && now - aliveAt > PROBE_AFTER_MS && !probing && !document.hidden) {
+    probing = true;
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 5000);
+    fetch("/health", { cache: "no-store", signal: ac.signal })
+      .then(r => { if (!r.ok) throw new Error(r.status); aliveAt = Date.now(); })
+      .catch(() => scheduleReconnect())
+      .finally(() => { clearTimeout(to); probing = false; });
+  }
+}, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !state) return;
+  if (hiddenDirty) { hiddenDirty = false; apply(true); }
+  renderFeed();
+});
+addEventListener("online", () => { if (lostAt) { retryMs = 1000; connect(); } });
 connect();

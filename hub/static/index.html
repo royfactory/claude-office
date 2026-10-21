@@ -176,6 +176,11 @@
           font-size: 11px; padding: 4px 10px; border-radius: 999px; }
   .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
   .live.off { color: #991b1b; } .live.off::before { background: #ef4444; }
+  /* 허브와 끊긴 동안: 화면 위쪽 가운데에 '연결 끊김 · n초 전 데이터'. 다시 붙으면 사라진다 */
+  #stale { top: 14px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 7px; z-index: 6;
+           background: rgba(127,29,29,.94); color: #fee2e2; border: 1px solid #f87171; border-radius: 999px; padding: 5px 14px;
+           font-size: 12px; font-weight: 600; box-shadow: 0 2px 12px rgba(0,0,0,.35); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #stale.on { display: inline-flex; }
   .topr a { background: rgba(255,255,255,.95); color: #0f172a; font-size: 12px; padding: 4px 10px; border-radius: 999px; text-decoration: none; }
   .zoom { left: 14px; bottom: calc(var(--feedH) + 12px); transition: bottom .25s ease; display: flex; flex-direction: column; gap: 6px; }
   .zoom button { width: 34px; height: 34px; padding: 0; border-radius: 9px; background: rgba(255,255,255,.95); color: #0f172a; border: 0; font-size: 17px; }
@@ -346,6 +351,7 @@
     <div id="labels"></div>
     <div class="ov" id="floorBadge"></div>
     <div class="ov" id="ride"></div>
+    <div class="ov" id="stale" role="status"><i class="fa-solid fa-plug-circle-xmark"></i><span id="staleText">연결 끊김</span></div>
     <div class="ov topr"><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin"><i class="fa-solid fa-gear"></i> 캐릭터 관리</a></div>
     <button class="edge left" id="toggleLeft" title="빌딩 패널 접기"><i class="fa-solid fa-chevron-left"></i></button>
     <button class="edge right" id="toggleRight" title="오른쪽 패널 접기"><i class="fa-solid fa-chevron-right"></i></button>
