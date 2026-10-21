@@ -46,6 +46,9 @@ try {
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
+renderer.localClippingEnabled = true;
+// 바닥(y=0) 아래는 그리지 않는 면. 엘리베이터가 내려갈 때 '나'와 바닥판이 구멍 속으로 잘려 들어가게 한다
+const FLOOR_CLIP = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
@@ -356,8 +359,17 @@ function buildCabin() {
   rim.position.y = 0.07; g.add(rim);
   const sign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false })); sign.position.y = 3.4; sign.renderOrder = 12; g.add(sign);
   g.position.set(x, 0, z); g.visible = false;
+  for (const mm of [plate.material, rim.material, sign.material]) mm.clippingPlanes = [FLOOR_CLIP];
   scene.add(g);
-  cabin = { group: g, sign, fadeMats: [plate.material, rim.material, sign.material] };
+  // 내려갈 때 엘리베이터 바닥에 열리는 구멍(어두운 승강로 입구). 가운데서부터 벌어진다
+  const hole = new THREE.Group();
+  const pit = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 3.7), new THREE.MeshBasicMaterial({ color: 0x05070c }));
+  pit.rotation.x = -Math.PI / 2; hole.add(pit);
+  const lip = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(3.5, 0.01, 3.7)), new THREE.LineBasicMaterial({ color: 0xfbbf24 }));
+  hole.add(lip);
+  hole.position.set(x, 0.065, z); hole.visible = false;
+  scene.add(hole);
+  cabin = { group: g, sign, hole, fadeMats: [plate.material, rim.material, sign.material] };
 }
 function buildCafe() {
   themed.push([box(11.5, 0.05, 4.8, 0xf3dfc6, 11, 0, 9.6, { cast: false }), 0xf3dfc6, 0.35]);
@@ -484,6 +496,14 @@ function setOpacity(a, o) {
     if (!m.userData.own) { m.userData.base = m.material.opacity; m.material = m.material.clone(); m.userData.own = true; }
     m.material.transparent = true;
     m.material.opacity = m.userData.base * o;
+  });
+}
+function setClip(a, on) {
+  setOpacity(a, a.opacity ?? 1);   // 재질을 그 사람 전용으로 복제해 둔다
+  a.group.traverse(m => {
+    if (!m.material || m === a.hit) return;
+    m.material.clippingPlanes = on ? [FLOOR_CLIP] : null;
+    m.material.needsUpdate = true;
   });
 }
 function disposeActor(a) {
@@ -621,18 +641,20 @@ function stepTransit(t) {
     tr.dur = tr.vanish + tr.travel + tr.appear;
     tr.shown = null; tr.swapped = false;
     scene.attach(m.group);                       // '나'는 층 묶음에서 빠져 바닥판과 함께 움직인다
+    setClip(m, true);
     cabin.group.visible = true; cabin.group.position.y = 0;
     $("stage").classList.add("riding");
     $("ride").classList.add("on");
     placeCar(tr.target, tr.dur);
   } else if (tr.phase === "ride") {
-    // 위로는 높이 올라가 사라지고, 바닥 아래로는 짧게만 움직인다(쿼터뷰에서 바닥 아래는 건물 밖으로 비쳐 보여서)
-    const el = t - tr.t, from = tr.from || tr.n, UP = 7, DOWN = 2.6;
-    let y = 0, alpha = 1, cur = from;
-    if (el < tr.vanish) {                        // 떠나기: 천천히 출발해 빨라지며 사라진다
+    // 위로 갈 때는 높이 올라가며 흐려진다. 아래로 갈 때는 바닥에 구멍이 열리고 그 속으로 내려가며,
+    // 바닥 아래는 잘라 그리지 않는다(FLOOR_CLIP). 새 층에서 아래로부터 올라올 때도 구멍을 열고 닫는다
+    const el = t - tr.t, from = tr.from || tr.n, UP = 7, DEPTH = 3.8;
+    let y = 0, alpha = 1, cur = from, hole = 0, labA = 1;
+    if (el < tr.vanish) {                        // 떠나기
       const p = el / tr.vanish;
-      if (tr.dir > 0) { y = UP * p * p; alpha = 1 - p; }
-      else { y = -DOWN * p * p; alpha = (1 - p) * (1 - p) * (1 - p); }
+      if (tr.dir > 0) { y = UP * p * p; alpha = 1 - p; labA = 1 - p; }
+      else { hole = Math.min(1, p * 5); const q = Math.max(0, (p - 0.18) / 0.82); y = -DEPTH * q * q; labA = 1 - q; }
     } else if (el < tr.vanish + tr.travel) {      // 이동: 아무도 안 보이고 층 숫자만 올라간다(그사이 층을 바꾼다)
       if (!tr.swapped) {
         tr.swapped = true;
@@ -641,17 +663,26 @@ function stepTransit(t) {
       }
       const p = (el - tr.vanish) / tr.travel;
       cur = Math.round(from + (tr.n - from) * p);
-      y = tr.dir > 0 ? UP : -DOWN; alpha = 0;
-    } else {                                     // 도착: 반대쪽에서 들어와 천천히 멈춘다
-      const p = Math.min(1, (el - tr.vanish - tr.travel) / tr.appear), q = 1 - (1 - p) * (1 - p);
-      if (tr.dir > 0) { y = -DOWN * (1 - q); alpha = q * q * q; }   // 아래에서 올라온다
-      else { y = UP * (1 - q); alpha = q; }                         // 위에서 내려온다
+      y = tr.dir > 0 ? UP : -DEPTH; alpha = tr.dir > 0 ? 0 : 1; labA = 0;
+      hole = tr.dir > 0 ? 0 : Math.max(0, 1 - (el - tr.vanish) / 350);   // 내려간 뒤 구멍이 닫힌다
+    } else {                                     // 도착
+      const p = Math.min(1, (el - tr.vanish - tr.travel) / tr.appear);
+      if (tr.dir > 0) {                          // 아래에서 구멍을 열고 올라온다
+        hole = p < 0.82 ? Math.min(1, p * 5) : Math.max(0, (1 - p) / 0.18);
+        const r = Math.min(1, Math.max(0, (p - 0.1) / 0.72)), e = 1 - (1 - r) * (1 - r);
+        y = -DEPTH * (1 - e); labA = e;
+      } else {                                   // 위에서 내려온다
+        const q = 1 - (1 - p) * (1 - p);
+        y = UP * (1 - q); alpha = q; labA = q;
+      }
       cur = tr.n;
     }
+    cabin.hole.visible = hole > 0.01;
+    cabin.hole.scale.set(Math.max(0.01, hole), 1, Math.max(0.01, hole));
     cabin.group.position.y = y;
     m.rideY = y;
     setOpacity(m, alpha);
-    m.lab.style.opacity = String(alpha);
+    m.lab.style.opacity = String(labA);
     cabin.fadeMats.forEach(mm => { mm.opacity = alpha; });
     if (cur !== tr.shown) {
       tr.shown = cur;
@@ -677,10 +708,11 @@ function stepTransit(t) {
 // 탑승 연출을 정리하고 '나'를 다시 층 묶음에 넣는다(도착했을 때, 또는 손으로 층을 바꿔 끊었을 때)
 function endRide() {
   officeRoot.position.y = 0;
-  if (cabin) { cabin.group.visible = false; cabin.group.position.y = 0; cabin.fadeMats.forEach(mm => { mm.opacity = 1; }); }
+  if (cabin) { cabin.group.visible = false; cabin.group.position.y = 0; cabin.hole.visible = false; cabin.fadeMats.forEach(mm => { mm.opacity = 1; }); }
   if (me.actor) {
     me.actor.rideY = 0;
     setOpacity(me.actor, 1);
+    setClip(me.actor, false);
     me.actor.lab.style.opacity = "";
     if (me.actor.group.parent !== officeRoot) officeRoot.attach(me.actor.group);
   }
