@@ -173,7 +173,7 @@ async function api(method, url, body, raw, retried) {
   if (token) headers["X-Office-Token"] = token;
   const r = await fetch(url, { method, headers, body: raw ? body : (body ? JSON.stringify(body) : undefined) });
   if (r.status === 401 && !retried) {
-    const t = prompt("이 허브는 쓰기에 토큰이 필요합니다. OFFICE_TOKEN 값을 넣어 주세요.");
+    const t = prompt("이 허브는 쓰기에 토큰이 필요합니다.\n허브를 띄운 컴퓨터의 claude-office 폴더 .env 파일에서 OFFICE_TOKEN= 뒤의 값입니다. 한 번 넣으면 이 브라우저가 기억합니다.");
     if (t) { token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {} return api(method, url, body, raw, true); }
   }
   const txt = await r.text();

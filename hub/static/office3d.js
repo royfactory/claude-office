@@ -1365,7 +1365,7 @@ async function tokenFetch(url, opts = {}, ask = true) {
   for (let tries = 0; tries < 2; tries++) {
     const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(token ? { "X-Office-Token": token } : {}) } });
     if (r.status !== 401 || !ask) return r;
-    const t = prompt("허브의 OFFICE_TOKEN 이 필요합니다. 값을 넣어 주세요.");
+    const t = prompt("허브의 OFFICE_TOKEN 이 필요합니다.\n허브를 띄운 컴퓨터의 claude-office 폴더 .env 파일에서 OFFICE_TOKEN= 뒤의 값입니다. 한 번 넣으면 이 브라우저가 기억합니다.");
     if (!t) return r;
     token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {}
   }
@@ -1468,7 +1468,7 @@ async function sendCompose() {
       headers: { "Content-Type": "application/json", ...(token ? { "X-Office-Token": token } : {}) },
       body: JSON.stringify({ host: a.host, session: a.id, text }) });
     if (r.status === 401) {
-      const t = prompt("메시지 보내기에는 허브의 OFFICE_TOKEN 이 필요합니다. 값을 넣어 주세요.");
+      const t = prompt("메시지 보내기에는 허브의 OFFICE_TOKEN 이 필요합니다.\n허브를 띄운 컴퓨터의 claude-office 폴더 .env 파일에서 OFFICE_TOKEN= 뒤의 값입니다. 한 번 넣으면 이 브라우저가 기억합니다.");
       if (!t) return;
       token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {}
       continue;
