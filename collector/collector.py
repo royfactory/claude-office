@@ -470,6 +470,34 @@ class Collector:
         return agents
 
 
+# 이 컴퓨터의 Claude 전역 지침에 '할 일 체크리스트' 규칙이 있는지. 없으면 화면이 넣을 문장을 안내한다
+_rule_cache = {"at": 0.0, "ok": False}
+
+
+def checklist_rule_installed():
+    if time.time() - _rule_cache["at"] < 60:
+        return _rule_cache["ok"]
+    ok = False
+    for root in claude_roots():
+        for path in [os.path.join(root, "CLAUDE.md")]:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            # '@~/.claude/CLAUDE.md' 처럼 다른 파일을 끌어오는 줄은 한 단계만 따라간다(Orca 프로필이 이렇게 한다)
+            for inc in re.findall(r"(?m)^@(\S+)", text):
+                try:
+                    with open(os.path.expanduser(inc), encoding="utf-8") as f:
+                        text += "\n" + f.read()
+                except OSError:
+                    pass
+            if "TaskCreate" in text or "TodoWrite" in text:
+                ok = True
+    _rule_cache.update(at=time.time(), ok=ok)
+    return ok
+
+
 def post(hub, payload, timeout=5):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
@@ -588,7 +616,7 @@ def main():
             # lastActivity 만 바뀐 경우까지 매초 보내지 않도록 비교에서 뺀다
             sig = json.dumps([{k: v for k, v in a.items() if k != "lastActivity"} for a in agents], sort_keys=True)
             if sig != last_sent or time.time() - last_at > HEARTBEAT_SEC:
-                post(args.hub, {"host": args.host, "agents": agents})
+                post(args.hub, {"host": args.host, "agents": agents, "meta": {"checklistRule": checklist_rule_installed()}})
                 last_sent, last_at = sig, time.time()
                 if failing:
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)

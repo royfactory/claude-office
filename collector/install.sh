@@ -66,3 +66,17 @@ PL
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 echo "[collector] 설치함 → ${HUB:-http://127.0.0.1:3006} (로그 $APP_DIR/collector.log)"
+
+# Claude 전역 지침에 '할 일 체크리스트' 규칙이 없으면 넣을 문장을 보여 준다(대시보드의 할 일 목록이 이걸로 생긴다)
+if ! grep -qsE "TaskCreate|TodoWrite" "$HOME/.claude/CLAUDE.md"; then
+  cat <<'HINT'
+
+[claude-office] 할 일 체크리스트를 보려면 Claude 전역 지침(~/.claude/CLAUDE.md)에 아래 문장을 넣으세요.
+               (새로 시작한 세션부터 적용, 대시보드 「안내」 탭에도 같은 문장과 복사 버튼이 있습니다)
+
+## 할 일 체크리스트
+
+- 단계가 2개 이상인 작업은 시작할 때 할 일 도구(`TaskCreate`, 없으면 `TodoWrite`)로 단계 목록을 만들고,
+  단계를 시작하고 끝낼 때마다 `TaskUpdate`로 상태(진행 중·완료)를 바꾼다. 한 번에 끝나는 질문·작은 수정에는 만들지 않는다.
+HINT
+fi

@@ -243,7 +243,7 @@ class Hub:
         for name, h in sorted(self.hosts.items()):
             age = now - h["receivedAt"]
             hosts.append({"host": name, "age": round(age, 1), "online": age < HOST_STALE_SEC,
-                          "count": len(h["agents"])})
+                          "count": len(h["agents"]), **h.get("meta", {})})
             if age < HOST_STALE_SEC:
                 agents.extend({**a, "host": name} for a in h["agents"])
         msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
@@ -326,9 +326,11 @@ async def ingest(request: Request) -> dict:
     agents = body.get("agents")
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", host) or not isinstance(agents, list) or len(agents) > 200:
         raise HTTPException(400, "host·agents 형식이 맞지 않다")
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    meta = {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
     prev = hub.hosts.get(host)
-    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents}
-    if prev is None or prev["agents"] != agents:
+    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta}
+    if prev is None or prev["agents"] != agents or prev.get("meta") != meta:
         await hub.bump()
     return {"ok": True}
 

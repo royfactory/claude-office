@@ -840,6 +840,7 @@ function apply(instant) {
   renderPeople(floor, chars);
   renderLog(floor);
   renderLegend();
+  renderRuleBox();
   $("empty").style.display = state.hosts.some(h => h.online) ? "none" : "grid";
 }
 
@@ -991,6 +992,40 @@ function avatarSmall(ch, st) {
   return l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt=""${ch.pixel ? ' style="image-rendering:pixelated"' : ""}>` : `<span class="emo">${esc(l.emoji || "🙂")}</span>`;
 }
 // 할 일 체크리스트: 세션의 Claude 가 TaskCreate/TaskUpdate(또는 TodoWrite)로 만든 목록을 보여 주기만 한다
+// 각 컴퓨터의 Claude 전역 지침(~/.claude/CLAUDE.md)에 넣을 문장. 이게 있어야 Claude 가 할 일 목록을 늘 만든다
+const CHECKLIST_RULE = "## 할 일 체크리스트\n\n- 단계가 2개 이상인 작업은 시작할 때 할 일 도구(`TaskCreate`, 없으면 `TodoWrite`)로 단계 목록을 만들고,\n  단계를 시작하고 끝낼 때마다 `TaskUpdate`로 상태(진행 중·완료)를 바꾼다. 한 번에 끝나는 질문·작은 수정에는 만들지 않는다.\n";
+function ruleHint(host) {
+  return `<div class="rule-hint"><p><i class="fa-solid fa-circle-info"></i> <b>${esc(host)}</b> 의 Claude 전역 지침에 할 일 체크리스트 규칙이 없어 목록이 잘 안 생깁니다.
+    그 컴퓨터의 <code>~/.claude/CLAUDE.md</code>(Windows: <code>%USERPROFILE%\\.claude\\CLAUDE.md</code>)에 아래 문장을 넣고 세션을 다시 시작하세요.</p>
+    <pre>${esc(CHECKLIST_RULE)}</pre><button class="copy" data-copy="rule"><i class="fa-solid fa-copy"></i> 문장 복사</button></div>`;
+}
+function hostInfo(host) { return (state && state.hosts.find(h => h.host === host)) || {}; }
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta = document.createElement("textarea");   // http 주소(보안 컨텍스트 아님)에서는 예전 방식으로
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta);
+  ta.select(); try { document.execCommand("copy"); } finally { ta.remove(); }
+  return Promise.resolve();
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-copy=rule]"); if (!b) return;
+  copyText(CHECKLIST_RULE).then(() => { b.innerHTML = '<i class="fa-solid fa-check"></i> 복사했습니다'; setTimeout(() => { b.innerHTML = '<i class="fa-solid fa-copy"></i> 문장 복사'; }, 1800); });
+});
+function renderRuleBox() {
+  if (!state) return;
+  const rows = state.hosts.map(h => {
+    const st = h.checklistRule === true ? `<span class="ok"><i class="fa-solid fa-circle-check"></i> 들어 있음</span>`
+      : h.checklistRule === false ? `<span class="no"><i class="fa-solid fa-circle-xmark"></i> 없음</span>` : `<span class="muted">확인 전</span>`;
+    return `<li><b>${esc(h.host)}</b>${st}</li>`;
+  }).join("");
+  const sig = rows;
+  if (renderRuleBox.sig === sig) return;
+  renderRuleBox.sig = sig;
+  $("ruleBox").innerHTML = `<div class="pane-head">할 일 체크리스트 설정</div>
+    <p class="muted">Claude 가 여러 단계 작업마다 할 일 목록을 만들게 하려면, 세션을 띄우는 컴퓨터마다 Claude 전역 지침
+    <code>~/.claude/CLAUDE.md</code>(Windows: <code>%USERPROFILE%\\.claude\\CLAUDE.md</code>)에 아래 문장을 넣습니다. 새로 시작한 세션부터 적용됩니다.</p>
+    <ol class="rule-hosts">${rows}</ol><pre>${esc(CHECKLIST_RULE)}</pre><button class="copy" data-copy="rule"><i class="fa-solid fa-copy"></i> 문장 복사</button>`;
+}
 function todoCount(todos) {
   if (!todos || !todos.length) return "";
   return ` · 할 일 ${todos.filter(t => t.st === "completed").length}/${todos.length}`;
@@ -1007,7 +1042,7 @@ function detailCard(a, ch, now) {
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
-    ${todoList(a.todos)}
+    ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
 }
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });

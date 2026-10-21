@@ -250,6 +250,17 @@
   .todos li.completed i { color: var(--good); }
   .todos li.in_progress { color: var(--text-hi); font-weight: 700; } .todos li.in_progress i { color: var(--info); }
   .todos li.pending i { color: var(--text-dim2); font-size: 7px; }
+  .rule-hint { margin: 10px 0 4px; padding: 10px; border: 1px dashed var(--warning); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+  .rule-hint p, #ruleBox p { margin: 0 0 8px; }
+  .rule-hint i.fa-circle-info { color: var(--warning); }
+  .rule-hint pre, #ruleBox pre { margin: 0 0 8px; padding: 8px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+                                 font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-hi); white-space: pre-wrap; word-break: break-all; }
+  .rule-hint code, #ruleBox code { font-size: 11px; color: var(--brand-light); }
+  button.copy { padding: 4px 10px; font-size: 12px; }
+  #ruleBox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+  #ruleBox p.muted { line-height: 1.5; }
+  .rule-hosts { margin: 0 0 8px; } .rule-hosts li { display: flex; justify-content: space-between; padding: 3px 0; }
+  .rule-hosts .ok { color: var(--good); } .rule-hosts .no { color: var(--bad); }
   .todo-n { color: var(--text-dim2); font-weight: 500; margin-left: 4px; }
   .st-idle { color: var(--text-dim); border-color: var(--border-2); }
   .detail .dh { display: flex; gap: 10px; align-items: center; }
@@ -391,6 +402,7 @@
     <section class="pane" data-pane="legend" role="tabpanel">
       <div class="pane-head">어디서 무엇을 하나</div>
       <ol id="legend"></ol>
+      <div id="ruleBox"></div>
     </section>
   </aside>
 </div>
