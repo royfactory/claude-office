@@ -1,10 +1,16 @@
 """hub/app.py 테스트(FastAPI TestClient). 허브 의존성(hub/requirements.txt)과 httpx 가 있어야 돈다."""
+import asyncio
 import json
+import math
+import socket
+import threading
+import time
 
 import pytest
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from conftest import HUB_PY, load_module  # noqa: E402
@@ -342,3 +348,299 @@ def test_asset_names_are_strict(hub):
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404
     assert c.delete("/api/assets/abc.png").status_code == 404
     assert c.get("/assets/0123456789abcdef.svg").status_code == 404
+
+
+# ---------- 롱폴링 /api/outbox/wait ----------
+# 기다리는 요청과 넣는 요청이 한 이벤트 루프에서 동시에 돌아야 해서, 동시성 시험은 httpx.AsyncClient(ASGI)로
+# asyncio.run 안에서 한다. TestClient(별도 루프)와 섞으면 hub.queued 가 두 루프에 걸리므로 넣기·기다리기는 한쪽만 쓴다.
+
+def _ready(c, host="mac", sids=("s1",)):
+    """메시지 켜기 + 그 컴퓨터 세션을 받을 수 있게 올려 둔다."""
+    _messaging_on(c)
+    agents = [agent(s, canMessage=True) for s in sids]
+    assert c.post("/api/ingest", json={"host": host, "agents": agents}, headers=AUTH).status_code == 200
+
+
+def _aclient(mod):
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=mod.app), base_url="http://hub", headers=AUTH)
+
+
+class FakeRequest:
+    """outbox_wait 를 직접 부를 때 쓰는 가짜 요청. limit 번 넘게 물으면 '안 끝나는 고리'로 보고 멈춘다."""
+
+    def __init__(self, disconnected=False, limit=200):
+        self.disconnected, self.limit, self.calls = disconnected, limit, 0
+
+    async def is_disconnected(self):
+        self.calls += 1
+        if self.calls > self.limit:
+            raise RuntimeError("outbox_wait 가 끝나지 않고 계속 돈다")
+        await asyncio.sleep(0)
+        return self.disconnected
+
+
+def test_wait_default_and_cap_are_25s(authed):
+    mod, _ = authed
+    assert mod.WAIT_MAX_SEC == 25 and mod.Wait(host="h").timeout == 25
+
+
+def test_wait_returns_already_queued_message_at_once(authed):
+    mod, c = authed
+    _ready(c)
+    mid = c.post("/api/sessions/message", json=MSG, headers=AUTH).json()["id"]
+    t0 = time.monotonic()
+    r = c.post("/api/outbox/wait", json={"host": "mac", "timeout": 25}, headers=AUTH)
+    assert time.monotonic() - t0 < 2
+    assert r.status_code == 200 and r.json() == {"messages": [{"id": mid, "session": "s1", "text": MSG["text"]}]}
+    assert c.get("/api/state").json()["messages"][0]["status"] == "sending"
+    # 한 번 가져간 것은 다시 오지 않는다
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0}, headers=AUTH).json() == {"messages": []}
+
+
+def test_wait_wakes_as_soon_as_message_is_queued(authed):
+    mod, c = authed
+    _ready(c)
+
+    async def go():
+        async with _aclient(mod) as ac:
+            waiter = asyncio.create_task(ac.post("/api/outbox/wait", json={"host": "mac", "timeout": 10}))
+            await asyncio.sleep(0.2)
+            assert not waiter.done()                       # 큐가 비어 있으면 기다린다
+            t0 = time.monotonic()
+            mid = (await ac.post("/api/sessions/message", json=MSG)).json()["id"]
+            r = await asyncio.wait_for(waiter, 3)
+            return mid, r, time.monotonic() - t0
+
+    mid, r, took = asyncio.run(go())
+    assert took < 1.0                                       # 5초 주기 확인을 기다리지 않고 바로 깨어난다
+    assert r.status_code == 200 and [m["id"] for m in r.json()["messages"]] == [mid]
+    assert mod.hub.outbox[0]["status"] == "sending"
+
+
+def test_wait_ignores_messages_for_other_hosts(authed):
+    mod, c = authed
+    _ready(c)
+
+    async def go():
+        async with _aclient(mod) as ac:
+            other = asyncio.create_task(ac.post("/api/outbox/wait", json={"host": "pc", "timeout": 0.6}))
+            await asyncio.sleep(0.1)
+            await ac.post("/api/sessions/message", json=MSG)
+            return await asyncio.wait_for(other, 3)
+
+    assert asyncio.run(go()).json() == {"messages": []}
+    assert mod.hub.outbox[0]["status"] == "queued"        # mac 앞 메시지는 그대로 남는다
+
+
+def test_two_waiters_same_host_get_message_once(authed):
+    mod, c = authed
+    _ready(c)
+
+    async def go():
+        async with _aclient(mod) as ac:
+            ws = [asyncio.create_task(ac.post("/api/outbox/wait", json={"host": "mac", "timeout": 0.8}))
+                  for _ in range(2)]
+            await asyncio.sleep(0.1)
+            await ac.post("/api/sessions/message", json=MSG)
+            return [r.json()["messages"] for r in await asyncio.wait_for(asyncio.gather(*ws), 3)]
+
+    got = asyncio.run(go())
+    assert sorted(len(m) for m in got) == [0, 1]
+
+
+def test_wait_times_out_empty(authed):
+    _, c = authed
+    _ready(c)
+    t0 = time.monotonic()
+    r = c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0.3}, headers=AUTH)
+    took = time.monotonic() - t0
+    assert r.status_code == 200 and r.json() == {"messages": []}
+    assert 0.25 <= took < 2
+
+
+@pytest.mark.parametrize("timeout", [0, -5])
+def test_wait_zero_or_negative_timeout_returns_at_once(authed, timeout):
+    _, c = authed
+    _ready(c)
+    t0 = time.monotonic()
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": timeout}, headers=AUTH).json() == {"messages": []}
+    assert time.monotonic() - t0 < 1
+
+
+def test_wait_timeout_is_capped(authed, monkeypatch):
+    mod, c = authed
+    _ready(c)
+    monkeypatch.setattr(mod, "WAIT_MAX_SEC", 0.3)         # 상한(실제 25초)을 줄여 '999초를 달라 해도 상한에서 끊김'을 본다
+    t0 = time.monotonic()
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": 999}, headers=AUTH).json() == {"messages": []}
+    assert time.monotonic() - t0 < 2
+
+
+def test_wait_needs_token(authed):
+    _, c = authed
+    _ready(c)
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0}).status_code == 401
+    assert c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0},
+                  headers={"X-Office-Token": "wrong"}).status_code == 401
+
+
+def test_wait_messaging_off_is_403(authed):
+    _, c = authed
+    r = c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0}, headers=AUTH)
+    assert r.status_code == 403 and "꺼져" in r.json()["detail"]
+
+
+def test_wait_without_hub_token_is_403(hub):
+    _, c = hub
+    _put(c, lambda cfg: cfg.update(messaging=True))
+    r = c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0})
+    assert r.status_code == 403 and "OFFICE_TOKEN" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("body", [{}, {"host": ""}, {"host": "x" * 41}, {"host": "mac", "timeout": "soon"}])
+def test_wait_rejects_bad_body(authed, body):
+    _, c = authed
+    _ready(c)
+    assert c.post("/api/outbox/wait", json=body, headers=AUTH).status_code == 422
+
+
+def test_wait_disconnected_client_does_not_take_message(authed):
+    mod, c = authed
+    _ready(c)
+    c.post("/api/sessions/message", json=MSG, headers=AUTH)
+    out = asyncio.run(mod.outbox_wait(mod.Wait(host="mac", timeout=1), FakeRequest(disconnected=True)))
+    assert out == {"messages": []}
+    assert mod.hub.outbox[0]["status"] == "queued"        # 다음 연결이 받도록 남긴다
+    assert len(c.post("/api/outbox/wait", json={"host": "mac", "timeout": 0}, headers=AUTH).json()["messages"]) == 1
+
+
+def test_wait_releases_condition_after_timeout(authed):
+    """시간이 다 된 대기자가 Condition 에 남지 않는다(누수 없음)."""
+    mod, c = authed
+    _ready(c)
+
+    async def go():
+        async with _aclient(mod) as ac:
+            await asyncio.gather(*[ac.post("/api/outbox/wait", json={"host": f"h{i}", "timeout": 0.2}) for i in range(5)])
+        return len(mod.hub.queued._waiters), mod.hub.queued.locked()
+
+    assert asyncio.run(go()) == (0, False)
+
+
+@pytest.mark.xfail(strict=False, reason="T2 검토: timeout 에 NaN(\"nan\" 문자열도 float 로 받음)이 오면 "
+                   "deadline 비교가 늘 거짓이라 outbox_wait 가 기다리지도 끝나지도 않고 연결이 열린 동안 CPU 를 쓰며 돈다 "
+                   "(hub/app.py:457, math.isfinite 검사 필요)")
+def test_wait_nan_timeout_returns(authed):
+    mod, c = authed
+    _ready(c)
+    p = mod.Wait(host="mac", timeout="nan")
+    assert math.isnan(p.timeout)
+    out = asyncio.run(mod.outbox_wait(p, FakeRequest()))
+    assert out == {"messages": []}
+
+
+# 실제 소켓으로 '끊긴 연결'을 만들려면 진짜 서버가 있어야 한다(ASGITransport 는 연결을 끊지 못한다).
+
+@pytest.fixture
+def live_hub(authed):
+    import uvicorn
+
+    mod, c = authed
+    _ready(c)
+    server = uvicorn.Server(uvicorn.Config(mod.app, host="127.0.0.1", port=0, log_level="error", lifespan="off"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.01)
+    assert server.started
+    port = server.servers[0].sockets[0].getsockname()[1]
+    yield mod, f"http://127.0.0.1:{port}", port
+    server.should_exit = True
+    th.join(5)
+
+
+def test_wait_client_gone_before_message_leaves_it_queued(live_hub):
+    mod, base, port = live_hub
+    body = json.dumps({"host": "mac", "timeout": 3}).encode()
+    s = socket.create_connection(("127.0.0.1", port))
+    s.sendall(b"POST /api/outbox/wait HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+              + f"X-Office-Token: {TOKEN}\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+    time.sleep(0.3)
+    s.close()                                               # 수집기가 기다리다 끊음
+    time.sleep(0.2)
+    with httpx.Client(base_url=base, headers=AUTH, timeout=5) as hc:
+        assert hc.post("/api/sessions/message", json=MSG).status_code == 200
+        time.sleep(0.4)                                     # 끊긴 대기자가 깨어나 끊김을 확인할 시간
+        assert hc.get("/api/state").json()["messages"][0]["status"] == "queued"
+        got = hc.post("/api/outbox/wait", json={"host": "mac", "timeout": 2}).json()["messages"]
+    assert len(got) == 1                                    # 다음 연결이 받는다
+
+
+# ---------- 떠남 /api/hosts/bye ----------
+
+def test_bye_marks_host_offline_at_once(authed):
+    mod, c = authed
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent()]}, headers=AUTH)
+    v = c.get("/health").json()["version"]
+    assert c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH).json() == {"ok": True}
+    s = c.get("/api/state").json()
+    assert s["hosts"][0]["online"] is False and s["hosts"][0]["age"] < 5
+    assert s["agents"] == [] and s["version"] == v + 1
+
+
+def test_bye_again_or_unknown_host_does_not_bump(authed):
+    _, c = authed
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent()]}, headers=AUTH)
+    c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH)
+    v = c.get("/health").json()["version"]
+    assert c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH).status_code == 200
+    assert c.post("/api/hosts/bye", json={"host": "nobody"}, headers=AUTH).status_code == 200
+    assert c.get("/health").json()["version"] == v
+    assert [h["host"] for h in c.get("/api/state").json()["hosts"]] == ["mac"]
+
+
+def test_ingest_after_bye_recovers(authed):
+    _, c = authed
+    body = {"host": "mac", "agents": [agent()]}
+    c.post("/api/ingest", json=body, headers=AUTH)
+    c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH)
+    v = c.get("/health").json()["version"]
+    c.post("/api/ingest", json=body, headers=AUTH)          # 같은 내용이어도 떠났다 돌아온 것은 알린다
+    s = c.get("/api/state").json()
+    assert s["hosts"][0]["online"] is True and len(s["agents"]) == 1 and s["version"] == v + 1
+
+
+def test_bye_needs_token(authed):
+    _, c = authed
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent()]}, headers=AUTH)
+    assert c.post("/api/hosts/bye", json={"host": "mac"}).status_code == 401
+    assert c.post("/api/hosts/bye", json={"host": "mac"}, headers={"X-Office-Token": "no"}).status_code == 401
+    assert c.get("/api/state").json()["hosts"][0]["online"] is True
+
+
+@pytest.mark.parametrize("body", [{}, {"host": ""}, {"host": "x" * 41}])
+def test_bye_rejects_bad_body(authed, body):
+    _, c = authed
+    assert c.post("/api/hosts/bye", json=body, headers=AUTH).status_code == 422
+
+
+def test_bye_blocks_new_messages_until_back(authed):
+    _, c = authed
+    _ready(c)
+    c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH)
+    assert c.post("/api/sessions/message", json=MSG, headers=AUTH).status_code == 404
+    _ready(c)
+    assert c.post("/api/sessions/message", json=MSG, headers=AUTH).status_code == 200
+
+
+def test_expire_loop_keeps_bye_host_offline(authed):
+    """5초 주기 점검도 '떠남' 표시를 존중한다(30초 안이라도 다시 온라인으로 바꾸지 않는다)."""
+    mod, c = authed
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent()]}, headers=AUTH)
+    c.post("/api/hosts/bye", json={"host": "mac"}, headers=AUTH)
+    h = mod.hub.hosts["mac"]
+    assert mod.Hub.online(h, time.time()) is False
+    assert mod.Hub.online({"receivedAt": time.time()}, time.time()) is True
+    assert mod.Hub.online({"receivedAt": time.time() - mod.HOST_STALE_SEC - 1}, time.time()) is False

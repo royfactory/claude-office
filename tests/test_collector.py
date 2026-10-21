@@ -3,13 +3,14 @@ import json
 import os
 import re
 import socket
+import sys
 import tempfile
 import time
 from unittest import mock
 
 import pytest
 
-from conftest import posix_only
+from conftest import COLLECTOR_PY, load_module, posix_only
 
 TS = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())   # 백그라운드 6시간 만료에 걸리지 않게 지금 시각
 
@@ -479,3 +480,430 @@ def test_checklist_rule_include_only_one_level(collector, home):
     (home / "mid.md").write_text("@~/deep.md\n", encoding="utf-8")
     (home / ".claude" / "CLAUDE.md").write_text("@~/mid.md\n", encoding="utf-8")
     assert collector.checklist_rule_installed() is False
+
+
+# ---------- 메시지 스레드(outbox_loop)·떠남(say_bye)·종료 신호 ----------
+
+class StopLoop(BaseException):
+    """outbox_loop 의 while True 를 끝내려고 던진다(except Exception 에 잡히지 않게 BaseException)."""
+
+
+class Clock:
+    """collector 모듈의 time 을 바꿔 끼워 sleep 을 기록하고, n 번째 sleep 에서 고리를 끝낸다."""
+
+    def __init__(self, stop_after, start=1000.0):
+        self.now, self.sleeps, self.stop_after = start, [], stop_after
+        self.strftime = time.strftime
+
+    def time(self):
+        return self.now
+
+    def sleep(self, sec):
+        self.sleeps.append(sec)
+        self.now += sec
+        if len(self.sleeps) >= self.stop_after:
+            raise StopLoop
+
+
+def http_error(code):
+    import urllib.error
+    return urllib.error.HTTPError("http://hub/x", code, "err", {}, None)
+
+
+def run_loop(collector, monkeypatch, replies, stop_after, handled=None):
+    """api 를 replies(차례대로 돌려줄 값 또는 던질 예외)로 바꾸고 outbox_loop 를 돌린다. (호출 기록, Clock) 을 돌려준다."""
+    clock = Clock(stop_after)
+    monkeypatch.setattr(collector, "time", clock)
+    calls, replies = [], list(replies)
+
+    def fake_api(hub, path, payload, timeout=5):
+        calls.append((path, payload, timeout))
+        r = replies.pop(0) if replies else {"messages": []}
+        if isinstance(r, BaseException):
+            raise r
+        return r
+
+    monkeypatch.setattr(collector, "api", fake_api)
+    monkeypatch.setattr(collector, "handle_outbox",
+                        lambda hub, host, col, items: (handled if handled is not None else []).append(items))
+    with pytest.raises(StopLoop):
+        collector.outbox_loop("http://hub", "mac", collector.Collector("basic"))
+    return calls, clock
+
+
+def test_outbox_loop_waits_and_hands_messages_over(collector, monkeypatch):
+    msg = {"id": "m1", "session": "s1", "text": "hi"}
+    handled = []
+    calls, clock = run_loop(collector, monkeypatch, [{"messages": [msg]}, {"messages": []}], 2, handled)
+    assert calls[0] == ("/api/outbox/wait", {"host": "mac", "timeout": 25}, 35)   # 허브 상한 25초 + 여유
+    assert handled == [[msg]]                                # 빈 응답은 handle 로 넘기지 않는다
+    assert clock.sleeps == [0.0, 0.0]                        # 롱폴링은 쉬지 않고 바로 다시 건다
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_outbox_loop_auth_or_off_waits_30s(collector, monkeypatch, code):
+    calls, clock = run_loop(collector, monkeypatch, [http_error(code)], 1)
+    assert clock.sleeps == [30]
+    assert [c[0] for c in calls] == ["/api/outbox/wait"]
+
+
+def test_outbox_loop_backoff_doubles_to_30_and_resets(collector, monkeypatch):
+    import urllib.error
+    errs = [http_error(500)] + [urllib.error.URLError("down")] * 6 + [OSError("reset")]
+    calls, clock = run_loop(collector, monkeypatch, errs + [{"messages": []}, http_error(502)], 10)
+    assert clock.sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 0.0, 1.0]   # 성공하면 1초로 돌아간다
+
+
+def test_outbox_loop_logs_connection_failure_once(collector, monkeypatch, capsys):
+    import urllib.error
+    run_loop(collector, monkeypatch, [urllib.error.URLError("down")] * 3 + [{"messages": []},
+                                      urllib.error.URLError("down")], 5)
+    out = capsys.readouterr().out
+    assert out.count("메시지 대기 연결 실패") == 2           # 끊길 때마다 한 번(이어지는 실패는 조용히)
+
+
+def test_outbox_loop_old_hub_falls_back_to_pull(collector, monkeypatch):
+    msg = {"id": "m1", "session": "s1", "text": "hi"}
+    handled = []
+    calls, clock = run_loop(collector, monkeypatch, [http_error(404), {"messages": [msg]}, {"messages": []}], 2, handled)
+    assert [c[0] for c in calls] == ["/api/outbox/wait", "/api/outbox/pull", "/api/outbox/pull"]
+    assert calls[1][1] == {"host": "mac"}
+    assert clock.sleeps == [1.0, 1.0]                        # 404 로 바꿀 때는 쉬지 않고, pull 은 1초마다
+    assert handled == [[msg]]
+
+
+def test_outbox_loop_retries_wait_after_5_minutes_of_pull(collector, monkeypatch):
+    calls, clock = run_loop(collector, monkeypatch, [http_error(404)], 305)
+    paths = [c[0] for c in calls]
+    back = paths.index("/api/outbox/wait", 1)               # pull 다음 처음 다시 건 wait
+    assert paths[0] == "/api/outbox/wait" and set(paths[1:back]) == {"/api/outbox/pull"}
+    assert 295 <= back - 1 <= 301                           # 1초 간격 pull 이 5분 동안
+
+
+def test_outbox_loop_pull_404_waits_30s(collector, monkeypatch):
+    calls, clock = run_loop(collector, monkeypatch, [http_error(404), http_error(404)], 1)
+    assert [c[0] for c in calls] == ["/api/outbox/wait", "/api/outbox/pull"]
+    assert clock.sleeps == [30]                              # pull 도 없는 허브면 다시 바꾸지 않고 30초 쉰다
+
+
+def test_outbox_loop_survives_handle_errors(collector, monkeypatch):
+    clock = Clock(3)
+    monkeypatch.setattr(collector, "time", clock)
+    monkeypatch.setattr(collector, "api", lambda *a, **k: {"messages": [{"id": "m"}]})
+
+    def boom(*a):
+        raise ValueError("이상한 메시지")
+    monkeypatch.setattr(collector, "handle_outbox", boom)
+    with pytest.raises(StopLoop):
+        collector.outbox_loop("http://hub", "mac", collector.Collector("basic"))
+    assert clock.sleeps == [1.0, 2.0, 4.0]                   # 스레드는 죽지 않고 물러섰다 다시 건다
+
+
+# 진짜 HTTP 로 한 바퀴: 표준 라이브러리 http.server 로 가짜 허브를 루프백에 띄운다.
+
+@pytest.fixture
+def fake_hub():
+    import http.server
+    import threading
+
+    state = {"requests": [], "replies": {}}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            state["requests"].append((self.path, body, self.headers.get("X-Office-Token")))
+            queue = state["replies"].get(self.path) or [(200, {"ok": True})]
+            code, data = queue.pop(0) if len(queue) > 1 else queue[0]
+            raw = json.dumps(data).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    state["url"] = "http://127.0.0.1:%d" % srv.server_address[1]
+    yield state
+    srv.shutdown()
+    srv.server_close()
+
+
+@pytest.fixture
+def inbox(collector, monkeypatch):
+    """listen 하는 가짜 수신함 소켓(짧은 /tmp 경로, 실제 /tmp/cc-socks 는 건드리지 않는다)."""
+    d = tempfile.mkdtemp(prefix="cot4-", dir="/tmp")
+    real = os.path.realpath(d)
+    monkeypatch.setattr(collector, "_SOCK_DIRS", re.compile("^" + re.escape(real) + "/[^/]+$"))
+    path = os.path.join(real, "in")
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path)
+    srv.listen(4)
+    srv.settimeout(3)
+    yield path, srv
+    srv.close()
+    os.unlink(path)
+    os.rmdir(d)
+
+
+@posix_only
+def test_outbox_loop_end_to_end_over_http(collector, monkeypatch, fake_hub, inbox):
+    path, srv = inbox
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "TOKEN", "tt")
+    fake_hub["replies"]["/api/outbox/wait"] = [(200, {"messages": [{"id": "m1", "session": "s1", "text": "안녕"}]}),
+                                               (200, {"messages": []})]
+    col = collector.Collector("basic")
+    col.sockets = {"s1": path}
+    clock = Clock(1)
+    monkeypatch.setattr(collector, "time", clock)
+    with pytest.raises(StopLoop):
+        collector.outbox_loop(fake_hub["url"], "mac", col)
+    conn, _ = srv.accept()
+    line = conn.makefile("rb").readline()
+    conn.close()
+    sent = json.loads(line)
+    assert sent["type"] == "user" and sent["message"]["content"] == collector.MESSAGE_PREFIX + "안녕"
+    reqs = fake_hub["requests"]
+    assert reqs[0] == ("/api/outbox/wait", {"host": "mac", "timeout": 25}, "tt")
+    assert reqs[1] == ("/api/outbox/result", {"host": "mac", "id": "m1", "ok": True, "error": ""}, "tt")
+
+
+def test_api_raises_http_error_codes(collector, fake_hub):
+    import urllib.error
+    fake_hub["replies"]["/api/outbox/wait"] = [(404, {"detail": "Not Found"})]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        collector.api(fake_hub["url"], "/api/outbox/wait", {"host": "mac"})
+    assert e.value.code == 404
+
+
+# handle_outbox 는 시작할 때의 소켓 표를 잡아 둔다(수집 루프가 중간에 표를 바꿔 끼워도 섞이지 않게)
+
+def test_handle_outbox_uses_socket_snapshot(collector, monkeypatch):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    monkeypatch.setattr(collector, "socket_ok", lambda p: True)
+    delivered, results = [], []
+    monkeypatch.setattr(collector, "deliver", lambda sock, text: delivered.append((sock, text)))
+    col = collector.Collector("basic")
+    col.sockets = {"a": "/sock/a", "b": "/sock/b"}
+
+    def fake_api(hub, path, payload, timeout=5):
+        results.append(payload)
+        col.sockets = {}                                    # 다른 스레드(수집 루프)가 표를 바꿔 끼움
+        return {"ok": True}
+
+    monkeypatch.setattr(collector, "api", fake_api)
+    collector.handle_outbox("http://hub", "mac", col, [{"id": "1", "session": "a", "text": "x"},
+                                                       {"id": "2", "session": "b", "text": "y"}])
+    assert delivered == [("/sock/a", "x"), ("/sock/b", "y")]
+    assert [r["ok"] for r in results] == [True, True]
+
+
+@pytest.mark.parametrize("flags,err", [
+    ({"MESSAGES": False}, "꺼져"),
+    ({"MESSAGES": True, "WINDOWS": True}, "Windows"),
+])
+def test_handle_outbox_refuses_when_off_or_windows(collector, monkeypatch, flags, err):
+    for k, v in flags.items():
+        monkeypatch.setattr(collector, k, v)
+    results = []
+    monkeypatch.setattr(collector, "api", lambda hub, path, payload, timeout=5: results.append((path, payload)))
+    collector.handle_outbox("http://hub", "mac", collector.Collector("basic"), [{"id": "1", "session": "a", "text": "x"}])
+    ((path, payload),) = results
+    assert path == "/api/outbox/result" and payload["ok"] is False and err in payload["error"]
+
+
+def test_collect_swaps_socket_table_whole(collector, home, monkeypatch):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    make_session(home, [], messagingSocketPath="/tmp/cc-socks/whatever")
+    col = collector.Collector("basic")
+    before = col.sockets
+    col.collect()
+    assert before == {} and col.sockets is not before          # 옛 사전은 건드리지 않고 새 사전으로 바꾼다
+    assert col.sockets == {SID: "/tmp/cc-socks/whatever"}
+
+
+@pytest.mark.xfail(strict=False, reason="T2 검토: handle_outbox 에서 /api/outbox/result 보고가 실패(허브 잠깐 끊김·5xx)하면 "
+                   "예외가 묶음 전체를 빠져나가 남은 메시지는 전달도 보고도 안 되고, 허브에는 'sending' 으로 남았다가 "
+                   "60초 뒤 '가져가지 않았다' 로 만료된다(collector/collector.py:575)")
+def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch):
+    import urllib.error
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    monkeypatch.setattr(collector, "socket_ok", lambda p: True)
+    delivered, reported = [], []
+    monkeypatch.setattr(collector, "deliver", lambda sock, text: delivered.append(text))
+
+    def flaky_api(hub, path, payload, timeout=5):
+        reported.append(payload["id"])
+        if len(reported) == 1:
+            raise urllib.error.URLError("hub blip")
+        return {"ok": True}
+
+    monkeypatch.setattr(collector, "api", flaky_api)
+    col = collector.Collector("basic")
+    col.sockets = {"a": "/sock/a", "b": "/sock/b"}
+    try:
+        collector.handle_outbox("http://hub", "mac", col, [{"id": "1", "session": "a", "text": "x"},
+                                                           {"id": "2", "session": "b", "text": "y"}])
+    except Exception:
+        pass
+    assert delivered == ["x", "y"] and reported == ["1", "2"]
+
+
+@pytest.mark.xfail(strict=False, reason="T2 검토(낮음): wait 가 바로 빈 응답을 돌려주는 허브·프록시를 만나면 pause=0 이라 "
+                   "쉬지 않고 다시 걸어 CPU·허브를 두드린다. 롱폴링이 너무 빨리 끝나면 최소 간격을 두는 방어가 없다"
+                   "(collector/collector.py:593)")
+def test_outbox_loop_does_not_spin_on_instant_empty_replies(collector, monkeypatch):
+    calls, clock = run_loop(collector, monkeypatch, [], 20)
+    assert sum(clock.sleeps) >= 1.0                          # 빈 응답 20번이면 적어도 1초는 쉬어야 한다
+
+
+# 떠남·종료 신호
+
+def test_say_bye_posts_host_with_short_timeout(collector, monkeypatch):
+    calls = []
+    monkeypatch.setattr(collector, "api", lambda hub, path, payload, timeout=5: calls.append((hub, path, payload, timeout)))
+    collector.say_bye("http://hub", "mac")
+    assert calls == [("http://hub", "/api/hosts/bye", {"host": "mac"}, 2)]
+
+
+@pytest.mark.parametrize("exc", ["urlerror", "404", "timeout"])
+def test_say_bye_swallows_errors(collector, monkeypatch, exc):
+    import urllib.error
+    err = {"urlerror": urllib.error.URLError("down"), "404": http_error(404), "timeout": socket.timeout("t")}[exc]
+
+    def boom(*a, **k):
+        raise err
+    monkeypatch.setattr(collector, "api", boom)
+    collector.say_bye("http://hub", "mac")                   # 예외 없이 끝난다
+
+
+def test_say_bye_real_http(collector, fake_hub, monkeypatch):
+    monkeypatch.setattr(collector, "TOKEN", "tt")
+    collector.say_bye(fake_hub["url"], "mac")
+    assert fake_hub["requests"] == [("/api/hosts/bye", {"host": "mac"}, "tt")]
+
+
+def test_exit_on_signal_raises_system_exit(collector):
+    import signal
+    with pytest.raises(SystemExit) as e:
+        collector._exit_on_signal(signal.SIGTERM, None)
+    assert e.value.code == 128 + signal.SIGTERM
+
+
+@pytest.fixture
+def main_env(collector, monkeypatch):
+    """main() 을 끝까지 돌리되, 수집 고리(run)·스레드·bye 를 가로챈다. SIGTERM 처리기는 끝나면 되돌린다."""
+    import signal
+    saved = signal.getsignal(signal.SIGTERM)
+    rec = {"bye": [], "threads": [], "order": []}
+
+    class FakeThread:
+        def __init__(self, target=None, args=(), name=None, daemon=None):
+            self.kw = dict(target=target, args=args, name=name, daemon=daemon)
+
+        def start(self):
+            rec["threads"].append(self.kw)
+            rec["order"].append("thread")
+
+    class FakeThreading:
+        Thread = FakeThread
+
+    monkeypatch.setattr(collector, "threading", FakeThreading)
+    monkeypatch.setattr(collector, "say_bye", lambda hub, host: rec["bye"].append((hub, host)))
+    monkeypatch.setattr(sys, "argv", ["collector.py", "--hub", "http://hub:1", "--host", "mac"])
+    yield rec
+    signal.signal(signal.SIGTERM, saved)
+
+
+
+@pytest.mark.parametrize("exc", [SystemExit(143), KeyboardInterrupt()])
+def test_main_says_bye_on_exit(collector, monkeypatch, main_env, capsys, exc):
+    def run(args, col):
+        raise exc
+    monkeypatch.setattr(collector, "run", run)
+    collector.main()
+    assert main_env["bye"] == [("http://hub:1", "mac")]
+    assert "수집기 종료" in capsys.readouterr().out
+
+
+def test_main_installs_sigterm_handler(collector, monkeypatch, main_env):
+    import signal
+    seen = []
+    monkeypatch.setattr(collector, "run", lambda args, col: seen.append(signal.getsignal(signal.SIGTERM)))
+    collector.main()
+    assert seen == [collector._exit_on_signal]
+
+
+@posix_only
+def test_main_real_sigterm_sends_bye(collector, monkeypatch, main_env):
+    import signal
+
+    def run(args, col):
+        os.kill(os.getpid(), signal.SIGTERM)
+        for _ in range(100):          # 신호 처리기가 SystemExit 을 던질 때까지
+            time.sleep(0.01)
+        raise AssertionError("SIGTERM 이 SystemExit 으로 바뀌지 않았다")
+    monkeypatch.setattr(collector, "run", run)
+    collector.main()
+    assert main_env["bye"] == [("http://hub:1", "mac")]
+
+
+def test_main_starts_outbox_thread_when_messages_on(collector, monkeypatch, main_env):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    collector.main()
+    (t,) = main_env["threads"]
+    assert t["target"] is collector.outbox_loop and t["daemon"] is True and t["name"] == "outbox"
+    assert t["args"][:2] == ("http://hub:1", "mac")
+
+
+@pytest.mark.parametrize("messages,windows", [(True, True), (False, False)])
+def test_main_no_outbox_thread_on_windows_or_off(collector, monkeypatch, main_env, messages, windows):
+    monkeypatch.setattr(collector, "MESSAGES", messages)
+    monkeypatch.setattr(collector, "WINDOWS", windows)    # os.name == "nt" 일 때 import 시점에 정해지는 값
+    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    collector.main()
+    assert main_env["threads"] == [] and main_env["bye"] == []   # 정상 반환이면 bye 도 없다
+
+
+def test_main_on_nt_does_not_start_outbox_thread(collector, monkeypatch, main_env):
+    """os.name == "nt" 로 새로 읽은 모듈은 WINDOWS 가 켜지고, 메시지를 켜도 스레드를 띄우지 않는다."""
+    monkeypatch.setenv("CLAUDE_OFFICE_MESSAGES", "on")
+    monkeypatch.setattr(os, "name", "nt")
+    try:
+        nt = load_module("office_collector_nt", COLLECTOR_PY)
+    finally:
+        monkeypatch.setattr(os, "name", "posix" if sys.platform != "win32" else "nt")
+        sys.modules.pop("office_collector_nt", None)
+    assert nt.WINDOWS is True and nt.MESSAGES is True
+    started = []
+    monkeypatch.setattr(nt, "threading", type("T", (), {"Thread": lambda *a, **k: started.append(k)}))
+    monkeypatch.setattr(nt, "run", lambda args, col: None)
+    monkeypatch.setattr(nt.signal, "signal", lambda *a: None)   # 이 시험에서는 신호 처리기를 바꾸지 않는다
+    nt.main()
+    assert started == []
+
+
+@pytest.mark.xfail(strict=False, reason="T2 검토(낮음): 메시지 스레드가 첫 collect() 전에 시작해 소켓 표가 비어 있다. "
+                   "수집기가 비정상 종료 뒤 다시 뜨면(bye 없음, 허브엔 아직 온라인) 그 사이 쌓인 메시지를 첫 wait 가 곧바로 "
+                   "가져가 '수신함을 찾지 못했다' 로 실패시킨다(collector/collector.py:660)")
+def test_main_collects_once_before_outbox_thread(collector, monkeypatch, main_env):
+    monkeypatch.setattr(collector, "MESSAGES", True)
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    real_collect = collector.Collector.collect
+
+    def collect(self):
+        main_env["order"].append("collect")
+        return real_collect(self)
+    monkeypatch.setattr(collector.Collector, "collect", collect)
+    monkeypatch.setattr(collector, "run", lambda args, col: col.collect())
+    collector.main()
+    assert main_env["order"][0] == "collect"
