@@ -266,8 +266,8 @@ py hooks\install_hooks.py --apply                  # Windows(%USERPROFILE%\.clau
 
 켜는 조건(모두 필요 — 토큰을 가진 사람이 그 컴퓨터의 명령을 허용할 수 있게 되므로 일부러 여러 겹입니다):
 1. 허브 `.env` 의 `OFFICE_TOKEN`
-2. 관리 화면 「화면 설정」의 **대시보드에서 권한 요청 허용·거절**
-3. 그 컴퓨터 `.env` 의 `CLAUDE_OFFICE_APPROVE=on` 후 수집기 설치를 다시 실행(설정을 `~/.claude-office/.env` 로 복사)
+2. 관리 화면 「화면 설정」의 **대시보드에서 권한 요청 허용·거절**(「안내」 탭 점검표의 「지금 켜기」 버튼으로도 됩니다)
+3. 그 컴퓨터 `.env` 의 `CLAUDE_OFFICE_APPROVE=on` 후 수집기 설치를 다시 실행(설정을 `~/.claude-office/.env` 로 복사). 한 번에: `sh collector/install.sh --set CLAUDE_OFFICE_APPROVE=on` (Windows `powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Set CLAUDE_OFFICE_APPROVE=on`)
 4. 훅 설치에 `--approve`: `/usr/bin/python3 hooks/install_hooks.py --approve --apply` (Windows `py hooks\install_hooks.py --approve --apply`). 승인 대기 감지 훅도 함께 들어갑니다. 한 번 넣으면 다른 옵션으로 다시 `--apply` 해도 남고, 승인 훅만 빼려면 `--no-approve --apply`, 다 빼려면 `--remove`.
 
 ### 사용 한도 막대 (선택: 상태 표시줄)

@@ -3,6 +3,8 @@
 #   sh collector/install.sh              설치·갱신 (설정은 저장소 루트의 .env)
 #   sh collector/install.sh --status     상태와 최근 로그
 #   sh collector/install.sh --uninstall  내리고 등록 지우기
+#   sh collector/install.sh --set CLAUDE_OFFICE_APPROVE=on   .env 의 값을 바꾼(없으면 더한) 뒤 설치·갱신
+#                                                           (CLAUDE_OFFICE_ 로 시작하는 키만, 여러 번 줄 수 있다)
 # 코드와 .env 는 ~/.claude-office/ 로 복사해 거기서 돈다(저장소를 옮기거나 지워도 끊기지 않게).
 # 설정을 바꾸면 .env 를 고치고 이 스크립트를 다시 실행한다.
 set -euo pipefail
@@ -16,6 +18,12 @@ if [[ "$(uname)" != "Darwin" ]]; then
   echo "이 설치 스크립트는 macOS(launchd) 전용이다. Windows 는 collector/install.ps1, 리눅스는 README 의 '운영 > 리눅스에서 수집기'를 본다." >&2
   exit 1
 fi
+
+SETS=()
+while [[ "${1:-}" == "--set" ]]; do
+  [[ -n "${2:-}" && "$2" =~ ^CLAUDE_OFFICE_[A-Z_]+=[^[:space:]]*$ ]] || { echo "--set 은 CLAUDE_OFFICE_키=값 꼴이어야 한다: ${2:-}" >&2; exit 1; }
+  SETS+=("$2"); shift 2
+done
 
 case "${1:-}" in
   --uninstall)
@@ -33,6 +41,28 @@ esac
 
 [[ -f "$REPO/.env" ]] || { echo "[collector] $REPO/.env 가 없다. 먼저 cp .env.example .env 하고 CLAUDE_OFFICE_HUB 를 정한다." >&2; exit 1; }
 [[ -x /usr/bin/python3 ]] || { echo "[collector] /usr/bin/python3 가 없다. xcode-select --install 로 명령줄 도구를 설치한다." >&2; exit 1; }
+
+# --set: 저장소 .env 에서 그 키의 줄을 바꾸고, 없으면 끝에 더한다(다른 줄·주석은 그대로)
+for kv in ${SETS[@]+"${SETS[@]}"}; do
+  /usr/bin/python3 - "$REPO/.env" "$kv" <<'PY'
+import re, sys
+path, kv = sys.argv[1], sys.argv[2]
+key = kv.split("=", 1)[0]
+with open(path, encoding="utf-8-sig") as f:
+    lines = f.read().splitlines()
+pat = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
+hit = [i for i, l in enumerate(lines) if pat.match(l)]
+if hit:
+    lines[hit[-1]] = kv
+    for i in hit[:-1]:
+        lines[i] = "# " + lines[i]
+else:
+    lines.append(kv)
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    f.write("\n".join(lines) + "\n")
+print("[collector] .env:", key, "→ 바꿈" if hit else "→ 더함")
+PY
+done
 
 mkdir -p "$APP_DIR" "$HOME/Library/LaunchAgents"
 cp "$REPO/collector/collector.py" "$APP_DIR/collector.py"

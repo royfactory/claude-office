@@ -3,8 +3,10 @@
 #   powershell -ExecutionPolicy Bypass -File collector\install.ps1              설치·갱신 (설정은 저장소 루트 .env)
 #   powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Status      상태와 최근 로그
 #   powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Uninstall   멈추고 등록 지우기
+#   powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Set CLAUDE_OFFICE_APPROVE=on
+#                                  .env 의 값을 바꾼(없으면 더한) 뒤 설치·갱신(CLAUDE_OFFICE_ 로 시작하는 키만, 쉼표로 여럿)
 # 코드와 .env 는 %USERPROFILE%\.claude-office\ 로 복사해 거기서 돈다. 설정을 바꾸면 .env 를 고치고 다시 실행한다.
-param([switch]$Status, [switch]$Uninstall)
+param([switch]$Status, [switch]$Uninstall, [string[]]$Set = @())
 $ErrorActionPreference = "Stop"
 
 $TaskName = "claude-office-collector"
@@ -34,6 +36,21 @@ if ($Status) {
 $EnvFile = Join-Path $Repo ".env"
 if (-not (Test-Path $EnvFile)) {
     throw "$EnvFile 가 없다. 먼저 copy .env.example .env 하고 CLAUDE_OFFICE_HUB 를 정한다."
+}
+# -Set: .env 에서 그 키의 줄을 바꾸고, 없으면 끝에 더한다(다른 줄·주석은 그대로)
+foreach ($kv in $Set) {
+    if ($kv -notmatch '^CLAUDE_OFFICE_[A-Z_]+=\S*$') { throw "-Set 은 CLAUDE_OFFICE_키=값 꼴이어야 한다: $kv" }
+    $key = $kv.Split("=", 2)[0]
+    $lines = @(Get-Content $EnvFile -Encoding UTF8)
+    $hit = $false
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ($lines[$i] -match ("^\s*" + [regex]::Escape($key) + "\s*=")) {
+            if (-not $hit) { $lines[$i] = $kv; $hit = $true } else { $lines[$i] = "# " + $lines[$i] }
+        }
+    }
+    if (-not $hit) { $lines += $kv }
+    [System.IO.File]::WriteAllLines($EnvFile, $lines, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host ("[collector] .env: {0} → {1}" -f $key, $(if ($hit) { "바꿈" } else { "더함" }))
 }
 
 # 창 없이 도는 pythonw.exe 를 찾는다: py 런처 → PATH 의 python 순서. 3.9 이상이어야 한다.

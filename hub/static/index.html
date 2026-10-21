@@ -117,13 +117,14 @@
   .lobby .doors { width: 56px; height: 26px; border: 2px solid #475569; border-bottom: 0; background: linear-gradient(90deg, #7dd3fc33 49%, #475569 49%, #475569 51%, #7dd3fc33 51%); }
   .lobby small { color: var(--text-dim2); font-size: 10px; letter-spacing: .12em; }
   #lobbyHosts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
-  /* 사용 한도(상태 표시줄을 건 컴퓨터만): 빌딩 아래 한 줄, 누르면 계정별 상세 모달 */
-  .limits { flex: none; margin-top: 8px; }
+  /* 사용 한도(상태 표시줄을 건 컴퓨터만): 왼쪽 패널 맨 아래 한 줄, 누르면 계정별 상세 모달.
+     옆 무대의 「최근 소식」 줄과 높이(40px)·윗선·배경을 맞춰 화면 아래가 한 줄로 이어 보이게 한다 */
+  .limits { flex: none; height: 40px; margin: auto -12px -14px; border-top: 1px solid var(--border-2); background: rgba(9,17,33,.94); }
   .limits[hidden] { display: none; }
-  .lim-line { width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; font-size: 11.5px;
-              background: var(--surface); border: 1px solid var(--border); color: var(--text); white-space: nowrap; overflow: hidden; }
-  .lim-line:hover { background: var(--surface-2); border-color: var(--border-2); }
-  .lim-line .lim-lab { color: var(--text-dim); font-weight: 600; }
+  .lim-line { width: 100%; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 0; font-size: 12px;
+              background: transparent; color: var(--text); white-space: nowrap; overflow: hidden; }
+  .lim-line:hover { background: rgba(255,255,255,.03); }
+  .lim-line .lim-lab { color: var(--text-hi); font-weight: 700; font-size: 13px; }
   .lim-line .lt { flex: none; width: 26px; }
   .lim-line .vals { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .lim-line .vals b { font-weight: 700; color: var(--text-hi); } .lim-line .vals span { color: var(--text-dim); }
@@ -214,8 +215,13 @@
   .lab.sel .tag { background: #0369a1; box-shadow: 0 0 0 2px #38bdf8; }
   .lab.me .tag { background: #9a3412; }
   .ov { position: absolute; z-index: 5; }
-  #floorBadge { top: 14px; left: 14px; display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,.95); color: #0f172a;
-                padding: 7px 12px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25); font-size: 13px; }
+  /* 위쪽 줄은 작게: 층 배지가 오른쪽 버튼들(알림·단축키·LIVE·캐릭터 관리)과 겹치지 않게 폭도 막는다 */
+  #floorBadge { top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,.95); color: #0f172a;
+                padding: 4px 10px 4px 5px; border-radius: 9px; box-shadow: 0 2px 8px rgba(0,0,0,.22); font-size: 12px;
+                max-width: calc(100% - 330px); white-space: nowrap; overflow: hidden; }
+  #floorBadge .badge { min-width: 28px; height: 20px; font-size: 11px; border-radius: 6px; }
+  #floorBadge b { overflow: hidden; text-overflow: ellipsis; }
+  #floorBadge small { font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
   #floorBadge:empty { display: none; }
   #ride { top: 96px; left: 50%; transform: translate(-50%, -8px); opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none;
           background: rgba(15,23,42,.92); color: #f8fafc; border: 1px solid #fbbf24; border-radius: 12px; padding: 8px 16px; font-size: 15px;
@@ -225,9 +231,9 @@
   #ride > i { color: #fbbf24; margin-right: 2px; }
   #ride b { color: #fbbf24; display: inline-block; min-width: 2.4em; text-align: center; } #ride span { color: #cbd5e1; font-size: 13px; margin-left: 4px; }
   #floorBadge small { color: #64748b; }
-  .topr { top: 14px; right: 14px; display: flex; gap: 8px; }
-  .live { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,.95); color: #166534; font-weight: 700;
-          font-size: 11px; padding: 4px 10px; border-radius: 999px; }
+  .topr { top: 12px; right: 12px; display: flex; gap: 6px; align-items: center; }
+  .live { display: inline-flex; align-items: center; gap: 5px; background: rgba(255,255,255,.95); color: #166534; font-weight: 700;
+          font-size: 10.5px; padding: 3px 9px; border-radius: 999px; }
   .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
   .live.off { color: #991b1b; } .live.off::before { background: #ef4444; }
   /* 허브와 끊긴 동안: 화면 위쪽 가운데에 '연결 끊김 · n초 전 데이터'. 다시 붙으면 사라진다 */
@@ -235,11 +241,11 @@
            background: rgba(127,29,29,.94); color: #fee2e2; border: 1px solid #f87171; border-radius: 999px; padding: 5px 14px;
            font-size: 12px; font-weight: 600; box-shadow: 0 2px 12px rgba(0,0,0,.35); white-space: nowrap; font-variant-numeric: tabular-nums; }
   #stale.on { display: inline-flex; }
-  .topr button { background: rgba(255,255,255,.95); color: #0f172a; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 0; white-space: nowrap; }
+  .topr button { background: rgba(255,255,255,.95); color: #0f172a; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 0; white-space: nowrap; }
   .topr button:hover { background: #fff; }
   .topr button.on { background: #fde68a; color: #78350f; }
   /* 나를 기다리는 세션(모든 층): 위 가운데 칩. 누르면 아래로 목록 */
-  #attn { top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 6; }
+  #attn { top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 6; }
   #attn:empty { display: none; }
   #attn .ac { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
               border: 1px solid; box-shadow: 0 2px 10px rgba(0,0,0,.3); white-space: nowrap; }
@@ -268,7 +274,7 @@
   #keysList li { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: center; padding: 4px 0; font-size: 12.5px; }
   kbd { display: inline-block; padding: 1px 7px; border-radius: 5px; border: 1px solid var(--border-2); border-bottom-width: 2px; background: var(--bg-2);
         color: var(--text-hi); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
-  .topr a { background: rgba(255,255,255,.95); color: #0f172a; font-size: 12px; padding: 4px 10px; border-radius: 999px; text-decoration: none; }
+  .topr a { background: rgba(255,255,255,.95); color: #0f172a; font-size: 11px; padding: 3px 9px; border-radius: 999px; text-decoration: none; white-space: nowrap; }
   .zoom { left: 14px; bottom: calc(var(--feedH) + 12px); transition: bottom .25s ease; display: flex; flex-direction: column; gap: 6px; }
   .zoom button { width: 34px; height: 34px; padding: 0; border-radius: 9px; background: rgba(255,255,255,.95); color: #0f172a; border: 0; font-size: 17px; }
   .hint { right: 14px; bottom: calc(var(--feedH) + 10px); transition: bottom .25s ease; font-size: 11px; color: #94a3b8; }
@@ -494,6 +500,7 @@
     .tower { max-height: 300px; }
     .hint { display: none; }
     #keysBtn { display: none; }   /* 휴대폰에는 키보드가 없다 */
+    .limits { margin: 8px -16px -12px; }
     .topr { flex-wrap: wrap; justify-content: flex-end; left: 60px; }
   }
 </style>
@@ -510,8 +517,8 @@
     <div class="bldg">
       <div class="roof"><span class="antenna"></span><span class="sign">CLAUDE OFFICE</span></div>
       <div class="tower"><div id="floors"></div><div id="car"><i class="fa-solid fa-elevator"></i></div></div>
-      <div class="limits" id="limits" hidden></div>
     </div>
+    <div class="limits" id="limits" hidden></div>
   </aside>
 
   <main class="stage" id="stage">

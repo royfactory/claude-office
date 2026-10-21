@@ -1207,6 +1207,7 @@ function setupSteps(h) {
   const repo = su && su.repo ? (su.repo.startsWith("~") ? HOMEVAR + su.repo.slice(1) : su.repo) : "";
   const inRepo = c => repo ? `cd "${repo}"${win ? ";" : " &&"} ${c.split("\n").join(win ? "; " : " && ")}` : c;
   const rows = (su && su.rootsDetail) || [];
+  const envCmd = kv => inRepo(win ? `powershell -ExecutionPolicy Bypass -File collector\\install.ps1 -Set ${kv}` : `sh collector/install.sh --set ${kv}`);
   const cmd = (key, ...extra) => inRepo(rows.length ? rows.filter(r => !r[key]).map(r => rowCmd(r, extra)).join("\n") : rowCmd({ label: "~/.claude" }, extra));
   const reinstall = win ? "git pull 후 start.bat" : "git pull 후 sh collector/install.sh";
   const mine = state.agents.filter(a => a.host === h.host);
@@ -1223,12 +1224,12 @@ function setupSteps(h) {
       { ok: frac(su && su.hooks, su && su.roots), label: `훅을 넣은 설정 폴더 ${su ? su.hooks : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행(설정 폴더마다 한 줄)", copy: cmd("hooks") }] },
     { t: "대시보드에서 메시지 보내기", items: win ? [{ ok: null, label: "Windows 는 아직 지원하지 않음" }] : [
       { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
-      { ok: !!cfg.messaging, label: "관리 화면 「대시보드에서 세션으로 메시지 보내기」", fix: "/admin → 화면 설정에서 켜기" },
-      { ok: !!(su && su.messagesEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_MESSAGES=on", fix: `.env 에 넣고 ${win ? "start.bat" : "sh collector/install.sh"} 다시` }] },
+      { ok: !!cfg.messaging, label: "관리 화면 「대시보드에서 세션으로 메시지 보내기」", fix: "아래 버튼으로 켜거나 /admin → 화면 설정에서 체크 후 저장", act: "messaging" },
+      { ok: !!(su && su.messagesEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_MESSAGES=on", fix: "그 컴퓨터에서 붙여 넣기 — .env 값을 넣고 수집기를 다시 설치한다", copy: envCmd("CLAUDE_OFFICE_MESSAGES=on") }] },
     { t: "대시보드에서 권한 허용·거절", items: [
       { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
-      { ok: !!cfg.approvals, label: "관리 화면 「대시보드에서 권한 요청 허용·거절」", fix: "/admin → 화면 설정에서 켜기" },
-      { ok: !!(su && su.approveEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on", fix: `.env 에 넣고 ${win ? "start.bat" : "sh collector/install.sh"} 다시` },
+      { ok: !!cfg.approvals, label: "관리 화면 「대시보드에서 권한 요청 허용·거절」", fix: "아래 버튼으로 켜거나 /admin → 화면 설정에서 체크 후 저장", act: "approvals" },
+      { ok: !!(su && su.approveEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on", fix: "그 컴퓨터에서 붙여 넣기 — .env 값을 넣고 수집기를 다시 설치한다", copy: envCmd("CLAUDE_OFFICE_APPROVE=on") },
       { ok: frac(su && su.approveHook, su && su.roots), label: `승인 훅을 넣은 설정 폴더 ${su ? su.approveHook : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행", copy: cmd("approveHook", "--approve") }] },
     { t: "사용 한도 막대", items: [
       { ok: frac(su && su.statusline, su && su.roots), label: `상태 표시줄을 건 설정 폴더 ${su ? su.statusline : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행 (원래 상태 표시줄은 이어서 보임)", copy: cmd("statusline", "--statusline") },
@@ -1252,7 +1253,7 @@ function stepHTML(st, i) {
   const items = st.items.map(it => {
     const ic = it.ok === true ? "circle-check" : it.ok === "part" ? "circle-half-stroke" : it.ok === null ? "circle-minus" : "circle-xmark";
     const cls = it.ok === true ? "ok" : it.ok === "part" ? "part" : it.ok === null ? "na" : "no";
-    const fix = it.ok === true || it.ok === null ? "" : `<div class="fix">${esc(it.fix || "")}${it.copy ? `<pre>${esc(it.copy)}</pre><button class="copy" data-copy-text="${esc(it.copy)}"><i class="fa-solid fa-copy"></i> ${it.copyLabel || "명령 복사"}</button>` : ""}</div>`;
+    const fix = it.ok === true || it.ok === null ? "" : `<div class="fix">${esc(it.fix || "")}${it.act ? ` <button class="copy" data-enable="${it.act}"><i class="fa-solid fa-toggle-on"></i> 지금 켜기</button>` : ""}${it.copy ? `<pre>${esc(it.copy)}</pre><button class="copy" data-copy-text="${esc(it.copy)}"><i class="fa-solid fa-copy"></i> ${it.copyLabel || "명령 복사"}</button>` : ""}</div>`;
     return `<li class="${cls}"><i class="fa-solid fa-${ic}"></i><span>${esc(it.label)}${fix}</span></li>`;
   }).join("");
   return `<li class="step st-${ss}"><div class="sh"><span class="sn">${i}</span><b>${esc(st.t)}</b><em>${st.must ? "필수" : "선택"}</em><span class="ss">${SETUP_WORD[ss]}</span></div>
@@ -1279,7 +1280,19 @@ function renderRuleBox() {
     <p class="muted">컴퓨터마다 무엇이 되어 있는지 수집기가 알려 줍니다(1분마다 다시 확인). 3번부터는 쓰고 싶은 것만 하면 됩니다.</p>
     ${html}<div class="setup-host"><h4><i class="fa-solid fa-display"></i> 이 브라우저</h4><ol class="steps">${stepHTML(browserStep(), 7)}</ol></div>`);
 }
+// 점검표의 「지금 켜기」: 관리 화면과 같은 설정을 토큰으로 저장한다(허브 쓰기 토큰 필요)
+async function enableConfig(key, b) {
+  b.disabled = true;
+  try {
+    const cur = await (await fetch("/api/config", { cache: "no-store" })).json();
+    cur[key] = true;
+    const r = await tokenFetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cur) });
+    if (!r || !r.ok) { const j = r ? await r.json().catch(() => ({})) : {}; alert("켜지 못했습니다: " + (j.detail || (r ? r.statusText : "연결 실패"))); }
+  } catch (err) { alert("켜지 못했습니다: " + err); }
+  b.disabled = false;
+}
 document.addEventListener("click", e => {
+  const en = e.target.closest("[data-enable]"); if (en) { enableConfig(en.dataset.enable, en); return; }
   const b = e.target.closest("[data-copy-text]"); if (!b) return;
   const label = b.innerHTML;
   copyText(b.dataset.copyText).then(() => { b.innerHTML = '<i class="fa-solid fa-check"></i> 복사했습니다'; setTimeout(() => { b.innerHTML = label; }, 1800); });
