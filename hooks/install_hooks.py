@@ -331,7 +331,8 @@ def main(argv=None):
         if keep is not None:
             print("원래 상태 표시줄을 적어 두었다(이어서 돈다): %s" % save_next(path, keep))
         backup = save(path, out)
-        print("claude-office 훅%s%s을 넣었다: %s" % ("·상태 표시줄" if args.statusline else "", "·할 일 도구 켜기" if args.todo_tools else "", path))
+        parts = ["claude-office 훅"] + (["상태 표시줄"] if args.statusline else []) + (["할 일 도구 켜기"] if args.todo_tools else [])
+        print("넣었다(%s): %s" % (", ".join(parts), path))
         if backup:
             print("백업: %s" % backup)
         print("이미 열린 세션에는 바로 적용되지 않을 수 있다. 새 Claude Code 세션의 /hooks 에서 확인한다.")
