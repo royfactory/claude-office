@@ -1060,3 +1060,78 @@ def test_timeline_prompts_only_from_people(collector, tr_file):
     tagged = {"type": "user", "timestamp": _iso(now - 4), "message": {"role": "user", "content": "<local-command-stdout>x"}}
     tr = read(collector, tr_file, human, notif, old_style, meta, tagged, result("t9", ts=_iso(now - 3)))
     assert len(tr.timeline(now)["prompts"]) == 2
+
+
+# ---------- 바뀐 것만 보내기(Sender) ----------
+
+class FakeHub:
+    def __init__(self, patch_status=None):
+        self.calls = []
+        self.patch_status = patch_status   # None=정상, 'resync', 404
+        self.accept = True
+
+    def api(self, hub, path, payload, timeout=5):
+        import urllib.error
+        self.calls.append(("patch", payload))
+        if self.patch_status == 404:
+            raise urllib.error.HTTPError(hub + path, 404, "nf", {}, None)
+        if self.patch_status == "resync":
+            return {"ok": False, "resync": True}
+        return {"ok": True}
+
+    def post(self, hub, payload, timeout=5):
+        self.calls.append(("full", payload))
+
+
+@pytest.fixture
+def fake(collector, monkeypatch):
+    f = FakeHub()
+    monkeypatch.setattr(collector, "api", f.api)
+    monkeypatch.setattr(collector, "post", f.post)
+    return f
+
+
+def test_sender_full_then_only_changes(collector, fake):
+    s = collector.Sender("http://h", "m")
+    a, b = agent_d("a"), agent_d("b")
+    assert s.send([a, b], {}, now=100) == "full"
+    assert fake.calls[-1][1]["seq"] == 1
+    assert s.send([a, b], {}, now=101) is None                       # 그대로면 안 보낸다
+    assert s.send([a, dict(b, lastActivity=101)], {}, now=102) is None   # lastActivity 만 바뀐 건 박동 때까지 미룬다
+    assert s.send([a, dict(b, kind="working")], {}, now=103) == "patch"
+    p = fake.calls[-1][1]
+    assert [x["id"] for x in p["set"]] == ["b"] and p["del"] == [] and p["base"] == 1 and p["seq"] == 2
+    assert s.send([dict(b, kind="working")], {}, now=104) == "patch"
+    assert fake.calls[-1][1]["del"] == ["a"] and fake.calls[-1][1]["order"] == ["b"]
+
+
+def test_sender_heartbeat_carries_activity_changes(collector, fake):
+    s = collector.Sender("http://h", "m")
+    a = agent_d("a")
+    s.send([a], {}, now=100)
+    s.send([dict(a, lastActivity=150)], {}, now=100 + collector.HEARTBEAT_SEC + 1)
+    p = fake.calls[-1][1]
+    assert fake.calls[-1][0] == "patch" and p["set"][0]["lastActivity"] == 150
+
+
+def test_sender_resync_and_old_hub_fall_back_to_full(collector, fake):
+    s = collector.Sender("http://h", "m")
+    s.send([agent_d("a")], {}, now=100)
+    fake.patch_status = "resync"
+    assert s.send([agent_d("a", kind="working")], {}, now=101) == "full"
+    fake.patch_status = 404
+    assert s.send([agent_d("a", kind="idle")], {}, now=102) == "full"
+    assert s.patch_ok is False
+    fake.patch_status = None
+    assert s.send([agent_d("a", kind="working")], {}, now=103) == "full"   # 예전 허브라고 본 뒤로는 계속 전체
+
+
+def test_sender_reset_after_network_error_sends_full(collector, fake):
+    s = collector.Sender("http://h", "m")
+    s.send([agent_d("a")], {}, now=100)
+    s.reset()
+    assert s.send([agent_d("a")], {}, now=100 + collector.HEARTBEAT_SEC + 1) == "full"
+
+
+def agent_d(i, **kw):
+    return dict({"id": i, "kind": "idle", "lastActivity": 100}, **kw)

@@ -837,8 +837,67 @@ def main():
         print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집기 종료", flush=True)
 
 
+class Sender:
+    """허브로 보낸다. 처음과 다시 맞출 때는 전체(/api/ingest), 그다음은 바뀐 세션만(/api/ingest/patch).
+
+    세션마다 lastActivity 를 뺀 내용을 비교해 바뀐 것만 set 에 담는다. lastActivity 만 바뀐 세션은
+    HEARTBEAT_SEC 마다 한 번 함께 보낸다. 허브가 patch 를 모르면(예전 허브, 404) 전체 보내기로 돌아간다."""
+
+    def __init__(self, hub, host):
+        self.hub, self.host = hub, host
+        self.seq = 0
+        self.synced = False       # 허브가 우리 seq 를 알고 있다
+        self.patch_ok = True      # 허브가 patch 를 받는다
+        self.sigs, self.full, self.order, self.meta = {}, {}, [], None
+        self.last_at = 0.0
+
+    @staticmethod
+    def _sig(a, with_activity=False):
+        return json.dumps(a if with_activity else {k: v for k, v in a.items() if k != "lastActivity"}, sort_keys=True)
+
+    def reset(self):
+        self.synced = False
+
+    def send(self, agents, meta, now=None):
+        """보낼 게 있으면 보내고 무엇을 했는지 돌려준다('full'·'patch'·None). 네트워크 오류는 그대로 올린다."""
+        now = time.time() if now is None else now
+        sigs = {a["id"]: self._sig(a) for a in agents}
+        order = [a["id"] for a in agents]
+        beat = now - self.last_at > HEARTBEAT_SEC
+        changed = [a for a in agents if self.sigs.get(a["id"]) != sigs[a["id"]]]
+        if beat:   # 심장 박동 때는 lastActivity 만 바뀐 세션도 보낸다
+            ids = {a["id"] for a in changed}
+            changed += [a for a in agents if a["id"] not in ids and self.full.get(a["id"]) != self._sig(a, True)]
+        removed = [i for i in self.sigs if i not in sigs]
+        if not (changed or removed or order != self.order or meta != self.meta or beat):
+            return None
+        kind = None
+        if self.synced and self.patch_ok:
+            try:
+                r = api(self.hub, "/api/ingest/patch", {"host": self.host, "base": self.seq, "seq": self.seq + 1,
+                                                         "set": changed, "del": removed, "order": order, "meta": meta})
+                if r.get("ok"):
+                    self.seq += 1
+                    kind = "patch"
+                else:
+                    self.synced = False   # 허브가 다시 떴거나 전송을 놓쳤다 → 아래에서 전체
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 405):
+                    raise
+                self.patch_ok = False     # 예전 허브: 앞으로는 전체만
+        if kind is None:
+            post(self.hub, {"host": self.host, "agents": agents, "meta": meta, "seq": self.seq + 1})
+            self.seq += 1
+            self.synced = True
+            kind = "full"
+        self.sigs, self.order, self.meta, self.last_at = sigs, order, meta, now
+        self.full = {a["id"]: self._sig(a, True) for a in agents}
+        return kind
+
+
 def run(args, col):
-    last_sent, last_at, failing, cfg_at = None, 0.0, False, 0.0
+    failing, cfg_at = False, 0.0
+    sender = Sender(args.hub, args.host)
     while True:
         try:
             if time.time() - cfg_at > CONFIG_POLL_SEC:
@@ -849,11 +908,7 @@ def run(args, col):
                 except Exception:
                     col.speech = False
             agents = col.collect()
-            # lastActivity 만 바뀐 경우까지 매초 보내지 않도록 비교에서 뺀다
-            sig = json.dumps([{k: v for k, v in a.items() if k != "lastActivity"} for a in agents], sort_keys=True)
-            if sig != last_sent or time.time() - last_at > HEARTBEAT_SEC:
-                post(args.hub, {"host": args.host, "agents": agents, "meta": {"checklistRule": checklist_rule_installed()}})
-                last_sent, last_at = sig, time.time()
+            if sender.send(agents, {"checklistRule": checklist_rule_installed()}):
                 if failing:
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False
@@ -862,7 +917,7 @@ def run(args, col):
             if not failing:  # 끊길 때 한 번만 남긴다(로그가 쌓이지 않게)
                 print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브에 보내지 못함:", e, flush=True)
                 failing = True
-            last_sent = None
+            sender.reset()   # 다시 붙으면 전체부터
         except Exception as e:  # 한 세션 파일이 이상해도 수집기는 죽지 않는다
             print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집 오류:", repr(e), flush=True)
         time.sleep(args.interval if not failing else 5)

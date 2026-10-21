@@ -1782,6 +1782,18 @@ function scheduleReconnect() {
   markLost();
   retryTimer = setTimeout(connect, wait);
 }
+const agentKey = a => a.host + "/" + a.id;
+function applyPatch(base, p) {
+  const s = { ...base, version: p.version, now: p.now, hosts: p.hosts };
+  for (const k of ["config", "messaging", "messages"]) if (k in p) s[k] = p[k];
+  const by = new Map(base.agents.map(a => [agentKey(a), a]));
+  for (const k of p.del || []) by.delete(k);
+  const fresh = [];
+  for (const a of p.set || []) { const k = agentKey(a); if (!by.has(k)) fresh.push(k); by.set(k, a); }
+  const order = p.order || base.agents.map(agentKey).filter(k => by.has(k)).concat(fresh);
+  s.agents = order.map(k => by.get(k)).filter(Boolean);
+  return s;
+}
 function connect() {
   clearTimeout(retryTimer);
   if (es) es.close();
@@ -1797,6 +1809,13 @@ function connect() {
     if (es !== src) return;
     if (onState(JSON.parse(e.data), first)) first = false;
   };
+  // 첫 소식 뒤로는 바뀐 것만 온다(event: patch). 지금 상태(붙잡아 둔 상태가 있으면 그것)에 덧대어 같은 길로 넘긴다
+  src.addEventListener("patch", e => {
+    if (es !== src) return;
+    const base = held ? held.s : state;
+    if (!base) { scheduleReconnect(); return; }   // 덧댈 상태가 없으면 새로 붙어 전체를 받는다
+    if (onState(applyPatch(base, JSON.parse(e.data)), first)) first = false;
+  });
   src.onerror = () => {
     if (es !== src) return;
     if (!lostAt && !connectingSince) aliveAt = Date.now();   // 열려 있다 방금 끊김: 그때까지 받은 상태는 최신이었다

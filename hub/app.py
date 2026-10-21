@@ -364,18 +364,63 @@ async def health() -> dict:
     return {"ok": True, "hosts": len(hub.hosts), "version": hub.version, "auth": bool(TOKEN)}
 
 
+def _host_of(body: dict) -> str:
+    host = str(body.get("host", ""))[:40]
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", host):
+        raise HTTPException(400, "host 형식이 맞지 않다")
+    return host
+
+
+def _meta_of(body: dict) -> dict:
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    return {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
+
+
+def _seq_of(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
 @app.post("/api/ingest", dependencies=[Depends(require_write)])
 async def ingest(request: Request) -> dict:
+    """수집기가 그 컴퓨터의 세션 전체를 보낸다(처음·다시 맞출 때). seq 를 주면 이어서 바뀐 것만 받을 수 있다."""
     body = await request.json()
-    host = str(body.get("host", ""))[:40]
+    host = _host_of(body)
     agents = body.get("agents")
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", host) or not isinstance(agents, list) or len(agents) > 200:
+    if not isinstance(agents, list) or len(agents) > 200:
         raise HTTPException(400, "host·agents 형식이 맞지 않다")
-    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
-    meta = {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
+    meta = _meta_of(body)
     prev = hub.hosts.get(host)
-    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta}
+    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq"))}
     if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
+        await hub.bump()
+    return {"ok": True}
+
+
+@app.post("/api/ingest/patch", dependencies=[Depends(require_write)])
+async def ingest_patch(request: Request) -> dict:
+    """바뀐 세션만 받는다: set(바뀌거나 새로 생긴 세션 전체) · del(사라진 id) · order(id 순서).
+    허브가 아는 마지막 seq 가 base 와 다르면(허브 재시작·놓친 전송) resync 를 돌려줘 수집기가 전체를 다시 보낸다."""
+    body = await request.json()
+    host = _host_of(body)
+    h = hub.hosts.get(host)
+    base, seq = _seq_of(body.get("base")), _seq_of(body.get("seq"))
+    if not h or h.get("offline") or h.get("seq") is None or base != h["seq"] or seq is None:
+        return {"ok": False, "resync": True}
+    set_, dels, order = body.get("set") or [], body.get("del") or [], body.get("order")
+    if not (isinstance(set_, list) and isinstance(dels, list) and isinstance(order, list)) \
+            or len(set_) > 200 or len(dels) > 400 or len(order) > 200 \
+            or not all(isinstance(a, dict) and isinstance(a.get("id"), str) for a in set_):
+        raise HTTPException(400, "set·del·order 형식이 맞지 않다")
+    by = {a.get("id"): a for a in h["agents"]}
+    for i in dels:
+        by.pop(i, None)
+    for a in set_:
+        by[a["id"]] = a
+    agents = [by[i] for i in order if isinstance(i, str) and i in by]
+    meta = _meta_of(body)
+    changed = bool(set_ or dels) or [a.get("id") for a in h["agents"]] != [a.get("id") for a in agents] or h.get("meta") != meta
+    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq}
+    if changed:
         await hub.bump()
     return {"ok": True}
 
@@ -399,14 +444,49 @@ async def state() -> dict:
     return hub.snapshot()
 
 
+def _agent_key(a: dict) -> str:
+    return f"{a.get('host')}/{a.get('id')}"
+
+
+def _sent_view(snap: dict) -> dict:
+    """연결마다 마지막으로 보낸 상태를 비교하기 쉬운 문자열로 기억한다."""
+    return {"agents": {_agent_key(a): json.dumps(a, sort_keys=True, ensure_ascii=False) for a in snap["agents"]},
+            "order": [_agent_key(a) for a in snap["agents"]],
+            **{k: json.dumps(snap[k], sort_keys=True, ensure_ascii=False) for k in ("config", "messaging", "messages")}}
+
+
+def _patch(prev: dict, snap: dict) -> dict:
+    """화면에 보낼 차분: 바뀐 세션 전체(set), 사라진 키(del), 순서가 바뀌었으면 order, 바뀐 설정·메시지."""
+    out = {"version": snap["version"], "now": snap["now"], "hosts": snap["hosts"], "set": [], "del": []}
+    keys = []
+    for a in snap["agents"]:
+        k = _agent_key(a)
+        keys.append(k)
+        if prev["agents"].get(k) != json.dumps(a, sort_keys=True, ensure_ascii=False):
+            out["set"].append(a)
+    now_keys = set(keys)
+    out["del"] = [k for k in prev["agents"] if k not in now_keys]
+    if keys != prev["order"]:
+        out["order"] = keys
+    for k in ("config", "messaging", "messages"):
+        if json.dumps(snap[k], sort_keys=True, ensure_ascii=False) != prev[k]:
+            out[k] = snap[k]
+    return out
+
+
 @app.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
     async def gen():
-        seen = -1
+        seen, sent = -1, None
         while not hub.closing and not await request.is_disconnected():
             if hub.version != seen:
                 seen = hub.version
-                yield f"data: {json.dumps(hub.snapshot(), ensure_ascii=False)}\n\n"
+                snap = hub.snapshot()
+                if sent is None:   # 이 연결의 첫 소식은 전체, 그다음부터는 바뀐 것만(event: patch)
+                    yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"event: patch\ndata: {json.dumps(_patch(sent, snap), ensure_ascii=False)}\n\n"
+                sent = _sent_view(snap)
                 continue
             try:
                 async with hub.changed:

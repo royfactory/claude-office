@@ -766,3 +766,76 @@ def test_exit_signal_hook_skips_off_main_thread(hub):
     th.start()
     th.join(5)
     assert out == [[]]
+
+
+# ---------- 바뀐 것만 받기·보내기 ----------
+
+def test_patch_applies_set_del_order(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [agent("a"), agent("b"), agent("c")], "seq": 1})
+    v = mod.hub.version
+    r = c.post("/api/ingest/patch", json={"host": "m", "base": 1, "seq": 2, "set": [agent("b", kind="working"), agent("d")],
+                                          "del": ["c"], "order": ["d", "a", "b"]})
+    assert r.json() == {"ok": True}
+    agents = c.get("/api/state").json()["agents"]
+    assert [a["id"] for a in agents] == ["d", "a", "b"]
+    assert agents[2]["kind"] == "working"
+    assert mod.hub.version > v and mod.hub.hosts["m"]["seq"] == 2
+
+
+def test_patch_with_nothing_changed_keeps_host_alive_without_bump(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [agent("a")], "seq": 5})
+    v, t = mod.hub.version, mod.hub.hosts["m"]["receivedAt"]
+    time.sleep(0.01)
+    assert c.post("/api/ingest/patch", json={"host": "m", "base": 5, "seq": 6, "set": [], "del": [], "order": ["a"]}).json()["ok"]
+    assert mod.hub.version == v and mod.hub.hosts["m"]["receivedAt"] > t
+
+
+@pytest.mark.parametrize("first", [None, {"seq": None}, {"seq": 3}])
+def test_patch_needs_matching_base_else_resync(hub, first):
+    mod, c = hub
+    if first is not None:
+        body = {"host": "m", "agents": [agent("a")]}
+        if first["seq"] is not None:
+            body["seq"] = first["seq"]
+        c.post("/api/ingest", json=body)
+    r = c.post("/api/ingest/patch", json={"host": "m", "base": 1, "seq": 2, "set": [], "del": [], "order": ["a"]})
+    assert r.json() == {"ok": False, "resync": True}
+
+
+def test_patch_after_bye_asks_resync(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [agent("a")], "seq": 1})
+    c.post("/api/hosts/bye", json={"host": "m"})
+    assert c.post("/api/ingest/patch", json={"host": "m", "base": 1, "seq": 2, "set": [], "del": [], "order": ["a"]}).json()["resync"]
+
+
+@pytest.mark.parametrize("bad", [{"set": "x"}, {"set": [{"no": "id"}]}, {"order": None}, {"del": {"x": 1}}])
+def test_patch_rejects_bad_shape(hub, bad):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [agent("a")], "seq": 1})
+    body = {"host": "m", "base": 1, "seq": 2, "set": [], "del": [], "order": ["a"], **bad}
+    assert c.post("/api/ingest/patch", json=body).status_code == 400
+
+
+def test_patch_needs_token(authed):
+    mod, c = authed
+    assert c.post("/api/ingest/patch", json={"host": "m"}).status_code == 401
+
+
+def test_sse_patch_only_carries_changes(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [agent("a"), agent("b")], "seq": 1})
+    s1 = mod.hub.snapshot()
+    sent = mod._sent_view(s1)
+    c.post("/api/ingest/patch", json={"host": "m", "base": 1, "seq": 2, "set": [agent("b", kind="working"), agent("c")],
+                                      "del": ["a"], "order": ["b", "c"]})
+    p = mod._patch(sent, mod.hub.snapshot())
+    assert [a["id"] for a in p["set"]] == ["b", "c"]
+    assert p["del"] == ["m/a"] and p["order"] == ["m/b", "m/c"]
+    assert "config" not in p and "messages" not in p and p["hosts"][0]["host"] == "m"
+    # 아무것도 안 바뀌면 set·del 이 비고 order 도 없다
+    snap = mod.hub.snapshot()
+    p2 = mod._patch(mod._sent_view(snap), snap)
+    assert p2["set"] == [] and p2["del"] == [] and "order" not in p2
