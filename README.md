@@ -208,6 +208,7 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 | 수집기가 무엇을 보내는지 보기 | macOS `/usr/bin/python3 collector/collector.py --dump` · Windows `py -3 collector\collector.py --dump` |
 | 허브 로그 | `docker compose logs -f hub` |
 | 허브 직접 실행(도커 없이) | `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (`.env` 를 읽고, 데이터는 `data/`) |
+| 테스트 | `uv run --python 3.12 --with-requirements requirements-dev.txt --with-requirements hub/requirements.txt pytest -q` (수집기만은 `pytest -q tests/test_collector.py`, 3.9 에서도) |
 | 리눅스에서 수집기 | `python3 collector/collector.py --env .env` 를 systemd 사용자 서비스 등으로 상시 실행(시험 전) |
 
 ### 잘 안 될 때

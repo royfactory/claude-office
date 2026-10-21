@@ -1,0 +1,4 @@
+# 테스트 의존성. 허브 테스트는 hub/requirements.txt 도 함께 설치한다.
+#   pip install -r requirements-dev.txt -r hub/requirements.txt && pytest -q
+pytest>=8
+httpx>=0.27
