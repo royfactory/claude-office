@@ -63,8 +63,16 @@ cat > "$PLIST" <<PL
 PL
 # 로그는 끊길 때·복구될 때 한 줄씩만 쓴다. 그래도 1MB 넘으면 설치 때 비운다.
 [[ -f "$APP_DIR/collector.log" && $(stat -f %z "$APP_DIR/collector.log") -gt 1048576 ]] && : > "$APP_DIR/collector.log"
+# bootout 은 비동기라, 내려가기 전에 bootstrap 하면 "Bootstrap failed: 5: Input/output error" 가 난다.
+# 다 내려갈 때까지(최대 10초) 기다리고, 그래도 실패하면 잠깐 쉬고 몇 번 더 시도한다.
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-launchctl bootstrap "$DOMAIN" "$PLIST"
+for _ in $(seq 1 20); do launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
+ok=0
+for _ in 1 2 3 4 5; do
+  if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null; then ok=1; break; fi
+  sleep 1
+done
+[[ $ok = 1 ]] || { launchctl bootstrap "$DOMAIN" "$PLIST"; exit 1; }   # 마지막 시도는 오류를 그대로 보여 준다
 echo "[collector] 설치함 → ${HUB:-http://127.0.0.1:3006} (로그 $APP_DIR/collector.log)"
 
 # Claude 전역 지침에 '할 일 체크리스트' 규칙이 없으면 넣을 문장을 보여 준다(대시보드의 할 일 목록이 이걸로 생긴다)
