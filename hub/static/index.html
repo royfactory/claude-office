@@ -179,6 +179,19 @@
   .detail .dh small { color: var(--text-dim); font-size: 11px; }
   .detail .quote { margin: 10px 0 0; font-size: 12px; color: var(--text-hi); background: var(--bg-2); border-radius: 8px; padding: 8px; }
   .detail h4 { margin: 10px 0 4px; font-size: 11px; color: var(--text-dim); }
+  #compose { flex: none; }
+  #compose textarea { width: 100%; resize: vertical; min-height: 64px; max-height: 30vh; background: var(--bg-2); color: var(--text-hi);
+                      border: 1px solid var(--border-2); border-radius: 8px; padding: 8px; font: 13px/1.45 var(--font); }
+  #compose textarea:disabled { opacity: .5; }
+  #compose .crow { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  #compose p.muted { margin: 0 0 8px; line-height: 1.45; }
+  #compose p.warn { color: var(--warning); }
+  #composeLog { margin-top: 8px; font-size: 12px; }
+  #composeLog li { display: flex; gap: 8px; padding: 3px 0; border-top: 1px solid var(--border); }
+  #composeLog .s { flex: none; min-width: 52px; font-weight: 700; }
+  #composeLog .s.sent { color: var(--good); } #composeLog .s.failed, #composeLog .s.expired { color: var(--bad); }
+  #composeLog .s.queued, #composeLog .s.sending { color: var(--info); }
+  #composeLog .p { flex: 1; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #detail:not(:empty) { background: var(--surface); border: 1px solid var(--info); border-radius: 12px; padding: 12px; }
   .recent li, #log li { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
   .recent .t { color: var(--info); min-width: 60px; } .recent .g { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .recent .a { color: var(--text-dim2); }
@@ -236,6 +249,14 @@
 
   <aside class="right">
     <div id="detail"></div>
+    <!-- 고른 세션에 메시지 보내기. 1초마다 다시 그리는 상세 카드와 따로 둬서 입력 중인 글이 지워지지 않는다 -->
+    <section class="card" id="compose" hidden>
+      <h3>💬 이 세션에 메시지<small id="composeTarget"></small></h3>
+      <p class="muted" id="composeNote"></p>
+      <textarea id="composeText" rows="3" maxlength="4000" placeholder="Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)"></textarea>
+      <div class="crow"><span class="muted" id="composeCount">0 / 4000</span><button class="primary" id="composeSend">보내기</button></div>
+      <ol id="composeLog"></ol>
+    </section>
     <section class="card" id="peopleBox"><h3>사무실 사람들<small id="peopleHead"></small></h3><ol id="people"></ol></section>
     <section class="card" id="logBox"><h3>활동 로그</h3><ol id="log"></ol></section>
     <section class="card" id="legendBox"><h3>어디서 무엇을 하나</h3><ol id="legend"></ol></section>

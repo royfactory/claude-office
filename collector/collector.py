@@ -26,7 +26,9 @@ import argparse
 import glob
 import json
 import os
+import re
 import socket
+import stat
 import sys
 import time
 import urllib.error
@@ -88,6 +90,10 @@ for _p in (_env_arg, os.path.expanduser("~/.claude-office/.env"),
            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")):
     load_env(_p)
 TOKEN = os.environ.get("OFFICE_TOKEN", "").strip()
+# 대시보드에서 세션으로 메시지 보내기. 이 컴퓨터에서 켜야만(on) 받는다 — 허브가 켜 있어도 여기서 꺼 두면 전달하지 않는다
+MESSAGES = os.environ.get("CLAUDE_OFFICE_MESSAGES", "").strip().lower() in ("on", "1", "true", "yes")
+MESSAGE_PREFIX = "[claude-office 대시보드에서 이 컴퓨터의 사용자가 보낸 메시지]\n"
+MAX_MESSAGE = 4000
 
 # Claude Code 설정 폴더들. 기본 ~/.claude 말고도 Orca 가 띄운 세션은 프로필마다 CLAUDE_CONFIG_DIR 이 따로 있다.
 # 더 있으면 CLAUDE_OFFICE_ROOTS 에 콜론(:)으로 이어 적는다.
@@ -175,6 +181,7 @@ class Transcript:
         self.tools = 0
         self.title = ""
         self.say = ""
+        self.mode = ""
         self.last = None
         self.ino = None
 
@@ -211,6 +218,9 @@ class Transcript:
         except ValueError:
             return
         t = rec.get("type")
+        if t == "permission-mode":
+            self.mode = str(rec.get("permissionMode") or "")[:32]
+            return
         if t in ("ai-title", "custom-title"):
             self.title = short(rec.get("customTitle") or rec.get("aiTitle") or rec.get("title") or "", 40)
             return
@@ -251,6 +261,7 @@ class Collector:
         self.paths = {}         # sessionId -> jsonl path
         self.metas = {}         # meta path -> dict
         self.used = set()
+        self.sockets = {}       # sessionId -> 그 세션의 수신함 소켓 경로(sessions/<pid>.json 의 messagingSocketPath)
 
     def transcript(self, path):
         self.used.add(path)
@@ -320,6 +331,7 @@ class Collector:
     def collect(self):
         now = time.time()
         self.used = set()
+        self.sockets = {}
         agents = []
         seen = set()
         files = [(r, f) for r in claude_roots() for f in glob.glob(os.path.join(glob.escape(r), "sessions", "*.json"))]
@@ -348,6 +360,9 @@ class Collector:
                 kind = "idle"
             since = (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
             subs = self.subagents(jsonl, tr, now) if jsonl else []
+            sock = s.get("messagingSocketPath") or ""
+            if sock:
+                self.sockets[sid] = sock
             agents.append({
                 "id": sid,
                 "pid": s.get("pid"),
@@ -365,6 +380,8 @@ class Collector:
                 "startedAt": s.get("startedAt", 0) / 1000,
                 "tools": tr.tools,
                 "say": self.said(tr),
+                "mode": tr.mode,
+                "canMessage": MESSAGES and not WINDOWS and socket_ok(sock),
                 "recent": [{"tool": r["tool"], "target": r["target"], "ts": r["ts"]} for r in tr.recent[::-1]],
                 "subagents": subs,
             })
@@ -383,6 +400,69 @@ def post(hub, payload, timeout=5):
                                  headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         r.read()
+
+
+def api(hub, path, payload, timeout=5):
+    headers = {"Content-Type": "application/json"}
+    if TOKEN:
+        headers["X-Office-Token"] = TOKEN
+    req = urllib.request.Request(hub.rstrip("/") + path, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+# Claude Code 가 수신함 소켓을 만드는 곳만 받는다(허브가 엉뚱한 경로를 시키지 못하게)
+_SOCK_DIRS = re.compile(r"^(/private)?/tmp/cc-socks(-\d+)?/[^/]+$|^/run/user/\d+/cc-socks/[^/]+$")
+
+
+def socket_ok(path):
+    if WINDOWS or not path or not _SOCK_DIRS.match(path):
+        return False
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISSOCK(st.st_mode) and st.st_uid == os.getuid()
+
+
+def deliver(sock_path, text):
+    """세션 수신함 소켓에 한 줄짜리 메시지를 쓴다(Claude Code 의 교차 세션 메시지 형식).
+
+    인증 줄은 보내지 않는다 — 받는 세션은 이 메시지를 '다른 세션이 보낸 것'으로 다루고, 그 세션의
+    수신 규칙(crossSessionInbound, 권한 모드)에 따라 바로 전달하거나 터미널에서 승인을 기다린다."""
+    line = json.dumps({"type": "user", "message": {"role": "user", "content": MESSAGE_PREFIX + text}}, ensure_ascii=False)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect(sock_path)
+        s.sendall((line + "\n").encode("utf-8"))
+    finally:
+        s.close()
+
+
+def handle_outbox(hub, host, col):
+    """허브에 쌓인 '이 컴퓨터 세션에 보낼 메시지'를 받아 전달하고 결과를 알린다."""
+    items = api(hub, "/api/outbox/pull", {"host": host}).get("messages", [])
+    for m in items:
+        ok, err = False, ""
+        text = str(m.get("text", ""))[:MAX_MESSAGE]
+        sock = col.sockets.get(m.get("session"))
+        if not MESSAGES:
+            err = "이 컴퓨터의 수집기에서 메시지 받기가 꺼져 있다(CLAUDE_OFFICE_MESSAGES)"
+        elif WINDOWS:
+            err = "Windows 수집기는 아직 메시지 보내기를 지원하지 않는다"
+        elif not text.strip():
+            err = "빈 메시지"
+        elif not sock or not socket_ok(sock):
+            err = "그 세션의 수신함을 찾지 못했다(끝났거나 메시지를 받지 않는 세션)"
+        else:
+            try:
+                deliver(sock, text)
+                ok = True
+            except OSError as e:
+                err = f"전달 실패: {e}"
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지", "전달" if ok else "실패", m.get("session", "")[:8], err, flush=True)
+        api(hub, "/api/outbox/result", {"host": host, "id": m.get("id"), "ok": ok, "error": err})
 
 
 def hub_speech(hub):
@@ -436,6 +516,12 @@ def main():
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False
                     cfg_at = 0.0
+            if MESSAGES and not WINDOWS:
+                try:
+                    handle_outbox(args.hub, args.host, col)
+                except urllib.error.HTTPError as e:
+                    if e.code not in (401, 403, 404):   # 허브가 메시지를 끄거나 토큰이 없으면 조용히 넘어간다
+                        raise
         except (urllib.error.URLError, OSError) as e:
             if not failing:  # 끊길 때 한 번만 남긴다(로그가 쌓이지 않게)
                 print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브에 보내지 못함:", e, flush=True)

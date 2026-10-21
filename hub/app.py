@@ -71,6 +71,8 @@ CONFIG_PATH = DATA / "config.json"
 STATIC = Path(__file__).parent / "static"
 HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없는 수집기의 세션은 화면에서 뺀다
 MAX_ASSET_BYTES = 2 * 1024 * 1024
+MAX_MESSAGE = 4000
+OUTBOX_TTL_SEC = 60
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
@@ -118,6 +120,7 @@ DEFAULT_CONFIG: dict = {
     ],
     "defaultRoom": "dev",
     "speech": True,      # 말풍선에 Claude 마지막 답변 앞 80자. 끄면 수집기가 30초 안에 보내지 않는다
+    "messaging": False,  # 대시보드에서 세션으로 메시지 보내기. OFFICE_TOKEN 이 있어야 켜진다
     "meName": "나",
     "meCharacter": "",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
 }
@@ -172,6 +175,7 @@ class Config(BaseModel):
     toolRooms: list[ToolRoom] = Field(default=[], max_length=300)
     defaultRoom: WorkRoomId = "dev"
     speech: bool = True
+    messaging: bool = False
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
 
@@ -228,6 +232,10 @@ class Hub:
         self.config = load_config()
         self.version = 0
         self.changed = asyncio.Condition()
+        self.outbox: list[dict] = []   # 대시보드 → 세션 메시지(최근 것만, 메모리에만)
+
+    def messaging_ready(self) -> bool:
+        return bool(TOKEN) and bool(self.config.get("messaging"))
 
     def snapshot(self) -> dict:
         now = time.time()
@@ -238,8 +246,11 @@ class Hub:
                           "count": len(h["agents"])})
             if age < HOST_STALE_SEC:
                 agents.extend({**a, "host": name} for a in h["agents"])
+        msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
+                for m in self.outbox[-20:]]
         return {"version": self.version, "now": now, "hosts": hosts, "agents": agents,
-                "config": self.config}
+                "config": self.config, "messaging": {"ready": self.messaging_ready(), "auth": bool(TOKEN)},
+                "messages": msgs}
 
     async def bump(self) -> None:
         async with self.changed:
@@ -267,7 +278,12 @@ async def _expire_loop() -> None:
         await asyncio.sleep(5)
         now = time.time()
         cur = {h: now - v["receivedAt"] < HOST_STALE_SEC for h, v in hub.hosts.items()}
-        if cur != online:
+        expired = False
+        for m in hub.outbox:   # 수집기가 1분 안에 가져가지 않으면(꺼짐·메시지 받기 꺼짐) 만료
+            if m["status"] in ("queued", "sending") and now - m["createdAt"] > OUTBOX_TTL_SEC:
+                m.update(status="expired", error="그 컴퓨터의 수집기가 가져가지 않았다(꺼져 있거나 메시지 받기가 꺼짐)")
+                expired = True
+        if cur != online or expired:
             online = cur
             await hub.bump()
 
@@ -338,6 +354,78 @@ async def stream(request: Request) -> StreamingResponse:
                 yield ": keep-alive\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ---------- 대시보드 → 세션 메시지 ----------
+# 흐름: 화면이 /api/sessions/message 로 맡김 → 그 컴퓨터의 수집기가 /api/outbox/pull 로 가져가
+#       세션 수신함 소켓에 쓰고 → /api/outbox/result 로 결과를 알린다. 허브는 세션에 직접 닿지 않는다.
+# 켜는 조건: 허브 OFFICE_TOKEN + 관리 화면 '메시지 보내기' + 그 컴퓨터 수집기 CLAUDE_OFFICE_MESSAGES=on
+
+
+class OutMessage(BaseModel):
+    host: str = Field(min_length=1, max_length=40)
+    session: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE)
+
+
+def _require_messaging() -> None:
+    if not TOKEN:
+        raise HTTPException(403, "메시지 보내기는 허브에 OFFICE_TOKEN 을 정해야 쓸 수 있다")
+    if not hub.config.get("messaging"):
+        raise HTTPException(403, "관리 화면에서 '대시보드에서 메시지 보내기'가 꺼져 있다")
+
+
+@app.post("/api/sessions/message", dependencies=[Depends(require_write)])
+async def send_message(m: OutMessage) -> dict:
+    _require_messaging()
+    h = hub.hosts.get(m.host)
+    agent = next((a for a in (h or {}).get("agents", []) if a.get("id") == m.session), None)
+    if not agent:
+        raise HTTPException(404, "그 세션이 지금 보이지 않는다")
+    if not agent.get("canMessage"):
+        raise HTTPException(409, "그 컴퓨터의 수집기가 메시지를 받지 않는다(CLAUDE_OFFICE_MESSAGES 꺼짐·Windows·수신함 없음)")
+    now = time.time()
+    item = {"id": hashlib.sha256(f"{now}{m.session}{m.text}".encode()).hexdigest()[:12], "host": m.host,
+            "session": m.session, "text": m.text, "preview": m.text[:60], "status": "queued", "error": "",
+            "createdAt": now}
+    hub.outbox = (hub.outbox + [item])[-50:]
+    await hub.bump()
+    return {"id": item["id"], "status": "queued"}
+
+
+class Pull(BaseModel):
+    host: str = Field(min_length=1, max_length=40)
+
+
+@app.post("/api/outbox/pull", dependencies=[Depends(require_write)])
+async def outbox_pull(p: Pull) -> dict:
+    _require_messaging()
+    out = []
+    for m in hub.outbox:
+        if m["host"] == p.host and m["status"] == "queued":
+            m["status"] = "sending"
+            out.append({"id": m["id"], "session": m["session"], "text": m["text"]})
+    if out:
+        await hub.bump()
+    return {"messages": out}
+
+
+class Result(BaseModel):
+    host: str
+    id: str
+    ok: bool
+    error: str = ""
+
+
+@app.post("/api/outbox/result", dependencies=[Depends(require_write)])
+async def outbox_result(r: Result) -> dict:
+    for m in hub.outbox:
+        if m["id"] == r.id and m["host"] == r.host:
+            m.update(status="sent" if r.ok else "failed", error=r.error[:200])
+            m["text"] = ""   # 전달이 끝난 본문은 허브 메모리에 남기지 않는다(미리보기만)
+            await hub.bump()
+            break
+    return {"ok": True}
 
 
 @app.get("/api/config")

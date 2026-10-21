@@ -836,7 +836,7 @@ setPlaying(playing);
 
 function renderPeople(floor, chars) {
   const now = Date.now() / 1000 - skew;
-  if (!floor) { $("people").innerHTML = ""; $("detail").innerHTML = ""; return; }
+  if (!floor) { $("people").innerHTML = ""; $("detail").innerHTML = ""; updateCompose(null); return; }
   const rows = [];
   for (const a of floor.agents) {
     rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.name, now, false));
@@ -847,6 +847,7 @@ function renderPeople(floor, chars) {
   $("people").innerHTML = rows.join("");
   const a = floor.agents.find(x => x.id === selected) || floor.agents.find(x => selected && selected.startsWith(x.id + "/"));
   $("detail").innerHTML = a ? detailCard(a, chars.get(a.id), now) : "";
+  updateCompose(a, now);
 }
 function personRow(key, a, ch, st, title, sub, now, isSub) {
   const label = { working: "근무", thinking: "고민", stalled: "막힘", idle: "휴식" }[st];
@@ -869,6 +870,57 @@ function detailCard(a, ch, now) {
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
 }
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });
+
+// ---------- 고른 세션에 메시지 보내기 ----------
+// 허브 → 그 컴퓨터의 수집기 → 세션 수신함 소켓으로 간다. 받는 Claude 는 '다른 세션이 보낸 메시지'로 받고,
+// 권한 확인을 건너뛰는 세션(bypass)은 터미널에서 사용자가 승인해야 전달된다(Claude Code 규칙).
+let token = "";
+try { token = localStorage.getItem("office.token") || ""; } catch (_) {}
+let composeFor = null;
+const MSG_LABEL = { queued: "대기", sending: "전달 중", sent: "전달함", failed: "실패", expired: "만료" };
+function updateCompose(a, now) {
+  const box = $("compose");
+  if (!a) { box.hidden = true; composeFor = null; return; }
+  box.hidden = false;
+  if (composeFor !== a.id) { composeFor = a.id; $("composeText").value = ""; $("composeCount").textContent = "0 / 4000"; }
+  $("composeTarget").textContent = `${a.title || a.name} @${a.host}`;
+  const m = state.messaging || {};
+  let note = "", warn = false, can = false;
+  if (!m.auth) note = "허브에 OFFICE_TOKEN 이 없어 꺼져 있습니다(.env 에 정하고 허브를 다시 띄우세요).";
+  else if (!m.ready) note = "관리 화면 「화면 설정」에서 '대시보드에서 메시지 보내기'를 켜야 합니다.";
+  else if (!a.canMessage) note = "이 세션의 컴퓨터 수집기가 메시지를 받지 않습니다(그 컴퓨터 .env 의 CLAUDE_OFFICE_MESSAGES=on, Windows 는 아직 미지원).";
+  else if (a.mode === "bypassPermissions") { can = true; warn = true; note = "이 세션은 권한 확인을 건너뛰는 모드라, 메시지가 그 터미널에서 승인을 기다립니다(5분 안에 승인하지 않으면 버려짐)."; }
+  else { can = true; note = "받는 Claude 는 '다른 세션이 보낸 메시지'로 받습니다. 권한 승인이나 설정 변경은 메시지로 할 수 없습니다."; }
+  const np = $("composeNote"); np.textContent = note; np.classList.toggle("warn", warn);
+  $("composeText").disabled = !can; $("composeSend").disabled = !can;
+  const mine = (state.messages || []).filter(x => x.session === a.id).slice(-4).reverse();
+  $("composeLog").innerHTML = mine.map(x => `<li title="${esc(x.error || "")}"><span class="s ${x.status}">${MSG_LABEL[x.status] || x.status}</span><span class="p">${esc(x.error && x.status !== "sent" ? x.error : x.preview)}</span><span class="muted">${ago((now || Date.now() / 1000 - skew) - x.createdAt)} 전</span></li>`).join("");
+}
+$("composeText").addEventListener("input", e => { $("composeCount").textContent = `${e.target.value.length} / 4000`; });
+$("composeText").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendCompose(); } });
+$("composeSend").onclick = () => sendCompose();
+async function sendCompose() {
+  const a = state && state.agents.find(x => x.id === composeFor);
+  const text = $("composeText").value.trim();
+  if (!a || !text) return;
+  if (!confirm(`'${a.title || a.name}' (${a.host}) 세션에 보낼까요?\n\n${text.slice(0, 300)}${text.length > 300 ? "…" : ""}`)) return;
+  for (let tries = 0; tries < 2; tries++) {
+    const r = await fetch("/api/sessions/message", { method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { "X-Office-Token": token } : {}) },
+      body: JSON.stringify({ host: a.host, session: a.id, text }) });
+    if (r.status === 401) {
+      const t = prompt("메시지 보내기에는 허브의 OFFICE_TOKEN 이 필요합니다. 값을 넣어 주세요.");
+      if (!t) return;
+      token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {}
+      continue;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("보내지 못했습니다: " + (j.detail || r.statusText)); return; }
+    $("composeText").value = ""; $("composeCount").textContent = "0 / 4000";
+    log(a.project, `나 → ${a.title || a.name}`, `💬 ${text.slice(0, 60)}`);
+    return;
+  }
+}
 
 function renderLog(floor) {
   const now = Date.now() / 1000 - skew;

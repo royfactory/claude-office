@@ -103,8 +103,10 @@
   <section class="card">
     <h2>화면 설정</h2>
     <p class="help">말풍선을 켜면 Claude가 마지막으로 한 말의 앞 80자가 머리 위에 뜹니다. 끄면 수집기가 30초 안에 그 글을 보내지 않게 됩니다(허브에도 남지 않음). 사용자 메시지·명령 원문·파일 내용은 켜도 보내지 않습니다.</p>
+    <p class="help">메시지 보내기를 켜면 사무실 화면에서 세션을 고르고 그 세션의 Claude 에게 말을 보낼 수 있습니다. 세 가지가 다 있어야 동작합니다: 허브의 <code>OFFICE_TOKEN</code>, 이 설정, 그 세션이 있는 컴퓨터 수집기의 <code>CLAUDE_OFFICE_MESSAGES=on</code>. 받는 Claude 는 '다른 세션이 보낸 메시지'로 받고, 권한 확인을 건너뛰는 세션은 그 터미널에서 승인해야 전달됩니다.</p>
     <div class="row" style="gap:18px">
       <label class="row" style="font-size:13px"><input type="checkbox" id="speech"> 말풍선에 Claude가 한 말 보이기</label>
+      <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN 과 그 컴퓨터 수집기의 CLAUDE_OFFICE_MESSAGES=on 도 있어야 동작"><input type="checkbox" id="messaging"> 대시보드에서 세션으로 메시지 보내기</label>
       <label class="row" style="font-size:13px">내 자리에 앉은 '나' 이름 <input id="meName" maxlength="12" style="width:110px"></label>
       <label class="row" style="font-size:13px">'나' 캐릭터 <select id="meChar"></select></label>
     </div>
@@ -234,6 +236,7 @@ function renderRules() {
   $("subChar").innerHTML = charOptions(cfg.subagentCharacter, true);
   $("meChar").innerHTML = `<option value="">🧑‍💻 (기본)</option>` + charOptions(cfg.meCharacter, false);
   $("speech").checked = cfg.speech !== false;
+  $("messaging").checked = !!cfg.messaging;
   $("meName").value = cfg.meName || "나";
 }
 
@@ -314,6 +317,7 @@ document.addEventListener("input", e => {
   } else if (t.id === "subChar") cfg.subagentCharacter = val;
   else if (t.id === "meChar") cfg.meCharacter = val;
   else if (t.id === "speech") cfg.speech = val;
+  else if (t.id === "messaging") cfg.messaging = val;
   else if (t.id === "meName") cfg.meName = val;
   else if (t.id === "defaultRoom") cfg.defaultRoom = val;
   light();
