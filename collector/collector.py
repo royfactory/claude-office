@@ -27,9 +27,11 @@ import glob
 import json
 import os
 import re
+import signal
 import socket
 import stat
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -121,6 +123,7 @@ SUBAGENT_SCAN_SEC = 600      # 이보다 오래된 서브에이전트 파일은 
 STALL_SEC = 90               # 생각만 하는데 기록이 이만큼 조용하면 '막힘'
 RECENT_N = 8
 HEARTBEAT_SEC = 10
+WAIT_SEC = 25           # 메시지 롱폴링(/api/outbox/wait) 한 번에 기다리는 시간(허브 최대 25초)
 
 
 def short(s, n=48):
@@ -404,7 +407,7 @@ class Collector:
     def collect(self):
         now = time.time()
         self.used = set()
-        self.sockets = {}
+        socks = {}   # 다 모은 뒤 한 번에 바꾼다 — 메시지 스레드가 반쯤 찬 사전을 읽지 않게
         agents = []
         seen = set()
         files = [(r, f) for r in claude_roots() for f in glob.glob(os.path.join(glob.escape(r), "sessions", "*.json"))]
@@ -438,7 +441,7 @@ class Collector:
             subs = self.subagents(jsonl, tr, now) if jsonl else []
             sock = s.get("messagingSocketPath") or ""
             if sock:
-                self.sockets[sid] = sock
+                socks[sid] = sock
             agents.append({
                 "id": sid,
                 "pid": s.get("pid"),
@@ -467,6 +470,7 @@ class Collector:
             if p not in self.used:
                 del self.transcripts[p]
         agents.sort(key=lambda a: a["startedAt"])
+        self.sockets = socks
         return agents
 
 
@@ -546,13 +550,13 @@ def deliver(sock_path, text):
         s.close()
 
 
-def handle_outbox(hub, host, col):
-    """허브에 쌓인 '이 컴퓨터 세션에 보낼 메시지'를 받아 전달하고 결과를 알린다."""
-    items = api(hub, "/api/outbox/pull", {"host": host}).get("messages", [])
+def handle_outbox(hub, host, col, items):
+    """허브에서 받은 '이 컴퓨터 세션에 보낼 메시지'를 전달하고 결과를 알린다."""
+    sockets = col.sockets   # 수집 루프가 통째로 바꿔 끼우는 사전 — 이 순간의 것을 잡아 둔다
     for m in items:
         ok, err = False, ""
         text = str(m.get("text", ""))[:MAX_MESSAGE]
-        sock = col.sockets.get(m.get("session"))
+        sock = sockets.get(m.get("session"))
         if not MESSAGES:
             err = "이 컴퓨터의 수집기에서 메시지 받기가 꺼져 있다(CLAUDE_OFFICE_MESSAGES)"
         elif WINDOWS:
@@ -569,6 +573,51 @@ def handle_outbox(hub, host, col):
                 err = f"전달 실패: {e}"
         print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지", "전달" if ok else "실패", m.get("session", "")[:8], err, flush=True)
         api(hub, "/api/outbox/result", {"host": host, "id": m.get("id"), "ok": ok, "error": err})
+
+
+def outbox_loop(hub, host, col):
+    """메시지 스레드: 허브에 롱폴링(/api/outbox/wait)을 계속 걸어 두고, 받으면 바로 전달한다.
+
+    끊기거나 오류면 1초부터 두 배씩 최대 30초 쉬었다 다시 건다. 허브가 메시지를 끄거나(403)
+    토큰이 다르면(401) 30초 쉰다. 허브가 예전 판이라 wait 가 없으면(404) 5분 동안 1초마다 pull 로 가져간다."""
+    delay, legacy_until, failing = 1.0, 0.0, False
+    while True:
+        try:
+            if time.time() < legacy_until:
+                items = api(hub, "/api/outbox/pull", {"host": host}).get("messages", [])
+                pause = 1.0
+            else:
+                items = api(hub, "/api/outbox/wait", {"host": host, "timeout": WAIT_SEC},
+                            timeout=WAIT_SEC + 10).get("messages", [])
+                pause = 0.0
+            if items:
+                handle_outbox(hub, host, col, items)
+            delay, failing = 1.0, False
+            time.sleep(pause)
+        except urllib.error.HTTPError as e:
+            if e.code == 404 and time.time() >= legacy_until:
+                legacy_until = time.time() + 300
+                continue
+            time.sleep(30 if e.code in (401, 403, 404) else delay)
+            delay = min(delay * 2, 30.0)
+        except Exception as e:   # 연결 끊김·시간 초과 등. 스레드는 죽지 않는다
+            if not failing:
+                print(time.strftime("%Y-%m-%d %H:%M:%S"), "메시지 대기 연결 실패:", repr(e), flush=True)
+                failing = True
+            time.sleep(delay)
+            delay = min(delay * 2, 30.0)
+
+
+def say_bye(hub, host):
+    """정상 종료할 때 허브에 '떠남'을 알린다 — 허브가 30초를 기다리지 않고 바로 끊김으로 본다."""
+    try:
+        api(hub, "/api/hosts/bye", {"host": host}, timeout=2)
+    except Exception:   # 허브가 꺼졌거나 예전 판이면 그냥 30초 기준에 맡긴다
+        pass
+
+
+def _exit_on_signal(signum, _frame):
+    raise SystemExit(128 + signum)
 
 
 def hub_speech(hub):
@@ -602,6 +651,22 @@ def main():
         print()
         return
 
+    # launchd·systemd 가 멈출 때 보내는 SIGTERM 도 Ctrl+C 처럼 '떠남'을 알리고 끝나게 한다.
+    # Windows 작업 스케줄러는 신호 없이 프로세스를 끝내므로 거기서는 허브의 30초 기준으로 끊김이 된다.
+    try:
+        signal.signal(signal.SIGTERM, _exit_on_signal)
+    except (ValueError, OSError, AttributeError):
+        pass
+    if MESSAGES and not WINDOWS:
+        threading.Thread(target=outbox_loop, args=(args.hub, args.host, col), name="outbox", daemon=True).start()
+    try:
+        run(args, col)
+    except (KeyboardInterrupt, SystemExit):
+        say_bye(args.hub, args.host)
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집기 종료", flush=True)
+
+
+def run(args, col):
     last_sent, last_at, failing, cfg_at = None, 0.0, False, 0.0
     while True:
         try:
@@ -622,12 +687,6 @@ def main():
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False
                     cfg_at = 0.0
-            if MESSAGES and not WINDOWS:
-                try:
-                    handle_outbox(args.hub, args.host, col)
-                except urllib.error.HTTPError as e:
-                    if e.code not in (401, 403, 404):   # 허브가 메시지를 끄거나 토큰이 없으면 조용히 넘어간다
-                        raise
         except (urllib.error.URLError, OSError) as e:
             if not failing:  # 끊길 때 한 번만 남긴다(로그가 쌓이지 않게)
                 print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브에 보내지 못함:", e, flush=True)

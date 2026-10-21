@@ -73,6 +73,7 @@ HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없는 수집기의 세션은
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE = 4000
 OUTBOX_TTL_SEC = 60
+WAIT_MAX_SEC = 25   # /api/outbox/wait 롱폴링 최대 대기
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
@@ -233,6 +234,12 @@ class Hub:
         self.version = 0
         self.changed = asyncio.Condition()
         self.outbox: list[dict] = []   # 대시보드 → 세션 메시지(최근 것만, 메모리에만)
+        self.queued = asyncio.Condition()   # 새 메시지가 큐에 들어오면 롱폴링 중인 수집기를 깨운다
+
+    @staticmethod
+    def online(h: dict, now: float) -> bool:
+        # 수집기가 '떠남'을 알렸으면(정상 종료) 바로 끊김, 아니면 마지막 소식 뒤 HOST_STALE_SEC 기준
+        return not h.get("offline") and now - h["receivedAt"] < HOST_STALE_SEC
 
     def messaging_ready(self) -> bool:
         return bool(TOKEN) and bool(self.config.get("messaging"))
@@ -242,9 +249,10 @@ class Hub:
         hosts, agents = [], []
         for name, h in sorted(self.hosts.items()):
             age = now - h["receivedAt"]
-            hosts.append({"host": name, "age": round(age, 1), "online": age < HOST_STALE_SEC,
+            on = self.online(h, now)
+            hosts.append({"host": name, "age": round(age, 1), "online": on,
                           "count": len(h["agents"]), **h.get("meta", {})})
-            if age < HOST_STALE_SEC:
+            if on:
                 agents.extend({**a, "host": name} for a in h["agents"])
         msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
                 for m in self.outbox[-20:]]
@@ -277,7 +285,7 @@ async def _expire_loop() -> None:
     while True:
         await asyncio.sleep(5)
         now = time.time()
-        cur = {h: now - v["receivedAt"] < HOST_STALE_SEC for h, v in hub.hosts.items()}
+        cur = {h: hub.online(v, now) for h, v in hub.hosts.items()}
         expired = False
         for m in hub.outbox:   # 수집기가 1분 안에 가져가지 않으면(꺼짐·메시지 받기 꺼짐) 만료
             if m["status"] in ("queued", "sending") and now - m["createdAt"] > OUTBOX_TTL_SEC:
@@ -330,7 +338,21 @@ async def ingest(request: Request) -> dict:
     meta = {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
     prev = hub.hosts.get(host)
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta}
-    if prev is None or prev["agents"] != agents or prev.get("meta") != meta:
+    if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
+        await hub.bump()
+    return {"ok": True}
+
+
+class Bye(BaseModel):
+    host: str = Field(min_length=1, max_length=40)
+
+
+@app.post("/api/hosts/bye", dependencies=[Depends(require_write)])
+async def host_bye(b: Bye) -> dict:
+    """수집기가 정상 종료(SIGTERM·Ctrl+C)하며 알린다. 30초를 기다리지 않고 바로 끊김으로 본다."""
+    h = hub.hosts.get(b.host)
+    if h and not h.get("offline"):
+        h["offline"] = True
         await hub.bump()
     return {"ok": True}
 
@@ -359,7 +381,7 @@ async def stream(request: Request) -> StreamingResponse:
 
 
 # ---------- 대시보드 → 세션 메시지 ----------
-# 흐름: 화면이 /api/sessions/message 로 맡김 → 그 컴퓨터의 수집기가 /api/outbox/pull 로 가져가
+# 흐름: 화면이 /api/sessions/message 로 맡김 → 그 컴퓨터의 수집기가 /api/outbox/wait(롱폴링)로 바로 받아
 #       세션 수신함 소켓에 쓰고 → /api/outbox/result 로 결과를 알린다. 허브는 세션에 직접 닿지 않는다.
 # 켜는 조건: 허브 OFFICE_TOKEN + 관리 화면 '메시지 보내기' + 그 컴퓨터 수집기 CLAUDE_OFFICE_MESSAGES=on
 
@@ -382,7 +404,7 @@ async def send_message(m: OutMessage) -> dict:
     _require_messaging()
     h = hub.hosts.get(m.host)
     agent = next((a for a in (h or {}).get("agents", []) if a.get("id") == m.session), None)
-    if not agent:
+    if not agent or h.get("offline"):
         raise HTTPException(404, "그 세션이 지금 보이지 않는다")
     if not agent.get("canMessage"):
         raise HTTPException(409, "그 컴퓨터의 수집기가 메시지를 받지 않는다(CLAUDE_OFFICE_MESSAGES 꺼짐·Windows·수신함 없음)")
@@ -391,6 +413,8 @@ async def send_message(m: OutMessage) -> dict:
             "session": m.session, "text": m.text, "preview": m.text[:60], "status": "queued", "error": "",
             "createdAt": now}
     hub.outbox = (hub.outbox + [item])[-50:]
+    async with hub.queued:
+        hub.queued.notify_all()
     await hub.bump()
     return {"id": item["id"], "status": "queued"}
 
@@ -399,17 +423,53 @@ class Pull(BaseModel):
     host: str = Field(min_length=1, max_length=40)
 
 
-@app.post("/api/outbox/pull", dependencies=[Depends(require_write)])
-async def outbox_pull(p: Pull) -> dict:
-    _require_messaging()
+def _has_queued(host: str) -> bool:
+    return any(m["host"] == host and m["status"] == "queued" for m in hub.outbox)
+
+
+async def _claim(host: str) -> dict:
     out = []
     for m in hub.outbox:
-        if m["host"] == p.host and m["status"] == "queued":
+        if m["host"] == host and m["status"] == "queued":
             m["status"] = "sending"
             out.append({"id": m["id"], "session": m["session"], "text": m["text"]})
     if out:
         await hub.bump()
     return {"messages": out}
+
+
+@app.post("/api/outbox/pull", dependencies=[Depends(require_write)])
+async def outbox_pull(p: Pull) -> dict:
+    """예전 수집기용(1초마다 가져가기). 새 수집기는 /api/outbox/wait 를 쓴다."""
+    _require_messaging()
+    return await _claim(p.host)
+
+
+class Wait(BaseModel):
+    host: str = Field(min_length=1, max_length=40)
+    timeout: float = WAIT_MAX_SEC
+
+
+@app.post("/api/outbox/wait", dependencies=[Depends(require_write)])
+async def outbox_wait(p: Wait, request: Request) -> dict:
+    """롱폴링: 그 컴퓨터 앞으로 쌓인 메시지가 있으면 바로, 없으면 생길 때까지(최대 25초) 기다렸다 돌려준다."""
+    _require_messaging()
+    deadline = time.monotonic() + min(max(p.timeout, 0.0), WAIT_MAX_SEC)
+    while True:
+        async with hub.queued:
+            left = deadline - time.monotonic()
+            if not _has_queued(p.host) and left > 0:
+                try:   # 5초마다 깨어 수집기가 끊었는지 본다
+                    await asyncio.wait_for(hub.queued.wait(), timeout=min(left, 5))
+                except asyncio.TimeoutError:
+                    pass
+        # 기다리는 사이 수집기가 끊었으면 메시지를 가져가지 않는다(다음 연결이 받게)
+        if await request.is_disconnected():
+            return {"messages": []}
+        if _has_queued(p.host):
+            return await _claim(p.host)
+        if deadline - time.monotonic() <= 0:
+            return {"messages": []}
 
 
 class Result(BaseModel):

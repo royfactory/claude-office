@@ -197,7 +197,7 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 알아 둘 것:
 - 받는 Claude 는 이 메시지를 **'다른 세션이 보낸 메시지'** 로 받습니다(내가 터미널에 친 것과 다름). 그래서 권한 승인·설정 변경은 메시지로 할 수 없습니다. 메시지 앞에 「대시보드에서 이 컴퓨터의 사용자가 보낸 메시지」라고 붙여 보냅니다.
 - **권한 확인을 건너뛰는 세션**(`--dangerously-skip-permissions`)은 Claude Code 규칙상 그 터미널에 승인 창을 띄우고 기다립니다. 5분 안에 승인하지 않으면 버려집니다. 승인 없이 받게 하려면 그 세션 쪽 Claude Code 설정 `crossSessionInbound` 를 `accept` 로 둡니다(이 컴퓨터의 다른 세션이 보내는 메시지도 모두 받게 되니 판단해서 씁니다).
-- 수집기는 자기가 보고 있는 세션에만, Claude Code 가 만든 수신함 소켓 경로에만 보냅니다. 1분 안에 수집기가 가져가지 않으면 「만료」가 됩니다.
+- 수집기는 허브에 연결을 걸어 두고 기다리다(롱폴링) 메시지가 들어오면 **즉시** 받아 전달합니다. 자기가 보고 있는 세션에만, Claude Code 가 만든 수신함 소켓 경로에만 보냅니다. 1분 안에 수집기가 가져가지 않으면 「만료」가 됩니다.
 - Windows 수집기는 아직 메시지 보내기를 지원하지 않습니다(Windows 수신함은 세션별 인증이 필요).
 
 ## 운영
@@ -210,6 +210,8 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 | 허브 직접 실행(도커 없이) | `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (`.env` 를 읽고, 데이터는 `data/`) |
 | 테스트 | `uv run --python 3.12 --with-requirements requirements-dev.txt --with-requirements hub/requirements.txt pytest -q` (수집기만은 `pytest -q tests/test_collector.py`, 3.9 에서도) |
 | 리눅스에서 수집기 | `python3 collector/collector.py --env .env` 를 systemd 사용자 서비스 등으로 상시 실행(시험 전) |
+
+로비의 「끊김」: 수집기를 정상으로 멈추면(launchd·systemd 의 중지, Ctrl+C) 허브에 '떠남'을 알려 바로 끊김이 되고, 그 밖의 경우(전원·네트워크가 끊김, Windows 작업 스케줄러의 종료)는 마지막 소식 뒤 30초가 지나면 끊김이 됩니다.
 
 ### 잘 안 될 때
 
