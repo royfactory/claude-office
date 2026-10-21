@@ -794,7 +794,14 @@ def setup_status():
         approve += row["approveHook"]
         status += row["statusline"]
         todo += row["todoTools"]
-    val = {"os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
+    repo = ""
+    try:   # 수집기 설치가 적어 둔 저장소 위치(대시보드가 명령 앞에 cd 를 붙인다)
+        with open(os.path.join(home, ".claude-office", "repo"), encoding="utf-8-sig") as f:
+            r = f.read().strip()
+        repo = ("~" + r[len(home):].replace("\\", "/")) if r.startswith(home) else r.replace("\\", "/")
+    except OSError:
+        pass
+    val = {"repo": repo[:200], "os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
            "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rootsDetail": detail[:10],
            "messagesEnv": MESSAGES, "approveEnv": APPROVE}
     _setup_cache.update(at=time.time(), val=val)

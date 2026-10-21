@@ -1170,8 +1170,11 @@ function setupSteps(h) {
     const where = row.label === "~/.claude" ? "" : ` --settings "${row.label.startsWith("~") ? HOMEVAR + row.label.slice(1) : row.label}/settings.json"`;
     return `${py} ${f.join(" ")}${f.length ? " " : ""}--apply${where}`;
   };
+  // 저장소 폴더로 옮겨 가서 실행해야 한다(hooks/ 가 그 안에 있다). 수집기 설치가 적어 둔 위치가 있으면 cd 를 붙인다
+  const repo = su && su.repo ? (su.repo.startsWith("~") ? HOMEVAR + su.repo.slice(1) : su.repo) : "";
+  const inRepo = c => repo ? `cd "${repo}"${win ? ";" : " &&"} ${c.split("\n").join(win ? "; " : " && ")}` : c;
   const rows = (su && su.rootsDetail) || [];
-  const cmd = (key, ...extra) => rows.length ? rows.filter(r => !r[key]).map(r => rowCmd(r, extra)).join("\n") : rowCmd({ label: "~/.claude" }, extra);
+  const cmd = (key, ...extra) => inRepo(rows.length ? rows.filter(r => !r[key]).map(r => rowCmd(r, extra)).join("\n") : rowCmd({ label: "~/.claude" }, extra));
   const reinstall = win ? "git pull 후 start.bat" : "git pull 후 sh collector/install.sh";
   const mine = state.agents.filter(a => a.host === h.host);
   const frac = (n, all) => !su ? false : n >= all && all > 0 ? true : n > 0 ? "part" : false;
@@ -1181,10 +1184,10 @@ function setupSteps(h) {
       { ok: !!su, label: "설정 점검을 지원하는 수집기", fix: reinstall }] },
     { t: "할 일 체크리스트 규칙", must: true, items: [
       { ok: h.checklistRule === true, label: "Claude 전역 지침(CLAUDE.md)에 규칙", fix: win ? "%USERPROFILE%\\.claude\\CLAUDE.md 에 아래 문장 넣기" : "~/.claude/CLAUDE.md 에 아래 문장 넣기", copy: CHECKLIST_RULE, copyLabel: "문장 복사" },
-      { ok: frac(su && su.todoTools, su && su.roots), label: `할 일 도구를 켠 설정 폴더 ${su ? (su.todoTools ?? "?") : "?"}/${su ? su.roots : "?"}곳 (새 모델은 기본으로 꺼져 있음)`, fix: "저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터", copy: cmd("todoTools", "--todo-tools") }],
+      { ok: frac(su && su.todoTools, su && su.roots), label: `할 일 도구를 켠 설정 폴더 ${su ? (su.todoTools ?? "?") : "?"}/${su ? su.roots : "?"}곳 (새 모델은 기본으로 꺼져 있음)`, fix: "claude-office 저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터", copy: cmd("todoTools", "--todo-tools") }],
       note: `지금 할 일 목록이 있는 세션 ${mine.filter(a => a.todos && a.todos.length).length}/${mine.length}개 · 둘 다 새로 시작한 세션부터 적용` },
     { t: "승인 대기 감지(훅)", items: [
-      { ok: frac(su && su.hooks, su && su.roots), label: `훅을 넣은 설정 폴더 ${su ? su.hooks : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행(설정 폴더마다 한 줄)", copy: cmd("hooks") }] },
+      { ok: frac(su && su.hooks, su && su.roots), label: `훅을 넣은 설정 폴더 ${su ? su.hooks : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행(설정 폴더마다 한 줄)", copy: cmd("hooks") }] },
     { t: "대시보드에서 메시지 보내기", items: win ? [{ ok: null, label: "Windows 는 아직 지원하지 않음" }] : [
       { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
       { ok: !!cfg.messaging, label: "관리 화면 「대시보드에서 세션으로 메시지 보내기」", fix: "/admin → 화면 설정에서 켜기" },
@@ -1193,9 +1196,9 @@ function setupSteps(h) {
       { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
       { ok: !!cfg.approvals, label: "관리 화면 「대시보드에서 권한 요청 허용·거절」", fix: "/admin → 화면 설정에서 켜기" },
       { ok: !!(su && su.approveEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on", fix: `.env 에 넣고 ${win ? "start.bat" : "sh collector/install.sh"} 다시` },
-      { ok: frac(su && su.approveHook, su && su.roots), label: `승인 훅을 넣은 설정 폴더 ${su ? su.approveHook : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행", copy: cmd("approveHook", "--approve") }] },
+      { ok: frac(su && su.approveHook, su && su.roots), label: `승인 훅을 넣은 설정 폴더 ${su ? su.approveHook : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행", copy: cmd("approveHook", "--approve") }] },
     { t: "사용 한도 막대", items: [
-      { ok: frac(su && su.statusline, su && su.roots), label: `상태 표시줄을 건 설정 폴더 ${su ? su.statusline : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행 (원래 상태 표시줄은 이어서 보임)", copy: cmd("statusline", "--statusline") },
+      { ok: frac(su && su.statusline, su && su.roots), label: `상태 표시줄을 건 설정 폴더 ${su ? su.statusline : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행 (원래 상태 표시줄은 이어서 보임)", copy: cmd("statusline", "--statusline") },
       { ok: mine.some(a => a.limits), label: "사용 한도 값을 받는 중", fix: "구독 계정 세션에서 답변이 한 번 오면 채워짐(API 키 계정은 값 없음)" }] },
   ];
 }

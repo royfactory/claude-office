@@ -1211,3 +1211,11 @@ def test_setup_status_counts_per_settings_folder(collector, home, monkeypatch):
     assert [r["label"] for r in su["rootsDetail"]] == ["~/.claude", "~/profile"]   # 홈은 ~ 로 줄여 보낸다
     assert su["rootsDetail"][0]["approveHook"] is True and su["rootsDetail"][1]["hooks"] is False
     assert str(home) not in json.dumps(su)
+
+
+def test_setup_status_reports_repo_location_under_home(collector, home, monkeypatch):
+    (home / ".claude-office").mkdir()
+    (home / ".claude-office" / "repo").write_text(str(home / "work" / "claude-office") + "\n", encoding="utf-8")
+    monkeypatch.setattr(collector, "ROOT_GLOBS", [str(home / ".claude")])
+    collector._setup_cache["val"] = None
+    assert collector.setup_status()["repo"] == "~/work/claude-office"

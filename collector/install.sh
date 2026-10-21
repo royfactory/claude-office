@@ -37,6 +37,7 @@ esac
 mkdir -p "$APP_DIR" "$HOME/Library/LaunchAgents"
 cp "$REPO/collector/collector.py" "$APP_DIR/collector.py"
 install -m 600 "$REPO/.env" "$APP_DIR/.env"      # 토큰이 들어 있을 수 있어 나만 읽게
+printf '%s\n' "$REPO" > "$APP_DIR/repo"          # 대시보드 설정 점검표가 명령 앞에 'cd 저장소' 를 붙이게
 HUB="$(grep -E '^CLAUDE_OFFICE_HUB=' "$APP_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'" || true)"
 
 cat > "$PLIST" <<PL

@@ -398,6 +398,8 @@ def _meta_of(body: dict) -> dict:
         clean.update({k: bool(su[k]) for k in SETUP_BOOLS if k in su})
         if su.get("os") in ("mac", "windows", "linux"):
             clean["os"] = su["os"]
+        if isinstance(su.get("repo"), str) and su["repo"]:
+            clean["repo"] = su["repo"][:200]
         rows = su.get("rootsDetail")
         if isinstance(rows, list):
             clean["rootsDetail"] = [

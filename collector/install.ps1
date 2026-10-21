@@ -61,6 +61,8 @@ New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 Copy-Item (Join-Path $Repo "collector\collector.py") (Join-Path $AppDir "collector.py") -Force
 $AppEnv = Join-Path $AppDir ".env"
 Copy-Item $EnvFile $AppEnv -Force
+# 대시보드 설정 점검표가 명령 앞에 'cd 저장소' 를 붙이게 저장소 위치를 적어 둔다
+Set-Content -Path (Join-Path $AppDir "repo") -Value $Repo -Encoding UTF8
 # 토큰이 들어 있을 수 있어 이 사용자만 읽고 쓰게 한다(상속 끊기)
 & icacls $AppEnv /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
 
