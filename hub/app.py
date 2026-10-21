@@ -383,9 +383,28 @@ def _host_of(body: dict) -> str:
     return host
 
 
+SETUP_INTS = ("roots", "hooks", "approveHook", "statusline", "todoTools")
+SETUP_BOOLS = ("messagesEnv", "approveEnv")
+
+
 def _meta_of(body: dict) -> dict:
+    """수집기가 알려 준 그 컴퓨터의 설정 상태. 아는 키만 형식을 맞춰 남긴다."""
     meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
-    return {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
+    out = {"checklistRule": bool(meta.get("checklistRule"))} if "checklistRule" in meta else {}
+    su = meta.get("setup")
+    if isinstance(su, dict):
+        clean = {k: max(0, min(int(su[k]), 99)) for k in SETUP_INTS
+                 if isinstance(su.get(k), int) and not isinstance(su.get(k), bool)}
+        clean.update({k: bool(su[k]) for k in SETUP_BOOLS if k in su})
+        if su.get("os") in ("mac", "windows", "linux"):
+            clean["os"] = su["os"]
+        rows = su.get("rootsDetail")
+        if isinstance(rows, list):
+            clean["rootsDetail"] = [
+                {"label": str(r.get("label", ""))[:160], **{k: bool(r.get(k)) for k in ("hooks", "approveHook", "statusline", "todoTools")}}
+                for r in rows[:10] if isinstance(r, dict)]
+        out["setup"] = clean
+    return out
 
 
 def _seq_of(v) -> int | None:

@@ -571,3 +571,17 @@ def test_install_statusline_when_none_before(inst, tmp_path, monkeypatch):
     back, restored = inst.without_statusline(out, sp)
     assert restored and "statusLine" not in back
     assert inst.without_statusline({"statusLine": {"command": "other"}}, sp) == ({"statusLine": {"command": "other"}}, False)
+
+
+def test_install_todo_tools_keeps_other_env(inst):
+    out = inst.with_todo_tools({"env": {"FOO": "bar"}, "model": "x"})
+    assert out["env"] == {"FOO": "bar", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"} and out["model"] == "x"
+    assert inst.with_todo_tools({})["env"] == {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+
+
+def test_install_cli_todo_tools_apply(inst, tmp_path, capsys):
+    sp = tmp_path / "settings.json"
+    sp.write_text(json.dumps({"env": {"A": "1"}}))
+    assert inst.main(["--settings", str(sp), "--todo-tools", "--apply", "--python", "py"]) == 0
+    data = json.loads(sp.read_text())
+    assert data["env"] == {"A": "1", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"} and "PreToolUse" in data["hooks"]

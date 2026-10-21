@@ -1188,3 +1188,26 @@ def test_status_line_reads_limits_and_drops_passed_windows(collector, tmp_path, 
     assert collector.status_line("nope", now) is None and collector.status_line("../x", now) is None
     (tmp_path / "old.json").write_text(json.dumps({"ts": now - 9 * 24 * 3600, "limits": {}}))
     assert collector.status_line("old", now) is None
+
+
+# ---------- 설정 점검(meta.setup) ----------
+
+def test_setup_status_counts_per_settings_folder(collector, home, monkeypatch):
+    root = home / ".claude"
+    (root / "settings.json").write_text(json.dumps({
+        "hooks": {"PreToolUse": [{"hooks": [{"command": "py", "args": ["-c", "x/claude_office_hook.py"]}]}],
+                  "PermissionRequest": [{"hooks": [{"command": "py", "args": ["-c", "x/claude_office_approve.py"]}]}]},
+        "statusLine": {"type": "command", "command": '"py" "x/claude_office_statusline.py" --next "n"'},
+        "env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}))
+    other = home / "profile"
+    (other / "sessions").mkdir(parents=True)
+    (other / "settings.json").write_text("{ broken")
+    monkeypatch.setattr(collector, "ROOT_GLOBS", [str(root), str(other)])
+    monkeypatch.setattr(collector, "APPROVE", True)
+    collector._setup_cache["val"] = None
+    su = collector.setup_status()
+    assert su["roots"] == 2 and su["hooks"] == 1 and su["approveHook"] == 1 and su["statusline"] == 1 and su["todoTools"] == 1
+    assert su["approveEnv"] is True and su["os"] in ("mac", "windows", "linux")
+    assert [r["label"] for r in su["rootsDetail"]] == ["~/.claude", "~/profile"]   # 홈은 ~ 로 줄여 보낸다
+    assert su["rootsDetail"][0]["approveHook"] is True and su["rootsDetail"][1]["hooks"] is False
+    assert str(home) not in json.dumps(su)

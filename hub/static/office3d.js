@@ -1155,21 +1155,99 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-copy=rule]"); if (!b) return;
   copyText(CHECKLIST_RULE).then(() => { b.innerHTML = '<i class="fa-solid fa-check"></i> 복사했습니다'; setTimeout(() => { b.innerHTML = '<i class="fa-solid fa-copy"></i> 문장 복사'; }, 1800); });
 });
-function renderRuleBox() {
-  if (!state) return;
-  const rows = state.hosts.map(h => {
-    const st = h.checklistRule === true ? `<span class="ok"><i class="fa-solid fa-circle-check"></i> 들어 있음</span>`
-      : h.checklistRule === false ? `<span class="no"><i class="fa-solid fa-circle-xmark"></i> 없음</span>` : `<span class="muted">확인 전</span>`;
-    return `<li><b>${esc(h.host)}</b>${st}</li>`;
-  }).join("");
-  const sig = rows;
-  if (renderRuleBox.sig === sig) return;
-  renderRuleBox.sig = sig;
-  $("ruleBox").innerHTML = `<div class="pane-head">할 일 체크리스트 설정</div>
-    <p class="muted">Claude 가 여러 단계 작업마다 할 일 목록을 만들게 하려면, 세션을 띄우는 컴퓨터마다 Claude 전역 지침
-    <code>~/.claude/CLAUDE.md</code>(Windows: <code>%USERPROFILE%\\.claude\\CLAUDE.md</code>)에 아래 문장을 넣습니다. 새로 시작한 세션부터 적용됩니다.</p>
-    <ol class="rule-hosts">${rows}</ol><pre>${esc(CHECKLIST_RULE)}</pre><button class="copy" data-copy="rule"><i class="fa-solid fa-copy"></i> 문장 복사</button>`;
+// ---------- 「안내」 탭: 설정 점검표 ----------
+// 컴퓨터마다 해야 할 설정을 점검할 순서대로 늘어놓고, 수집기가 알려 준 상태(meta.setup)와 허브·이 브라우저의 상태로
+// 어디까지 했는지 표시한다. 맨 위 「다음」은 아직 안 된 첫 항목과 그 명령.
+const SETUP_WORD = { done: "완료", part: "일부", todo: "아직", na: "해당 없음" };
+function setupSteps(h) {
+  const su = h.setup, m = state.messaging || {}, win = su && su.os === "windows";
+  const py = win ? "py hooks\\install_hooks.py" : "/usr/bin/python3 hooks/install_hooks.py";
+  // 설정 폴더마다 명령 한 줄. 다시 --apply 하면 빠진 옵션의 훅은 빠지므로 그 폴더에 이미 넣은 것은 같이 적는다.
+  // 기본 폴더(~/.claude)가 아니면 --settings 로 그 폴더의 settings.json 을 준다(홈은 셸 변수로)
+  const HOMEVAR = win ? "$env:USERPROFILE" : "$HOME";
+  const rowCmd = (row, extra) => {
+    const f = [...new Set([...(row.todoTools ? ["--todo-tools"] : []), ...(row.approveHook ? ["--approve"] : []), ...(row.statusline ? ["--statusline"] : []), ...extra])];
+    const where = row.label === "~/.claude" ? "" : ` --settings "${row.label.startsWith("~") ? HOMEVAR + row.label.slice(1) : row.label}/settings.json"`;
+    return `${py} ${f.join(" ")}${f.length ? " " : ""}--apply${where}`;
+  };
+  const rows = (su && su.rootsDetail) || [];
+  const cmd = (key, ...extra) => rows.length ? rows.filter(r => !r[key]).map(r => rowCmd(r, extra)).join("\n") : rowCmd({ label: "~/.claude" }, extra);
+  const reinstall = win ? "git pull 후 start.bat" : "git pull 후 sh collector/install.sh";
+  const mine = state.agents.filter(a => a.host === h.host);
+  const frac = (n, all) => !su ? false : n >= all && all > 0 ? true : n > 0 ? "part" : false;
+  return [
+    { t: "수집기 연결·최신 버전", must: true, items: [
+      { ok: !!h.online, label: "허브와 연결됨", fix: win ? "그 컴퓨터에서 start.bat" : "그 컴퓨터에서 sh collector/install.sh" },
+      { ok: !!su, label: "설정 점검을 지원하는 수집기", fix: reinstall }] },
+    { t: "할 일 체크리스트 규칙", must: true, items: [
+      { ok: h.checklistRule === true, label: "Claude 전역 지침(CLAUDE.md)에 규칙", fix: win ? "%USERPROFILE%\\.claude\\CLAUDE.md 에 아래 문장 넣기" : "~/.claude/CLAUDE.md 에 아래 문장 넣기", copy: CHECKLIST_RULE, copyLabel: "문장 복사" },
+      { ok: frac(su && su.todoTools, su && su.roots), label: `할 일 도구를 켠 설정 폴더 ${su ? (su.todoTools ?? "?") : "?"}/${su ? su.roots : "?"}곳 (새 모델은 기본으로 꺼져 있음)`, fix: "저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터", copy: cmd("todoTools", "--todo-tools") }],
+      note: `지금 할 일 목록이 있는 세션 ${mine.filter(a => a.todos && a.todos.length).length}/${mine.length}개 · 둘 다 새로 시작한 세션부터 적용` },
+    { t: "승인 대기 감지(훅)", items: [
+      { ok: frac(su && su.hooks, su && su.roots), label: `훅을 넣은 설정 폴더 ${su ? su.hooks : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행(설정 폴더마다 한 줄)", copy: cmd("hooks") }] },
+    { t: "대시보드에서 메시지 보내기", items: win ? [{ ok: null, label: "Windows 는 아직 지원하지 않음" }] : [
+      { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
+      { ok: !!cfg.messaging, label: "관리 화면 「대시보드에서 세션으로 메시지 보내기」", fix: "/admin → 화면 설정에서 켜기" },
+      { ok: !!(su && su.messagesEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_MESSAGES=on", fix: `.env 에 넣고 ${win ? "start.bat" : "sh collector/install.sh"} 다시` }] },
+    { t: "대시보드에서 권한 허용·거절", items: [
+      { ok: !!m.auth, label: "허브 OFFICE_TOKEN", fix: "허브 .env 에 OFFICE_TOKEN 을 정하고 허브 다시 시작" },
+      { ok: !!cfg.approvals, label: "관리 화면 「대시보드에서 권한 요청 허용·거절」", fix: "/admin → 화면 설정에서 켜기" },
+      { ok: !!(su && su.approveEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on", fix: `.env 에 넣고 ${win ? "start.bat" : "sh collector/install.sh"} 다시` },
+      { ok: frac(su && su.approveHook, su && su.roots), label: `승인 훅을 넣은 설정 폴더 ${su ? su.approveHook : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행", copy: cmd("approveHook", "--approve") }] },
+    { t: "사용 한도 막대", items: [
+      { ok: frac(su && su.statusline, su && su.roots), label: `상태 표시줄을 건 설정 폴더 ${su ? su.statusline : "?"}/${su ? su.roots : "?"}곳`, fix: "저장소 폴더에서 실행 (원래 상태 표시줄은 이어서 보임)", copy: cmd("statusline", "--statusline") },
+      { ok: mine.some(a => a.limits), label: "사용 한도 값을 받는 중", fix: "구독 계정 세션에서 답변이 한 번 오면 채워짐(API 키 계정은 값 없음)" }] },
+  ];
 }
+function stepState(st) {
+  const xs = st.items.filter(i => i.ok !== null);
+  if (!xs.length) return "na";
+  if (xs.every(i => i.ok === true)) return "done";
+  return xs.some(i => i.ok === true || i.ok === "part") ? "part" : "todo";
+}
+function browserStep() {
+  const notif = canNotify() ? (Notification.permission === "granted" ? true : Notification.permission === "denied" ? false : "part") : null;
+  return { t: "이 브라우저의 소리·알림", items: [
+    { ok: alertMode !== "off", label: `소리·알림: ${ALERT_LABEL[alertMode]}`, fix: "오른쪽 위 종 버튼(단축키 M)" },
+    { ok: notif, label: canNotify() ? "데스크톱 알림 권한" : "데스크톱 알림 창(https·localhost 에서만 — 여기서는 소리와 탭 제목 숫자)", fix: "종 버튼을 눌러 권한 허용(막았으면 주소창 자물쇠에서)" }] };
+}
+function stepHTML(st, i) {
+  const ss = stepState(st);
+  const items = st.items.map(it => {
+    const ic = it.ok === true ? "circle-check" : it.ok === "part" ? "circle-half-stroke" : it.ok === null ? "circle-minus" : "circle-xmark";
+    const cls = it.ok === true ? "ok" : it.ok === "part" ? "part" : it.ok === null ? "na" : "no";
+    const fix = it.ok === true || it.ok === null ? "" : `<div class="fix">${esc(it.fix || "")}${it.copy ? `<pre>${esc(it.copy)}</pre><button class="copy" data-copy-text="${esc(it.copy)}"><i class="fa-solid fa-copy"></i> ${it.copyLabel || "명령 복사"}</button>` : ""}</div>`;
+    return `<li class="${cls}"><i class="fa-solid fa-${ic}"></i><span>${esc(it.label)}${fix}</span></li>`;
+  }).join("");
+  return `<li class="step st-${ss}"><div class="sh"><span class="sn">${i}</span><b>${esc(st.t)}</b><em>${st.must ? "필수" : "선택"}</em><span class="ss">${SETUP_WORD[ss]}</span></div>
+    <ul>${items}</ul>${st.note ? `<small>${esc(st.note)}</small>` : ""}</li>`;
+}
+function renderRuleBox() {
+  if (!state || !cfg) return;
+  const hosts = state.hosts.length ? state.hosts : [];
+  const html = hosts.map(h => {
+    const steps = setupSteps(h);
+    let next = "";
+    steps.some((st, i) => {
+      const it = st.items.find(x => x.ok !== true && x.ok !== null);
+      if (!it) return false;
+      next = `<div class="next"><i class="fa-solid fa-arrow-right"></i> 다음: <b>${i + 1}. ${esc(st.t)}</b> — ${esc(it.label)}</div>`;
+      return true;
+    });
+    const su = h.setup;
+    return `<div class="setup-host"><h4><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}<small>${su ? `${{ mac: "macOS", windows: "Windows", linux: "리눅스" }[su.os] || ""} · 설정 폴더 ${su.roots}곳` : "예전 수집기"}</small></h4>
+      ${next || `<div class="next done"><i class="fa-solid fa-circle-check"></i> 모두 마쳤습니다</div>`}
+      <ol class="steps">${steps.map((st, i) => stepHTML(st, i + 1)).join("")}</ol></div>`;
+  }).join("") || `<p class="muted">아직 연결된 컴퓨터가 없습니다.</p>`;
+  setHTML($("ruleBox"), `<div class="pane-head">설정 점검<small>위에서부터 순서대로</small></div>
+    <p class="muted">컴퓨터마다 무엇이 되어 있는지 수집기가 알려 줍니다(1분마다 다시 확인). 3번부터는 쓰고 싶은 것만 하면 됩니다.</p>
+    ${html}<div class="setup-host"><h4><i class="fa-solid fa-display"></i> 이 브라우저</h4><ol class="steps">${stepHTML(browserStep(), 7)}</ol></div>`);
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-copy-text]"); if (!b) return;
+  const label = b.innerHTML;
+  copyText(b.dataset.copyText).then(() => { b.innerHTML = '<i class="fa-solid fa-check"></i> 복사했습니다'; setTimeout(() => { b.innerHTML = label; }, 1800); });
+});
 function todoCount(todos) {
   if (!todos || !todos.length) return "";
   return ` · 할 일 ${todos.filter(t => t.st === "completed").length}/${todos.length}`;

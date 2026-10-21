@@ -936,3 +936,24 @@ def test_patch_carries_approvals(authed):
     c.post("/api/approvals", json=APPR, headers=AUTH)
     p = mod._patch(sent, mod.hub.snapshot())
     assert len(p["approvals"]) == 1 and "preview" not in p["approvals"][0]
+
+
+def test_meta_setup_is_sanitized(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "m", "agents": [], "meta": {"checklistRule": True, "setup": {
+        "os": "mac", "roots": 3, "hooks": True, "approveHook": 999, "statusline": "2", "todoTools": 1,
+        "messagesEnv": 1, "approveEnv": False, "path": "/Users/x", "evil": {"a": 1}}}})
+    h = c.get("/api/state").json()["hosts"][0]
+    assert h["setup"] == {"os": "mac", "roots": 3, "approveHook": 99, "todoTools": 1, "messagesEnv": True, "approveEnv": False}
+    c.post("/api/ingest", json={"host": "w", "agents": [], "meta": {"setup": {"os": "solaris"}}})
+    assert "os" not in [x for x in c.get("/api/state").json()["hosts"] if x["host"] == "w"][0]["setup"]
+
+
+def test_meta_roots_detail_is_sanitized(hub):
+    mod, c = hub
+    rows = [{"label": "~/.claude", "hooks": 1, "approveHook": False, "statusline": True, "todoTools": None, "secret": "x"}, "bad"] + \
+        [{"label": f"~/p{i}"} for i in range(20)]
+    c.post("/api/ingest", json={"host": "m", "agents": [], "meta": {"setup": {"rootsDetail": rows}}})
+    rd = c.get("/api/state").json()["hosts"][0]["setup"]["rootsDetail"]
+    assert rd[0] == {"label": "~/.claude", "hooks": True, "approveHook": False, "statusline": True, "todoTools": False}
+    assert len(rd) == 9   # 앞 10개 중 dict 만

@@ -372,7 +372,31 @@
                                  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-hi); white-space: pre-wrap; word-break: break-all; }
   .rule-hint code, #ruleBox code { font-size: 11px; color: var(--brand-light); }
   button.copy { padding: 4px 10px; font-size: 12px; }
-  #ruleBox { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+  #ruleBox { font-size: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  #ruleBox > p.muted { margin: 4px 0 10px; }
+  .setup-host { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; background: var(--bg-2); }
+  .setup-host h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-hi); }
+  .setup-host h4 small { margin-left: auto; color: var(--text-dim2); font-weight: 500; font-size: 11px; }
+  .setup-host .next { margin: 0 0 8px; padding: 6px 8px; border-radius: 7px; background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.45); color: #fde68a; line-height: 1.45; }
+  .setup-host .next.done { background: rgba(52,211,153,.12); border-color: rgba(52,211,153,.45); color: #a7f3d0; }
+  .steps { display: flex; flex-direction: column; gap: 6px; }
+  .steps .step { border-left: 3px solid var(--border-2); padding: 2px 0 2px 8px; }
+  .steps .st-done { border-left-color: var(--good); } .steps .st-part { border-left-color: var(--warning); } .steps .st-todo { border-left-color: var(--bad); }
+  .steps .sh { display: flex; align-items: center; gap: 6px; }
+  .steps .sn { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 800; background: var(--surface-3); color: var(--text-hi); }
+  .steps .sh b { color: var(--text-hi); font-size: 12px; }
+  .steps .sh em { font-style: normal; font-size: 10px; color: var(--text-dim2); }
+  .steps .ss { margin-left: auto; font-size: 10.5px; font-weight: 700; }
+  .steps .st-done .ss { color: var(--good); } .steps .st-part .ss { color: var(--warning); } .steps .st-todo .ss { color: var(--bad); } .steps .st-na .ss { color: var(--text-dim2); }
+  .steps ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .steps ul li { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; line-height: 1.45; color: var(--text); }
+  .steps ul li i { flex: none; width: 13px; font-size: 11px; }
+  .steps ul li.ok i { color: var(--good); } .steps ul li.no i { color: var(--bad); } .steps ul li.part i { color: var(--warning); } .steps ul li.na { color: var(--text-dim2); }
+  .steps ul li.ok span { color: var(--text-dim); }
+  .steps .fix { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+  .steps .fix pre { margin: 4px 0; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+                    font: 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-hi); white-space: pre-wrap; word-break: break-all; }
+  .steps .step > small { display: block; margin-top: 3px; color: var(--text-dim2); font-size: 10.5px; }
   #ruleBox p.muted { line-height: 1.5; }
   .rule-hosts { margin: 0 0 8px; } .rule-hosts li { display: flex; justify-content: space-between; padding: 3px 0; }
   .rule-hosts .ok { color: var(--good); } .rule-hosts .no { color: var(--bad); }
@@ -541,9 +565,9 @@
     </section>
 
     <section class="pane" data-pane="legend" role="tabpanel">
-      <div class="pane-head">어디서 무엇을 하나</div>
-      <ol id="legend"></ol>
       <div id="ruleBox"></div>
+      <div class="pane-head" style="margin-top:14px">어디서 무엇을 하나</div>
+      <ol id="legend"></ol>
     </section>
   </aside>
 </div>

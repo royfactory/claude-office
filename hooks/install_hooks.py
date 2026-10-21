@@ -8,6 +8,8 @@
                                                  다시 --apply 할 때 빼면 승인 훅은 빠진다
   --statusline                                   사용 한도를 읽는 상태 표시줄(claude_office_statusline.py)도 건다.
                                                  원래 상태 표시줄은 따로 적어 두고 그대로 이어 돌린다. --remove 하면 원래대로
+  --todo-tools                                   "env" 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣어 할 일 도구(TaskCreate…)를 켠다.
+                                                 새 모델은 이게 없으면 할 일 도구가 빠져 체크리스트가 생기지 않는다. --remove 는 건드리지 않는다
   --settings <경로>                              기본 ~/.claude/settings.json 대신 다른 설정 파일
 
 이 스크립트가 넣은 항목은 명령에 claude_office_hook.py 가 들어 있는 것으로 알아본다. 다시 --apply 하면
@@ -175,6 +177,17 @@ def save_next(settings_path, keep):
     return p
 
 
+TODO_ENV = "CLAUDE_CODE_ENABLE_TODO_TOOLS"
+
+
+def with_todo_tools(settings):
+    """settings 의 "env" 에 할 일 도구를 켜는 값을 넣는다(다른 env 는 그대로)."""
+    out = json.loads(json.dumps(settings))
+    env = out.get("env") if isinstance(out.get("env"), dict) else {}
+    out["env"] = dict(env, **{TODO_ENV: "1"})
+    return out
+
+
 def load(path):
     if not os.path.exists(path):
         return {}
@@ -212,6 +225,7 @@ def main(argv=None):
     ap.add_argument("--python", help="훅을 돌릴 파이썬(기본: 지금 이 스크립트를 돌린 파이썬)")
     ap.add_argument("--approve", action="store_true", help="대시보드 승인 훅도 넣는다(.env 의 CLAUDE_OFFICE_APPROVE=on 도 필요)")
     ap.add_argument("--statusline", action="store_true", help="사용 한도를 읽는 상태 표시줄도 건다(원래 것은 이어서 돈다)")
+    ap.add_argument("--todo-tools", action="store_true", help="env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1(할 일 도구 켜기)")
     args = ap.parse_args(argv)
     path = os.path.abspath(os.path.expanduser(args.settings))
 
@@ -244,11 +258,13 @@ def main(argv=None):
             print("상태 표시줄 스크립트를 찾지 못했다: %s" % STATUS_SCRIPT, file=sys.stderr)
             return 1
         out, keep = with_statusline(out, path, args.python)
+    if args.todo_tools:
+        out = with_todo_tools(out)
     if args.apply:
         if keep is not None:
             print("원래 상태 표시줄을 적어 두었다(이어서 돈다): %s" % save_next(path, keep))
         backup = save(path, out)
-        print("claude-office 훅%s을 넣었다: %s" % ("·상태 표시줄" if args.statusline else "", path))
+        print("claude-office 훅%s%s을 넣었다: %s" % ("·상태 표시줄" if args.statusline else "", "·할 일 도구 켜기" if args.todo_tools else "", path))
         if backup:
             print("백업: %s" % backup)
         print("이미 열린 세션에는 바로 적용되지 않을 수 있다. 새 Claude Code 세션의 /hooks 에서 확인한다.")
@@ -256,6 +272,8 @@ def main(argv=None):
 
     print("[미리 보기] 아래 훅을 %s 의 \"hooks\" 에 더한다. 기존 훅은 그대로 둔다." % path)
     print(json.dumps({"hooks": groups_to_add(args.python, approve=args.approve)}, ensure_ascii=False, indent=2))
+    if args.todo_tools:
+        print("[미리 보기] \"env\" 에 %s=1 을 넣는다(새 세션부터 할 일 도구가 켜진다)" % TODO_ENV)
     if args.statusline:
         print("[미리 보기] \"statusLine\" 을 다음으로 바꾼다(원래 것은 %s 에 적어 두고 이어서 돌린다):" % next_file(path))
         print(json.dumps(out["statusLine"], ensure_ascii=False, indent=2))

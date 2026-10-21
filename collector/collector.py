@@ -95,6 +95,7 @@ for _p in (_env_arg, os.path.expanduser("~/.claude-office/.env"),
 TOKEN = os.environ.get("OFFICE_TOKEN", "").strip()
 # 대시보드에서 세션으로 메시지 보내기. 이 컴퓨터에서 켜야만(on) 받는다 — 허브가 켜 있어도 여기서 꺼 두면 전달하지 않는다
 MESSAGES = os.environ.get("CLAUDE_OFFICE_MESSAGES", "").strip().lower() in ("on", "1", "true", "yes")
+APPROVE = os.environ.get("CLAUDE_OFFICE_APPROVE", "").strip().lower() in ("on", "1", "true", "yes")
 MESSAGE_PREFIX = "[claude-office 대시보드에서 이 컴퓨터의 사용자가 보낸 메시지]\n"
 MAX_MESSAGE = 4000
 
@@ -757,6 +758,49 @@ def checklist_rule_installed():
     return ok
 
 
+# 이 컴퓨터의 선택 기능 설치 상태. 대시보드 「안내」 탭의 설정 점검표가 이걸로 어디까지 했는지 보여 준다.
+# 설정 폴더(~/.claude, Orca 프로필…)마다 settings.json 을 읽어 claude-office 훅·승인 훅·상태 표시줄이 걸렸는지 센다.
+# 경로·내용은 보내지 않고 개수만 보낸다.
+_setup_cache = {"at": 0.0, "val": None}
+
+
+def setup_status():
+    if _setup_cache["val"] is not None and time.time() - _setup_cache["at"] < 60:
+        return _setup_cache["val"]
+    roots = claude_roots()
+    hooks = approve = status = todo = 0
+    home = os.path.expanduser("~")
+    detail = []
+    for root in roots:
+        # 화면에 그 폴더용 명령을 보이려고 홈 아래 경로만 '~/…' 로 보낸다(사용자 이름 없이)
+        label = "~" + root[len(home):].replace("\\", "/") if root.startswith(home) else os.path.basename(root)
+        row = {"label": label[:160], "hooks": False, "approveHook": False, "statusline": False, "todoTools": False}
+        detail.append(row)
+        try:
+            with open(os.path.join(root, "settings.json"), encoding="utf-8-sig") as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(st, dict):
+            continue
+        text = json.dumps(st.get("hooks") or {})
+        sl = st.get("statusLine")
+        env = st.get("env") if isinstance(st.get("env"), dict) else {}
+        row.update(hooks="claude_office_hook.py" in text, approveHook="claude_office_approve.py" in text,
+                   statusline=isinstance(sl, dict) and "claude_office_statusline.py" in str(sl.get("command") or ""),
+                   # 새 모델(Opus 4.7·Sonnet 4.6·Haiku 4.5 보다 뒤)은 할 일 도구가 기본으로 빠진다. 이 값이 있어야 켜진다
+                   todoTools=str(env.get("CLAUDE_CODE_ENABLE_TODO_TOOLS", "")).strip().lower() in ("1", "true", "yes", "on"))
+        hooks += row["hooks"]
+        approve += row["approveHook"]
+        status += row["statusline"]
+        todo += row["todoTools"]
+    val = {"os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
+           "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rootsDetail": detail[:10],
+           "messagesEnv": MESSAGES, "approveEnv": APPROVE}
+    _setup_cache.update(at=time.time(), val=val)
+    return val
+
+
 def post(hub, payload, timeout=5):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
@@ -1002,7 +1046,7 @@ def run(args, col):
                 except Exception:
                     col.speech = False
             agents = col.collect()
-            if sender.send(agents, {"checklistRule": checklist_rule_installed()}):
+            if sender.send(agents, {"checklistRule": checklist_rule_installed(), "setup": setup_status()}):
                 if failing:
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False
