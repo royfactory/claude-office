@@ -5,7 +5,7 @@
   python3 hooks/install_hooks.py --apply         백업을 만든 뒤 넣는다(이미 있는 훅은 그대로 둔다)
   python3 hooks/install_hooks.py --remove        백업을 만든 뒤 이 훅만 뺀다
   --approve                                      대시보드 승인 훅(claude_office_approve.py)도 함께 넣는다.
-                                                 다시 --apply 할 때 빼면 승인 훅은 빠진다
+                                                 한 번 넣으면 다음 --apply 에서 빠뜨려도 남는다(빼려면 --no-approve)
   --statusline                                   사용 한도를 읽는 상태 표시줄(claude_office_statusline.py)도 건다.
                                                  원래 상태 표시줄은 따로 적어 두고 그대로 이어 돌린다. --remove 하면 원래대로
   --todo-tools                                   "env" 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣어 할 일 도구(TaskCreate…)를 켠다.
@@ -81,6 +81,16 @@ def is_ours(h):
         return False
     parts = [h.get("command")] + (h.get("args") if isinstance(h.get("args"), list) else [])
     return any(isinstance(p, str) and any(m in p for m in MARKS) for p in parts)
+
+
+def has_approve(settings):
+    """settings 에 claude-office 승인 훅이 이미 들어 있는지."""
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    return any(isinstance(h, dict) and any(isinstance(p, str) and "claude_office_approve.py" in p
+                                           for p in [h.get("command")] + (h.get("args") if isinstance(h.get("args"), list) else []))
+               for groups in hooks.values() if isinstance(groups, list)
+               for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
+               for h in g["hooks"])
 
 
 def strip_ours(settings):
@@ -224,6 +234,7 @@ def main(argv=None):
     g.add_argument("--dry-run", action="store_true", help="보여 주기만 한다(기본)")
     ap.add_argument("--python", help="훅을 돌릴 파이썬(기본: 지금 이 스크립트를 돌린 파이썬)")
     ap.add_argument("--approve", action="store_true", help="대시보드 승인 훅도 넣는다(.env 의 CLAUDE_OFFICE_APPROVE=on 도 필요)")
+    ap.add_argument("--no-approve", action="store_true", help="이미 넣은 대시보드 승인 훅을 뺀다")
     ap.add_argument("--statusline", action="store_true", help="사용 한도를 읽는 상태 표시줄도 건다(원래 것은 이어서 돈다)")
     ap.add_argument("--todo-tools", action="store_true", help="env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1(할 일 도구 켜기)")
     args = ap.parse_args(argv)
@@ -251,7 +262,10 @@ def main(argv=None):
     if not os.path.isfile(HOOK_SCRIPT):
         print("훅 스크립트를 찾지 못했다: %s" % HOOK_SCRIPT, file=sys.stderr)
         return 1
-    out = merged(settings, args.python, approve=args.approve)
+    # 기능은 더하기만 한다: 이미 넣어 둔 승인 훅은 이번에 --approve 를 빠뜨려도 남긴다
+    # (점검표의 명령을 차례로 붙여 넣다가 앞에서 넣은 것이 지워지지 않게). 빼려면 --no-approve
+    approve = (args.approve or has_approve(settings)) and not args.no_approve
+    out = merged(settings, args.python, approve=approve)
     keep = None
     if args.statusline:
         if not os.path.isfile(STATUS_SCRIPT):
@@ -271,7 +285,7 @@ def main(argv=None):
         return 0
 
     print("[미리 보기] 아래 훅을 %s 의 \"hooks\" 에 더한다. 기존 훅은 그대로 둔다." % path)
-    print(json.dumps({"hooks": groups_to_add(args.python, approve=args.approve)}, ensure_ascii=False, indent=2))
+    print(json.dumps({"hooks": groups_to_add(args.python, approve=approve)}, ensure_ascii=False, indent=2))
     if args.todo_tools:
         print("[미리 보기] \"env\" 에 %s=1 을 넣는다(새 세션부터 할 일 도구가 켜진다)" % TODO_ENV)
     if args.statusline:

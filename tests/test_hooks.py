@@ -585,3 +585,17 @@ def test_install_cli_todo_tools_apply(inst, tmp_path, capsys):
     assert inst.main(["--settings", str(sp), "--todo-tools", "--apply", "--python", "py"]) == 0
     data = json.loads(sp.read_text())
     assert data["env"] == {"A": "1", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"} and "PreToolUse" in data["hooks"]
+
+
+def test_install_apply_keeps_existing_approve_hook_unless_no_approve(inst, tmp_path):
+    sp = tmp_path / "settings.json"
+    sp.write_text("{}")
+    assert inst.main(["--settings", str(sp), "--approve", "--apply", "--python", "py"]) == 0
+    assert inst.has_approve(json.loads(sp.read_text()))
+    # 점검표의 다음 명령(--statusline 만)을 붙여 넣어도 승인 훅은 남는다
+    assert inst.main(["--settings", str(sp), "--todo-tools", "--apply", "--python", "py"]) == 0
+    data = json.loads(sp.read_text())
+    assert inst.has_approve(data) and len(data["hooks"]["PermissionRequest"]) == 2
+    assert inst.main(["--settings", str(sp), "--no-approve", "--apply", "--python", "py"]) == 0
+    data = json.loads(sp.read_text())
+    assert not inst.has_approve(data) and len(data["hooks"]["PermissionRequest"]) == 1

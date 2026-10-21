@@ -1040,12 +1040,15 @@ function untilShort(sec) {   // 칸이 좁아 큰 단위 하나만(자세한 건
   return sec >= 86400 ? `${Math.floor(sec / 86400)}일 뒤` : sec >= 3600 ? `${Math.floor(sec / 3600)}시간 뒤` : `${Math.max(1, Math.floor(sec / 60))}분 뒤`;
 }
 function renderLimits() {
+  // 상태 표시줄 값은 세션마다 '그 세션의 마지막 응답 때' 값이라, 오래 쉰 세션은 예전(작은) 값을 들고 있다.
+  // 같은 한도 창(같은 초기화 시각) 안에서 사용률은 늘기만 하므로 묶음마다 가장 큰 값을 쓴다
   const now = Date.now() / 1000 - skew, groups = new Map();
+  const pick = (cur, w) => !w ? cur : !cur || (w.resets || 0) > (cur.resets || 0) || ((w.resets || 0) === (cur.resets || 0) && w.pct > cur.pct) ? w : cur;
   for (const a of state.agents) {
     const l = a.limits; if (!l || (!l.five_hour && !l.seven_day)) continue;
     const key = a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
-    const g = groups.get(key) || { host: a.host, l, projects: new Set() };
-    if ((l.ts || 0) > (g.l.ts || 0)) g.l = l;
+    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set() };
+    g.l = { five_hour: pick(g.l.five_hour, l.five_hour), seven_day: pick(g.l.seven_day, l.seven_day), ts: Math.max(g.l.ts || 0, l.ts || 0) };
     g.projects.add(a.project); groups.set(key, g);
   }
   // 초기화가 지나 값이 0 이 된 오래된 묶음(같은 계정의 예전 창)은 새 값이 있으면 뺀다
@@ -1281,7 +1284,7 @@ function sessionMeta(a) {
   const ln = a.lines || [0, 0];
   if (ln[0] || ln[1]) bits.push(`<span title="이 세션이 Edit·Write 로 더하고 뺀 줄"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
   const lm = a.limits || {};
-  if (lm.five_hour || lm.seven_day) bits.push(`<span title="이 세션 계정의 사용 한도(상태 표시줄이 알려 준 값)"><i class="fa-solid fa-gauge-high"></i>${lm.five_hour ? `5시간 ${Math.round(lm.five_hour.pct)}%` : ""}${lm.five_hour && lm.seven_day ? " · " : ""}${lm.seven_day ? `주간 ${Math.round(lm.seven_day.pct)}%` : ""}</span>`);
+  if (lm.five_hour || lm.seven_day) bits.push(`<span title="이 세션이 마지막으로 응답받을 때의 사용 한도(오래 쉰 세션은 예전 값 — 빌딩 아래 칸이 최신)"><i class="fa-solid fa-gauge-high"></i>${lm.five_hour ? `5시간 ${Math.round(lm.five_hour.pct)}%` : ""}${lm.five_hour && lm.seven_day ? " · " : ""}${lm.seven_day ? `주간 ${Math.round(lm.seven_day.pct)}%` : ""}</span>`);
   if (a.outTokens) bits.push(`<span title="이 세션이 쓴 출력 토큰(기록이 아주 크면 끝부분만 센 값)"><i class="fa-solid fa-feather"></i>출력 ${fmtTok(a.outTokens)}</span>`);
   const p = ctxPct(a);
   const bar = p == null ? "" : `<div class="ctxbar" data-lv="${ctxLevel(p)}"><div class="row"><b>컨텍스트</b><span>${fmtTok(a.ctx.used)} / ${fmtTok(a.ctx.max)} · ${p}%</span></div>
