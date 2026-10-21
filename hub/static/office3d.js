@@ -1193,7 +1193,9 @@ document.addEventListener("click", e => {
 // 어디까지 했는지 표시한다. 맨 위 「다음」은 아직 안 된 첫 항목과 그 명령.
 const SETUP_WORD = { done: "완료", part: "일부", todo: "아직", na: "해당 없음" };
 function setupSteps(h) {
-  const su = h.setup, m = state.messaging || {}, win = su && su.os === "windows";
+  // 예전 수집기는 운영체제를 알려 주지 않는다 — 그때는 지금 이 화면을 보는 브라우저의 운영체제로 짐작한다
+  const browserWin = /Win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+  const su = h.setup, m = state.messaging || {}, win = su ? su.os === "windows" : browserWin;
   const py = win ? "py hooks\\install_hooks.py" : "/usr/bin/python3 hooks/install_hooks.py";
   // 설정 폴더마다 명령 한 줄. 다시 --apply 하면 빠진 옵션의 훅은 빠지므로 그 폴더에 이미 넣은 것은 같이 적는다.
   // 기본 폴더(~/.claude)가 아니면 --settings 로 그 폴더의 settings.json 을 준다(홈은 셸 변수로)
@@ -1209,7 +1211,9 @@ function setupSteps(h) {
   const rows = (su && su.rootsDetail) || [];
   const envCmd = kv => inRepo(win ? `powershell -ExecutionPolicy Bypass -File collector\\install.ps1 -Set ${kv}` : `sh collector/install.sh --set ${kv}`);
   const cmd = (key, ...extra) => inRepo(rows.length ? rows.filter(r => !r[key]).map(r => rowCmd(r, extra)).join("\n") : rowCmd({ label: "~/.claude" }, extra));
-  const reinstall = win ? "git pull 후 start.bat" : "git pull 후 sh collector/install.sh";
+  const reinstall = su ? (win ? "claude-office 폴더에서 git pull 후 start.bat 더블클릭" : "claude-office 폴더에서 git pull 후 sh collector/install.sh")
+    : (win ? "claude-office 폴더에서 git pull 후 start.bat 더블클릭 (macOS·리눅스면 sh collector/install.sh)"
+           : "claude-office 폴더에서 git pull 후 sh collector/install.sh (Windows 면 start.bat 더블클릭)");
   const mine = state.agents.filter(a => a.host === h.host);
   const frac = (n, all) => !su ? false : n >= all && all > 0 ? true : n > 0 ? "part" : false;
   return [
