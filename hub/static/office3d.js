@@ -482,7 +482,7 @@ function newActor(key, sub) {
   const lab = document.createElement("div");
   lab.className = "lab" + (sub ? " sub" : "");
   // 위에서부터: 말풍선(Claude가 한 말) · 상태 배지(지금 하는 일) · 명찰(누구인지)
-  lab.innerHTML = `<div class="say"><span class="q"></span></div><div class="pill"></div><div class="tag"><span class="t"></span></div>`;
+  lab.innerHTML = `<div class="say"><span class="q"></span></div><div class="pill"></div><div class="tag"><span class="t"></span><span class="g"><i></i></span></div>`;
   labels.appendChild(lab);
   return { key, sub, group, look, ring, hit, lab, lookKey: "", head: null, path: [], pos: [0, 0], room: "", leaving: false, opacity: 1, scale: s };
 }
@@ -952,6 +952,10 @@ function stateHTML(a, st, now) {
   if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${agoSpan(a.since || null, "째")}</small>`;
   return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${agoSpan(a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${agoSpan(a.since || null)}</small>`;
 }
+// 토큰 수를 짧게(1234 → 1k, 1500000 → 1.5M)
+const fmtTok = n => !n ? "0" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
+function ctxPct(a) { const c = a && a.ctx; return c && c.max ? Math.min(100, Math.round(c.used / c.max * 100)) : null; }
+const ctxLevel = p => p >= 85 ? "hi" : p >= 65 ? "mid" : "lo";
 const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", waiting: "#2dd4bf", approval: "#f97316", idle: "#94a3b8" };
 const STATE_WORD = { working: "근무", thinking: "고민", stalled: "막힘", waiting: "대기", approval: "승인", idle: "휴식" };
 function renderLabels() {
@@ -966,7 +970,8 @@ function renderLabels() {
     const color = it.ch ? it.ch.color : "#64748b";
     // 쉬는 사람은 라운지에 몰려 이름표가 겹친다 — 올리거나 고르거나 크게 확대했을 때만 보인다
     const sel = selected === it.key, quiet = it.st === "idle" && !sel && hovered !== it.key && zoom < 1.8;
-    const sig = [say, pillHTML, it.st, pillOff, title, color, sel, quiet].join("\u0001");
+    const pct = it.sub ? null : ctxPct(it.a);
+    const sig = [say, pillHTML, it.st, pillOff, title, color, sel, quiet, pct].join("\u0001");
     if (lab._sig !== sig) {   // 내용이 같으면 손대지 않는다(크기를 다시 재는 일도 없다)
       lab._sig = sig;
       lab.querySelector(".q").textContent = say;
@@ -976,6 +981,10 @@ function renderLabels() {
       pill.dataset.st = it.st;
       pill.style.display = pillOff ? "none" : "";
       lab.querySelector(".t").textContent = title;
+      // 명찰 아래 얇은 막대 = 컨텍스트 창을 얼마나 썼나(65%↑ 노랑, 85%↑ 빨강 — 곧 자동 압축)
+      const g = lab.querySelector(".g");
+      g.style.display = pct == null ? "none" : "";
+      if (pct != null) { g.dataset.lv = ctxLevel(pct); g.firstChild.style.width = pct + "%"; g.title = `컨텍스트 ${pct}%`; }
       lab.style.setProperty("--c", color);   // 명찰 띠 = 캐릭터 색
       lab.classList.toggle("sel", sel);
       lab.classList.toggle("idle", it.st === "idle");
@@ -1000,6 +1009,7 @@ function autoPick(floor) {
 function select(key) {
   pickPending = false; autoPicked = false;   // 사람이 고르거나 풀면 자동 선택은 손을 뗀다
   selected = selected === key ? null : key;
+  if (selected && doneAt.delete(selected.split("/")[0])) renderAttention();   // 끝난 세션을 열어 봤으면 '확인함'
   if (selected) showTab("session");   // 캐릭터를 고르면 그 세션 탭으로
   renderLabels();
   if (state) { const fl = floors(); renderPeople(fl.find(f => f.project === floorKey), assignCharacters(cfg, state.agents)); }
@@ -1065,7 +1075,7 @@ function personRow(key, a, ch, st, title, sub, now, isSub) {
     <span class="av" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, st) : ""}</span>
     <span class="body"><span class="r1"><b>${esc(title)}</b><span class="st st-${st}">${label}</span></span>
     <span class="r2">${esc(line)}</span>
-    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${agoSpan(a.since || null)}${todoCount(a.todos)}</span></span></li>`;
+    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${agoSpan(a.since || null)}${todoCount(a.todos)}${!isSub && ctxPct(a) != null ? ` · <span class="ctxp lv-${ctxLevel(ctxPct(a))}">ctx ${ctxPct(a)}%</span>` : ""}</span></span></li>`;
 }
 function avatarSmall(ch, st) {
   const l = lookFor(ch, st);
@@ -1121,10 +1131,24 @@ function detailCard(a, ch, now) {
   const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? agoSpan(r.ts) : ""}</span></li>`).join("");
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
+    ${sessionMeta(a)}
     ${a.kind === "approval" ? `<p class="approval-note"><i class="fa-solid fa-hand"></i> 권한 승인을 기다리는 중${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, "째")}<small>그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.</small></p>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
     ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
+}
+// 모델·브랜치·바꾼 줄·출력 토큰 + 컨텍스트 막대(수집기가 기록의 usage 로 계산해 보낸다)
+function sessionMeta(a) {
+  const bits = [];
+  if (a.model) bits.push(`<span title="모델"><i class="fa-solid fa-microchip"></i>${esc(a.model)}</span>`);
+  if (a.branch) bits.push(`<span title="git 브랜치"><i class="fa-solid fa-code-branch"></i>${esc(a.branch)}</span>`);
+  const ln = a.lines || [0, 0];
+  if (ln[0] || ln[1]) bits.push(`<span title="이 세션이 Edit·Write 로 더하고 뺀 줄"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
+  if (a.outTokens) bits.push(`<span title="이 세션이 쓴 출력 토큰(기록이 아주 크면 끝부분만 센 값)"><i class="fa-solid fa-feather"></i>출력 ${fmtTok(a.outTokens)}</span>`);
+  const p = ctxPct(a);
+  const bar = p == null ? "" : `<div class="ctxbar" data-lv="${ctxLevel(p)}"><div class="row"><b>컨텍스트</b><span>${fmtTok(a.ctx.used)} / ${fmtTok(a.ctx.max)} · ${p}%</span></div>
+    <div class="track"><i style="width:${p}%"></i></div>${a.compacts ? `<small>압축 ${a.compacts}회 · 마지막 ${agoSpan(a.compactAt, " 전")}</small>` : p >= 85 ? `<small>곧 자동 압축될 수 있습니다</small>` : ""}</div>`;
+  return bits.length || bar ? `<div class="smeta">${bits.join("")}</div>${bar}` : "";
 }
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });
 
@@ -1260,11 +1284,12 @@ const feedKind = new Map();      // 세션 id -> 지난번 근무 여부
 const feedAppr = new Map();      // 세션 id -> 지난번 승인 대기 여부
 let feedOpen = false, feedFilter = "all", feedSeenTs = 0;
 try { feedOpen = localStorage.getItem("office.feed") === "1"; feedSeenTs = +localStorage.getItem("office.feedSeen") || 0; } catch (_) {}
-const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off", approval: "hand" };
-const FEED_WORD = { done: "작업 완료", start: "작업 시작", new: "새 세션", end: "세션 종료", approval: "승인 대기" };
+const feedCompacts = new Map();  // 세션 id -> 지난번 압축 횟수
+const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off", approval: "hand", compact: "compress" };
+const FEED_WORD = { done: "작업 완료", start: "작업 시작", new: "새 세션", end: "세션 종료", approval: "승인 대기", compact: "컨텍스트 압축" };
 function feedPush(e) { feed.push(e); if (feed.length > FEED_MAX) feed.splice(0, feed.length - FEED_MAX); }
 function trackFeed(first) {
-  const now = Date.now() / 1000 - skew, seen = new Set();
+  const now = Date.now() / 1000 - skew, seen = new Set(), events = [];
   for (const a of state.agents) {
     seen.add(a.id);
     const busy = a.kind !== "idle", base = { id: a.id, project: a.project, title: a.title || a.name };
@@ -1275,20 +1300,31 @@ function trackFeed(first) {
       if (busy) feedPush({ ...base, type: "start", ts: now });
     } else if (feedKind.get(a.id) !== busy) {
       feedPush({ ...base, type: busy ? "start" : "done", ts: now, say: busy ? "" : a.say });
+      if (busy) doneAt.delete(a.id);
+      else { doneAt.set(a.id, now); events.push({ type: "done", a }); }
     }
     feedKind.set(a.id, busy);
+    // 컨텍스트 압축: 횟수가 늘어난 순간 한 줄
+    const nc = a.compacts || 0;
+    if (!first && feedCompacts.has(a.id) && nc > feedCompacts.get(a.id)) feedPush({ ...base, type: "compact", ts: a.compactAt || now, n: nc });
+    feedCompacts.set(a.id, nc);
     // 승인 대기에 들어간 순간 한 줄(풀릴 때는 따로 남기지 않는다)
     const appr = a.kind === "approval";
     // 같은 순간의 '작업 시작'보다 위에 오게 아주 조금 뒤 시각으로 둔다
-    if (appr && !feedAppr.get(a.id)) feedPush({ ...base, type: "approval", ts: ((first ? a.since : now) || now) + 0.001, tool: a.tool || "" });
+    if (appr && !feedAppr.get(a.id)) {
+      feedPush({ ...base, type: "approval", ts: ((first ? a.since : now) || now) + 0.001, tool: a.tool || "" });
+      if (!first) events.push({ type: "approval", a });
+    }
     feedAppr.set(a.id, appr);
   }
   for (const id of [...feedKind.keys()]) if (!seen.has(id)) {
     const last = [...feed].reverse().find(e => e.id === id);
     if (last) feedPush({ id, project: last.project, title: last.title, type: "end", ts: now });
-    feedKind.delete(id); feedAppr.delete(id);
+    feedKind.delete(id); feedAppr.delete(id); feedCompacts.delete(id); doneAt.delete(id);
   }
   renderFeed();
+  alertFor(events.splice(0));
+  renderAttention();
 }
 function renderFeed() {
   const now = Date.now() / 1000 - skew;
@@ -1306,7 +1342,7 @@ function renderFeed() {
   const list = sorted.filter(e => feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter));
   setHTML($("feedList"), list.slice(0, 120).map(e => {
     const n = floorN.get(e.project);
-    const what = e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>`
+    const what = e.type === "compact" ? `${FEED_WORD[e.type]} · ${e.n}회째 · ${esc(e.project)}` : e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>`
       : e.type === "approval" && e.tool ? `${FEED_WORD[e.type]} · <code>${esc(e.tool)}</code> · ${esc(e.project)}` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
     return `<li data-id="${esc(e.id)}" data-p="${esc(e.project)}" class="${e.ts > feedSeenTs ? "unseen" : ""}">
       <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${agoSpan(e.ts, " 전")}</span>
@@ -1391,6 +1427,188 @@ $("feedList").addEventListener("click", e => {
 });
 setFeedOpen(feedOpen);
 
+// ---------- 나를 기다리는 세션(모든 층) ----------
+// 층을 돌아다니는 동안 다른 층에서 승인을 기다리거나 일을 끝낸 세션을 놓치지 않게, 화면 위 가운데에 칩으로 모은다.
+// 승인 대기·막힘은 지금 상태 그대로, '완료'는 이 화면이 지켜보는 동안 일을 마쳤고 아직 열어 보지 않은 세션.
+const doneAt = new Map();   // 세션 id -> 일을 마친 시각(열어 보거나 다시 일을 시작하면 지운다)
+const ATTN = {
+  approval: { icon: "hand", word: "승인 대기", short: "승인" },
+  stalled: { icon: "hourglass-end", word: "막힘", short: "막힘" },
+  done: { icon: "circle-check", word: "작업 완료", short: "완료" },
+};
+const ATTN_ORDER = ["approval", "stalled", "done"];
+let attnOpen = "";
+function attention() {
+  if (!state) return [];
+  const out = [];
+  for (const a of state.agents) {
+    if (a.kind === "approval") out.push({ a, type: "approval", ts: a.since });
+    else if (a.stalled) out.push({ a, type: "stalled", ts: a.lastActivity });
+    else if (a.kind === "idle" && doneAt.has(a.id)) out.push({ a, type: "done", ts: doneAt.get(a.id) });
+  }
+  return out.sort((x, y) => ATTN_ORDER.indexOf(x.type) - ATTN_ORDER.indexOf(y.type) || (y.ts || 0) - (x.ts || 0));
+}
+function renderAttention() {
+  if (!state) return;
+  const now = Date.now() / 1000 - skew, list = attention();
+  const by = t => list.filter(x => x.type === t);
+  setHTML($("attn"), ATTN_ORDER.filter(t => by(t).length).map(t =>
+    `<button class="ac ac-${t}${attnOpen === t ? " on" : ""}" data-t="${t}" title="${ATTN[t].word} — 눌러서 목록"><i class="fa-solid fa-${ATTN[t].icon}"></i>${ATTN[t].short} <b>${by(t).length}</b></button>`).join(""));
+  if (attnOpen && !by(attnOpen).length) attnOpen = "";
+  const floorN = new Map(floors().map(f => [f.project, f.n]));
+  const items = attnOpen ? by(attnOpen) : [];
+  setHTML($("attnList"), items.length ? items.map(x => {
+    const n = floorN.get(x.a.project);
+    const what = x.type === "approval" ? `${x.a.tool ? esc(x.a.tool) + " · " : ""}${agoSpan(x.ts || null, "째")}`
+      : x.type === "stalled" ? `조용한 지 ${agoSpan(x.a.lastActivity)}` : `${agoSpan(x.ts, " 전")}${x.a.say ? ` · ${esc(x.a.say)}` : ""}`;
+    return `<li data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}
+      <span class="w"><b>${esc(x.a.title || x.a.name)}</b><small>${what}</small></span></li>`;
+  }).join("") + (attnOpen === "done" ? `<li class="all" data-all="1"><i class="fa-solid fa-check-double"></i> 모두 확인</li>` : "") : "");
+  $("attnList").hidden = !items.length;
+  tickTimes($("attn"), now); tickTimes($("attnList"), now);
+  // 브라우저 탭 제목에도 '나를 기다리는 수'(승인 + 확인 안 한 완료)
+  const n = by("approval").length + by("done").length;
+  const t = (n ? `(${n}) ` : "") + "Claude 사무실";
+  if (document.title !== t) document.title = t;
+}
+function jumpTo(id, project) {
+  if (!state.agents.some(a => a.id === id)) return;
+  if (transit) { endRide(); transit = null; me.actor.path = []; me.actor.pos = me.pos.slice(); mePill(""); $("ride").classList.remove("on"); }
+  if (playing) rotateAt = Date.now();
+  if (project !== floorKey) gotoFloor(project);
+  if (selected !== id) select(id); else if (doneAt.delete(id)) renderAttention();
+}
+$("attn").addEventListener("click", e => {
+  const b = e.target.closest("[data-t]"); if (!b) return;
+  attnOpen = attnOpen === b.dataset.t ? "" : b.dataset.t;
+  renderAttention();
+});
+$("attnList").addEventListener("click", e => {
+  const li = e.target.closest("li"); if (!li) return;
+  if (li.dataset.all) { doneAt.clear(); attnOpen = ""; renderAttention(); return; }
+  attnOpen = ""; jumpTo(li.dataset.id, li.dataset.p); renderAttention();
+});
+document.addEventListener("pointerdown", e => {
+  if (attnOpen && !e.target.closest("#attn, #attnList")) { attnOpen = ""; renderAttention(); }
+});
+
+// ---------- 소리·데스크톱 알림 ----------
+// 끔 → 승인만 → 승인·완료 순서로 바꾼다. 소리는 이 브라우저에서 한 번이라도 누른 뒤에야 난다(자동 재생 규칙).
+// 데스크톱 알림 창은 https 나 localhost 로 열었을 때만 쓸 수 있다(그 밖에는 소리와 탭 제목만).
+const ALERT_MODES = ["off", "approval", "all"];
+const ALERT_LABEL = { off: "알림 끔", approval: "승인만", all: "승인·완료" };
+const ALERT_ICON = { off: "bell-slash", approval: "bell", all: "bell" };
+let alertMode = "off", audio = null, lastBeep = 0;
+try { alertMode = ALERT_MODES.includes(localStorage.getItem("office.alert")) ? localStorage.getItem("office.alert") : "off"; } catch (_) {}
+const canNotify = () => "Notification" in window && window.isSecureContext;
+function renderAlertBtn() {
+  const b = $("alertBtn");
+  b.innerHTML = `<i class="fa-solid fa-${ALERT_ICON[alertMode]}"></i> ${ALERT_LABEL[alertMode]}`;
+  b.classList.toggle("on", alertMode !== "off");
+  b.title = `소리·알림: ${ALERT_LABEL[alertMode]} (누르면 바뀜, 단축키 M)` +
+    (canNotify() ? (Notification.permission === "denied" ? "\n데스크톱 알림이 브라우저에서 막혀 있어 소리만 냅니다." : "")
+      : "\n데스크톱 알림 창은 https·localhost 에서만 됩니다. 여기서는 소리와 탭 제목 숫자로 알립니다.");
+}
+function unlockAudio() {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+  } catch (_) {}
+}
+function beep(kind) {
+  if (!audio || audio.state !== "running" || performance.now() - lastBeep < 1500) return;
+  lastBeep = performance.now();
+  const notes = kind === "approval" ? [880, 660, 880] : [523, 784];   // 승인 = 세 번 두드림, 완료 = 올라가는 두 음
+  let t = audio.currentTime;
+  for (const f of notes) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = "sine"; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g); g.connect(audio.destination);
+    o.start(t); o.stop(t + 0.22); t += 0.17;
+  }
+}
+function notify(ev) {
+  if (!canNotify() || Notification.permission !== "granted" || (!document.hidden && document.hasFocus())) return;
+  const a = ev.a, n = (floors().find(f => f.project === a.project) || {}).n;
+  try {
+    const note = new Notification(ev.type === "approval" ? `승인 대기 · ${a.title || a.name}` : `작업 완료 · ${a.title || a.name}`, {
+      body: `${n ? n + "F " : ""}${a.project}${ev.type === "approval" && a.tool ? " · " + a.tool : a.say ? " · " + a.say : ""}`,
+      tag: "office-" + a.id, silent: true,
+    });
+    note.onclick = () => { window.focus(); jumpTo(a.id, a.project); note.close(); };
+  } catch (_) {}
+}
+function alertFor(events) {
+  if (alertMode === "off" || !events.length) return;
+  const mine = events.filter(e => e.type === "approval" || alertMode === "all");
+  if (!mine.length) return;
+  beep(mine.some(e => e.type === "approval") ? "approval" : "done");
+  mine.slice(0, 3).forEach(notify);
+}
+function setAlertMode(m) {
+  alertMode = m;
+  try { localStorage.setItem("office.alert", m); } catch (_) {}
+  renderAlertBtn();
+  if (m !== "off") {
+    unlockAudio(); beep(m === "approval" ? "approval" : "done");   // 고른 소리를 한 번 들려준다
+    if (canNotify() && Notification.permission === "default") Notification.requestPermission().then(renderAlertBtn).catch(() => {});
+  }
+}
+$("alertBtn").onclick = () => setAlertMode(ALERT_MODES[(ALERT_MODES.indexOf(alertMode) + 1) % ALERT_MODES.length]);
+document.addEventListener("pointerdown", () => { if (alertMode !== "off") unlockAudio(); }, { capture: true, passive: true });
+renderAlertBtn();
+
+// ---------- 단축키 ----------
+// 글을 쓰는 칸에서는 동작하지 않는다. ? 로 목록
+const KEYS = [
+  ["↑ ↓", "위층·아래층"], ["1 – 9", "그 층으로"], ["Space", "층 순회 재생·정지"], ["A", "나를 기다리는 다음 세션으로"],
+  ["F", "최근 소식 펼치기·접기"], ["[  ]", "왼쪽·오른쪽 패널 접기"], ["M", "소리·알림 바꾸기"], ["Esc", "선택 풀기·창 닫기"], ["?", "이 목록"],
+];
+function renderKeys() {
+  setHTML($("keysList"), KEYS.map(([k, d]) => `<li><kbd>${k}</kbd><span>${d}</span></li>`).join(""));
+}
+function toggleKeys(on) { $("keys").hidden = !(on ?? $("keys").hidden); }
+function stepFloor(d) {
+  const fl = floors(), cur = (fl.find(f => f.project === floorKey) || {}).n || 0;
+  const next = fl.find(f => f.n === cur + d);
+  if (next) jumpFloor(next.project);
+}
+function jumpFloor(project) {
+  if (transit) { endRide(); transit = null; me.actor.path = []; me.actor.pos = me.pos.slice(); mePill(""); $("ride").classList.remove("on"); }
+  if (playing) rotateAt = Date.now();
+  gotoFloor(project);
+}
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  const t = e.target;
+  if (t instanceof Element && t.closest("input, textarea, select, [contenteditable]")) return;
+  if (!state) return;
+  const k = e.key;
+  if (k === "?") { toggleKeys(); }
+  else if (k === "Escape") { if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
+  else if (k === "ArrowUp") stepFloor(1);
+  else if (k === "ArrowDown") stepFloor(-1);
+  else if (/^[1-9]$/.test(k)) { const f = floors().find(x => x.n === +k); if (f) jumpFloor(f.project); }
+  else if (k === " ") { if (t instanceof Element && t.closest("button")) return; setPlaying(!playing); }
+  else if (k === "a" || k === "A") {
+    const list = attention(); if (!list.length) return;
+    const i = list.findIndex(x => x.a.id === selected);
+    const x = list[(i + 1) % list.length]; jumpTo(x.a.id, x.a.project);
+  }
+  else if (k === "f" || k === "F") setFeedOpen(!feedOpen);
+  else if (k === "[") setPanel("left", !document.querySelector(".app").classList.contains("left-closed"));
+  else if (k === "]") setPanel("right", !document.querySelector(".app").classList.contains("right-closed"));
+  else if (k === "m" || k === "M") $("alertBtn").click();
+  else return;
+  e.preventDefault();
+});
+$("keys").addEventListener("click", e => { if (e.target === $("keys") || e.target.closest(".x")) toggleKeys(false); });
+$("keysBtn").onclick = () => toggleKeys();
+renderKeys();
+
 // ---------- 매 프레임 ----------
 // 움직이는 것(걷는 사람, 엘리베이터 연출·문, 카메라 이동·확대, 서랍 끌기, 화면 내용 변경)이 있으면 매 프레임,
 // 없으면 초당 8번만 그린다(LED 깜빡임·지구본·고민 중 고개 정도). 탭이 숨겨지면 브라우저가 프레임을 멈춘다
@@ -1456,7 +1674,7 @@ requestAnimationFrame(frame);
 setInterval(() => {
   if (!state || document.hidden) return;
   renderLabels(); const fl = floors(); renderFloors(fl); const f = fl.find(x => x.project === floorKey);
-  renderPeople(f, assignCharacters(cfg, state.agents)); renderLog(f); renderFeed();
+  renderPeople(f, assignCharacters(cfg, state.agents)); renderLog(f); renderFeed(); renderAttention();
 }, 5000);
 
 // ---------- 허브 연결 ----------

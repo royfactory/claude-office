@@ -944,3 +944,74 @@ def test_main_outbox_thread_starts_even_if_first_collect_fails(collector, monkey
     monkeypatch.setattr(collector, "run", lambda args, col: None)
     collector.main()
     assert main_env["order"] == ["thread"] and "수집 오류" in capsys.readouterr().out
+
+
+# ---------- 모델·컨텍스트·토큰·바꾼 줄 ----------
+
+def answer(mid, model="claude-opus-5-5", inp=10, read_=1000, write_=200, out=50, ts=TS, branch="main", sidechain=False):
+    return {"type": "assistant", "timestamp": ts, "gitBranch": branch, "isSidechain": sidechain,
+            "message": {"id": mid, "role": "assistant", "model": model, "content": [{"type": "text", "text": "hi"}],
+                        "usage": {"input_tokens": inp, "cache_read_input_tokens": read_,
+                                  "cache_creation_input_tokens": write_, "output_tokens": out}}}
+
+
+def test_usage_context_is_last_answer_and_output_counted_once_per_message(collector, tr_file):
+    # 한 답변이 여러 줄로 나뉘어 같은 usage 가 되풀이돼도 출력 토큰은 한 번만
+    tr = read(collector, tr_file, answer("m1", out=50), answer("m1", out=50), answer("m2", inp=5, read_=3000, write_=0, out=7))
+    u = tr.usage()
+    assert u["model"] == "opus-5-5"
+    assert u["ctx"] == {"used": 3005, "max": 1_000_000}
+    assert u["outTokens"] == 57
+    assert tr.branch == "main"
+
+
+def test_usage_ignores_synthetic_and_window_grows_past_200k(collector, tr_file):
+    tr = read(collector, tr_file, answer("m1", model="claude-sonnet-4-5", read_=150_000),
+              answer("x", model="<synthetic>", read_=0, out=999))
+    assert tr.usage()["ctx"] == {"used": 150_210, "max": 200_000}
+    assert tr.usage()["outTokens"] == 50
+    write(tr_file, answer("m2", model="claude-sonnet-4-5", read_=250_000))
+    assert tr.read("basic").usage()["ctx"]["max"] == 1_000_000   # 20만을 넘겨 썼으면 100만 창
+
+
+def test_usage_1m_suffix_and_override(collector, tr_file, monkeypatch):
+    tr = read(collector, tr_file, answer("m1", model="claude-sonnet-4-5[1m]"))
+    assert tr.usage()["ctx"]["max"] == 1_000_000
+    monkeypatch.setattr(collector, "CONTEXT_OVERRIDE", 500_000)
+    assert tr.usage()["ctx"]["max"] == 500_000
+
+
+def test_no_model_means_no_gauge(collector, tr_file):
+    tr = read(collector, tr_file, said("hello"))
+    assert tr.usage()["ctx"] is None and tr.usage()["model"] == ""
+
+
+def test_compact_boundary_counts_and_resets_context(collector, tr_file):
+    tr = read(collector, tr_file, answer("m1", read_=900_000),
+              {"type": "system", "subtype": "compact_boundary", "timestamp": TS,
+               "compactMetadata": {"trigger": "auto", "preTokens": 967_332, "postTokens": 9_204}})
+    u = tr.usage()
+    assert u["compacts"] == 1 and u["compactAt"]
+    assert u["ctx"]["used"] == 9_204
+
+
+def test_branch_hidden_with_detail_none_and_sidechain_ignored(collector, tr_file):
+    tr = read(collector, tr_file, answer("m1", branch="secret-feature"), detail="none")
+    assert tr.branch == ""
+    tr = read(collector, tr_file, answer("m2", branch="sub-branch", sidechain=True))
+    assert tr.branch == "secret-feature"
+
+
+def test_patch_lines_counts_edits_and_new_files(collector, tr_file):
+    edit = {"type": "user", "timestamp": TS, "toolUseResult": {"filePath": "a.py", "structuredPatch": [
+        {"lines": [" ctx", "-old", "+new", "+more"]}, {"lines": ["-gone"]}]},
+        "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+    create = {"type": "user", "timestamp": TS, "toolUseResult": {"type": "create", "content": "a\nb\nc", "structuredPatch": []},
+              "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]}}
+    tr = read(collector, tr_file, edit, create, {"type": "user", "toolUseResult": "Error: x"})
+    assert tr.usage()["lines"] == [5, 2]
+
+
+def test_sidechain_answers_do_not_move_context(collector, tr_file):
+    tr = read(collector, tr_file, answer("m1", read_=5000), answer("s1", read_=90_000, sidechain=True))
+    assert tr.usage()["ctx"]["used"] == 5210

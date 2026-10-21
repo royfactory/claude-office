@@ -144,6 +144,12 @@ SUBAGENT_ACTIVE_SEC = 45     # 서브에이전트 기록이 이 시간 안에 �
 SUBAGENT_SCAN_SEC = 600      # 이보다 오래된 서브에이전트 파일은 아예 열지 않는다
 STALL_SEC = 90               # 생각만 하는데 기록이 이만큼 조용하면 '막힘'
 RECENT_N = 8
+# 컨텍스트 창 크기(토큰). 모델 이름에 [1m] 이 붙었거나 이미 20만을 넘겨 쓴 기록이 있으면 100만으로 본다.
+# 기본이 100만인 모델은 이름 앞부분으로 적는다(opus-5 는 96만 토큰에서 자동 압축된 기록으로 확인).
+# 맞지 않으면 CLAUDE_OFFICE_CONTEXT_WINDOW 로 한 값을 정한다.
+CONTEXT_DEFAULT = 200_000
+CONTEXT_1M_PREFIXES = ("opus-5",)   # 'claude-' 를 뗀 이름 기준
+CONTEXT_OVERRIDE = int(os.environ.get("CLAUDE_OFFICE_CONTEXT_WINDOW") or 0)
 HEARTBEAT_SEC = 10
 WAIT_SEC = 25           # 메시지 롱폴링(/api/outbox/wait) 한 번에 기다리는 시간(허브 최대 25초)
 
@@ -181,6 +187,31 @@ def target_of(name, inp, detail):
     return ""
 
 
+def context_window(model, seen):
+    """그 세션의 컨텍스트 창 크기. seen = 이 세션에서 본 가장 큰 컨텍스트 사용량."""
+    if CONTEXT_OVERRIDE > 0:
+        return CONTEXT_OVERRIDE
+    if "[1m]" in model or model.startswith(CONTEXT_1M_PREFIXES) or seen > CONTEXT_DEFAULT:
+        return 1_000_000
+    return CONTEXT_DEFAULT
+
+
+def patch_lines(res):
+    """Edit/Write 결과(toolUseResult)에서 더한 줄·뺀 줄 수. 새 파일은 내용 줄 수를 더한 것으로 센다."""
+    if not isinstance(res, dict):
+        return 0, 0
+    if res.get("type") == "create" and isinstance(res.get("content"), str):
+        return res["content"].count("\n") + (0 if res["content"].endswith("\n") or not res["content"] else 1), 0
+    add = rem = 0
+    for h in res.get("structuredPatch") or []:
+        for ln in (h.get("lines") or []) if isinstance(h, dict) else []:
+            if isinstance(ln, str) and ln[:1] == "+":
+                add += 1
+            elif isinstance(ln, str) and ln[:1] == "-":
+                rem += 1
+    return add, rem
+
+
 def iso_ts(s):
     # "2026-10-20T13:46:45.950Z" → epoch. 3.9 의 fromisoformat 은 Z 를 못 읽는다.
     try:
@@ -214,6 +245,15 @@ class Transcript:
         self.tools_by_id = {}   # tool_use_id -> {tool, target, ts} (결과가 올 때 백그라운드인지 판단용, 최근 것만)
         self.tasks = {}         # 할 일 목록: 번호 -> {s: 제목, st: pending|in_progress|completed}
         self.task_create = {}   # TaskCreate 의 tool_use_id -> 제목(결과의 'Task #N' 으로 번호를 받는다)
+        self.model = ""         # 마지막 답변의 모델(claude- 뗀 이름)
+        self.branch = ""        # 마지막 기록의 git 브랜치
+        self.ctx = 0            # 지금 컨텍스트 사용량 = 마지막 답변의 입력 + 캐시 읽기 + 캐시 쓰기 토큰
+        self.ctx_seen = 0       # 이 세션에서 본 가장 큰 사용량(창 크기 짐작용)
+        self.out_tokens = 0     # 이 세션이 만든 출력 토큰 합(같은 답변이 여러 줄로 나뉘어도 한 번만)
+        self.usage_ids = set()
+        self.compacts = 0       # 자동·수동 압축 횟수와 마지막 시각
+        self.compact_at = None
+        self.lines = [0, 0]     # Edit/Write 로 더한 줄·뺀 줄
         self.last = None
         self.ino = None
 
@@ -267,7 +307,22 @@ class Transcript:
         ts = iso_ts(rec["timestamp"]) if rec.get("timestamp") else None
         if ts:
             self.last = ts
+        if rec.get("gitBranch") and not rec.get("isSidechain"):
+            self.branch = short(rec["gitBranch"], 40) if detail != "none" else ""
+        if t == "system" and rec.get("subtype") == "compact_boundary":
+            cm = rec.get("compactMetadata") if isinstance(rec.get("compactMetadata"), dict) else {}
+            self.compacts += 1
+            self.compact_at = ts or time.time()
+            self.ctx_seen = max(self.ctx_seen, int(cm.get("preTokens") or 0))
+            self.ctx = int(cm.get("postTokens") or 0)
+            return
         msg = rec.get("message")
+        if t == "assistant" and isinstance(msg, dict) and not rec.get("isSidechain"):
+            self._usage(msg)   # 예전 버전이 같은 파일에 적던 서브에이전트(사이드체인) 답변은 이 세션의 컨텍스트가 아니다
+        if t == "user" and rec.get("toolUseResult"):
+            add, rem = patch_lines(rec.get("toolUseResult"))
+            self.lines[0] += add
+            self.lines[1] += rem
         if isinstance(msg, dict) and isinstance(msg.get("content"), str) and "<task-notification>" in msg["content"]:
             self._notification(msg["content"])   # 백그라운드 완료 알림은 문자열 사용자 메시지로도 온다
             return
@@ -309,6 +364,41 @@ class Transcript:
                 txt = say_of(c.get("text", ""))
                 if txt:
                     self.say = txt
+
+    def _usage(self, msg):
+        """답변의 토큰 사용량으로 지금 컨텍스트 크기와 출력 토큰 합을 갱신한다."""
+        model = str(msg.get("model") or "")
+        u = msg.get("usage")
+        if not model or model.startswith("<") or not isinstance(u, dict):
+            return   # <synthetic> = Claude Code 가 만든 안내 줄(실제 호출 아님)
+        self.model = short(model[7:] if model.startswith("claude-") else model, 32)
+        try:
+            ctx = int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0) \
+                + int(u.get("cache_creation_input_tokens") or 0)
+            out = int(u.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            return
+        if ctx:
+            self.ctx = ctx
+            self.ctx_seen = max(self.ctx_seen, ctx)
+        mid = msg.get("id")
+        if mid and mid not in self.usage_ids:
+            self.usage_ids.add(mid)
+            if len(self.usage_ids) > 2000:
+                self.usage_ids = set(list(self.usage_ids)[-1000:])
+            self.out_tokens += out
+
+    def usage(self):
+        """화면에 보낼 모델·컨텍스트·토큰·바꾼 줄 요약."""
+        win = context_window(self.model, self.ctx_seen) if self.model else 0
+        return {
+            "model": self.model,
+            "ctx": {"used": self.ctx, "max": win} if self.model else None,
+            "outTokens": self.out_tokens,
+            "compacts": self.compacts,
+            "compactAt": self.compact_at,
+            "lines": list(self.lines),
+        }
 
     def _notification(self, text):
         """백그라운드 작업 완료 알림(<task-notification>)이 오면 그 작업을 기다림 목록에서 뺀다."""
@@ -423,6 +513,7 @@ class Collector:
                 "since": (cur or {}).get("ts") or tr.last,
                 "tools": tr.tools,
                 "say": self.said(tr),
+                "model": tr.model,
             })
         return sorted(out, key=lambda s: s["id"])
 
@@ -486,6 +577,8 @@ class Collector:
                 "tools": tr.tools,
                 "say": self.said(tr),
                 "mode": tr.mode,
+                "branch": tr.branch,
+                **tr.usage(),
                 "bg": [{"tool": b["tool"], "target": b["target"], "ts": b.get("ts")} for b in bg][:5],
                 "todos": list(tr.tasks.values())[:30],
                 "canMessage": MESSAGES and not WINDOWS and socket_ok(sock),
