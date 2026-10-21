@@ -227,13 +227,19 @@ let floorDecal, elevSign;
 // ---------- 층마다 다른 분위기 ----------
 // 색조는 층 배지와 같은 색(층 번호 × 47°). 채광은 높이를 따른다: 아래층은 서늘하고 어둑하게,
 // 위층으로 갈수록 해가 높고 따뜻하고 밝게. 해의 방향도 층마다 돌아서 그림자 방향이 달라진다.
-const floorHue = n => (n * 47) % 360;
+// 지상은 1F·2F…, 지하(1시간 넘게 모두 쉰 층)는 B1·B2…(오래 쉴수록 깊이). n 은 지상 양수, 지하 음수
+const BASEMENT_SEC = 3600;
+const floorHue = n => n > 0 ? (n * 47) % 360 : 215;
+const floorLabel = n => n > 0 ? `${n}F` : `B${-n}`;
+const levelOf = n => n > 0 ? n : n + 1;      // 끊김 없는 번호(…B2=-1, B1=0, 1F=1…): 엘리베이터가 0층 없이 센다
+const nOfLevel = l => l > 0 ? l : l - 1;
 let themeKey = "";
 function applyTheme(n, total, project) {
   const key = `${n}/${total}/${project}`;
   if (key === themeKey) return;
   themeKey = key;
-  const hue = floorHue(n), f = total > 1 ? (n - 1) / (total - 1) : 0.5;
+  const under = n < 0;
+  const hue = floorHue(n), f = under ? 0 : total > 1 ? (n - 1) / (total - 1) : 0.5;
   const tintC = new THREE.Color().setHSL(hue / 360, 0.6, 0.66);
   for (const [m, base, amt] of themed) m.material = mat(new THREE.Color(base).lerp(tintC, amt).getHex());
   // 아래층 = 이른 아침(낮고 푸른 빛, 긴 그림자) … 위층 = 한낮·노을(높고 따뜻한 빛). 전체 밝기는 처음 값 근처를 지킨다
@@ -242,6 +248,7 @@ function applyTheme(n, total, project) {
   const ang = (25 + n * 52) * Math.PI / 180, h = 14 + 24 * f;
   sun.position.set(Math.cos(ang) * 24, h, Math.sin(ang) * 24);
   hemi.intensity = 1.15 + 0.3 * f;
+  if (under) { sun.intensity = 0.95; sun.color.set(0x9fb4d8); hemi.intensity = 0.95; }   // 지하: 창 없는 형광등 빛
   hemi.color.setHSL(hue / 360, 0.45, 0.96);
   hemi.groundColor.setHSL(hue / 360, 0.25, 0.7);
   stage.style.setProperty("--fh", hue);
@@ -250,13 +257,13 @@ function applyTheme(n, total, project) {
   const c = document.createElement("canvas"); c.width = 1024; c.height = 256;
   const g = c.getContext("2d");
   g.fillStyle = `hsla(${hue}, 70%, 40%, 0.95)`; g.font = `900 210px ${FONT}`; g.textBaseline = "middle";
-  g.fillText(`${n}F`, 10, 136);
-  const w = g.measureText(`${n}F`).width;
+  g.fillText(floorLabel(n), 10, 136);
+  const w = g.measureText(floorLabel(n)).width;
   g.fillStyle = `hsla(${hue}, 50%, 32%, 0.85)`; g.font = `800 92px ${FONT}`; g.fillText(project.slice(0, 16), w + 40, 140);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   if (floorDecal.material.map) floorDecal.material.map.dispose();
   floorDecal.material.map = t; floorDecal.material.needsUpdate = true;
-  setElevSign(`${n}F`, hue);
+  setElevSign(floorLabel(n), hue);
 }
 function setElevSign(text, hue) {
   setSignOn(elevSign, text, hue);
@@ -649,7 +656,7 @@ function travelTo(project) {
   const from = (floors().find(x => x.project === floorKey) || {}).n;
   transit = { target: project, n: f.n, from, phase: "walk", t: performance.now() };
   me.actor.path = route("mydesk", "elevator", ELEV.inside);
-  mePill(`${f.n}F로 가는 중`);
+  mePill(`${floorLabel(f.n)}로 가는 중`);
 }
 function mePill(text) {
   const p = me.actor.lab.querySelector(".pill");
@@ -663,9 +670,9 @@ function stepTransit(t) {
   } else if (tr.phase === "close" && t - tr.t > 800) {
     // 층은 그대로 두고 '나'와 엘리베이터 바닥판만 위로(또는 아래로) 사라졌다가, 새 층에서 반대쪽에서 나타난다
     tr.phase = "ride"; tr.t = t;
-    const from = tr.from || tr.n;
+    const from = tr.from ?? tr.n;
     tr.dir = tr.n >= from ? 1 : -1;
-    tr.floors = Math.max(1, Math.abs(tr.n - from));
+    tr.floors = Math.max(1, Math.abs(levelOf(tr.n) - levelOf(from)));
     tr.vanish = 1100; tr.travel = 500 + tr.floors * 550; tr.appear = 1100;
     tr.dur = tr.vanish + tr.travel + tr.appear;
     tr.shown = null; tr.swapped = false;
@@ -678,7 +685,7 @@ function stepTransit(t) {
   } else if (tr.phase === "ride") {
     // 위로 갈 때는 높이 올라가며 흐려진다. 아래로 갈 때는 바닥에 구멍이 열리고 그 속으로 내려가며,
     // 바닥 아래는 잘라 그리지 않는다(FLOOR_CLIP). 새 층에서 아래로부터 올라올 때도 구멍을 열고 닫는다
-    const el = t - tr.t, from = tr.from || tr.n, UP = 7, DEPTH = 3.8;
+    const el = t - tr.t, from = tr.from ?? tr.n, UP = 7, DEPTH = 3.8;
     let y = 0, alpha = 1, cur = from, hole = 0, labA = 1;
     if (el < tr.vanish) {                        // 떠나기
       const p = el / tr.vanish;
@@ -691,7 +698,7 @@ function stepTransit(t) {
         gotoFloor(tr.target);
       }
       const p = (el - tr.vanish) / tr.travel;
-      cur = Math.round(from + (tr.n - from) * p);
+      cur = nOfLevel(Math.round(levelOf(from) + (levelOf(tr.n) - levelOf(from)) * p));
       y = tr.dir > 0 ? UP : -DEPTH; alpha = tr.dir > 0 ? 0 : 1; labA = 0;
       hole = tr.dir > 0 ? 0 : Math.max(0, 1 - (el - tr.vanish) / 350);   // 내려간 뒤 구멍이 닫힌다
     } else {                                     // 도착
@@ -717,9 +724,9 @@ function stepTransit(t) {
       tr.shown = cur;
       const arrow = tr.n > from ? "▲" : tr.n < from ? "▼" : "■";
       const icon = tr.n > from ? "fa-arrow-up" : tr.n < from ? "fa-arrow-down" : "fa-elevator";
-      $("ride").innerHTML = `<i class="fa-solid fa-elevator"></i> <i class="fa-solid ${icon}"></i> <b>${cur}F</b>` +
-        (cur === tr.n ? ` <span>${esc(tr.target)}</span>` : ` <span><i class="fa-solid fa-arrow-right"></i> ${tr.n}F</span>`);
-      setElevSign(`${arrow}${cur}`, floorHue(cur));
+      $("ride").innerHTML = `<i class="fa-solid fa-elevator"></i> <i class="fa-solid ${icon}"></i> <b>${floorLabel(cur)}</b>` +
+        (cur === tr.n ? ` <span>${esc(tr.target)}</span>` : ` <span><i class="fa-solid fa-arrow-right"></i> ${floorLabel(tr.n)}</span>`);
+      setElevSign(`${arrow}${cur > 0 ? cur : floorLabel(cur)}`, floorHue(cur));
     }
     if (el >= tr.dur + 150) {
       if (!tr.swapped) { tr.swapped = true; gotoFloor(tr.target); }
@@ -800,7 +807,12 @@ function floors() {
     f.last = Math.max(f.last, a.lastActivity || 0); f.first = Math.min(f.first, a.startedAt || 0);
     m.set(a.project, f);
   }
-  return [...m.values()].sort((x, y) => x.first - y.first).map((f, i) => ({ ...f, n: i + 1 }));
+  // 지상: 처음 시작한 순서대로 1F, 2F…  지하: 모두 쉰 채 1시간이 넘은 층, 최근에 쉰 층이 B1 이고 오래될수록 깊다
+  const now = Date.now() / 1000 - skew, all = [...m.values()];
+  const under = f => !f.busy && now - f.last > BASEMENT_SEC;
+  const up = all.filter(f => !under(f)).sort((x, y) => x.first - y.first).map((f, i) => ({ ...f, n: i + 1 }));
+  const down = all.filter(under).sort((x, y) => y.last - x.last).map((f, i) => ({ ...f, n: -(i + 1), under: true }));
+  return up.concat(down);
 }
 function chooseFloor(fl) {
   const hashP = decodeURIComponent((location.hash.match(/p=([^&]+)/) || [])[1] || "");
@@ -855,7 +867,7 @@ function apply(instant) {
   const floor = fl.find(f => f.project === floorKey);
   autoPick(floor);
   const agents = floor ? floor.agents : [];
-  if (floor && !(transit && transit.phase === "ride" && !transit.swapped)) applyTheme(floor.n, fl.length, floor.project);
+  if (floor && !(transit && transit.phase === "ride" && !transit.swapped)) applyTheme(floor.n, fl.filter(f => f.n > 0).length, floor.project);
   const chars = assignCharacters(cfg, state.agents);
   updateSigns();
   updateMe();
@@ -1057,25 +1069,29 @@ function renderFloors(fl) {
   const now = Date.now() / 1000 - skew;
   const chars = assignCharacters(cfg, state.agents);
   // 창문 하나 = 세션 하나. 근무 중이면 불이 켜지고 그 세션의 캐릭터가 창가에 선다
-  setHTML($("floors"), fl.slice().reverse().map(f => {
+  const story = f => {
     const ws = f.agents.slice().sort((a, b) => (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0));
     const wins = ws.slice(0, MAX_WINDOWS).map(a => {
       const ch = chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
       const face = l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt="">` : esc(l.emoji || "🙂");
       return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}" title="${esc(a.title || a.name)} · ${STATE_WORD[st]}">${face}</span>`;
     }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more">+${ws.length - MAX_WINDOWS}</span>` : "");
-    return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}" data-p="${esc(f.project)}">
-      <span class="no" style="--h:${(f.n * 47) % 360}">${f.n}F</span>
+    return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}${f.under ? " under" : ""}" data-p="${esc(f.project)}">
+      <span class="no" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span>
       <span class="info"><b>${esc(f.project)}</b><small>${f.busy ? `<em>${f.busy}명 근무 중</em> · ` : ""}세션 ${f.agents.length}개${f.busy ? "" : " · " + agoSpan(f.last, " 전")}</small>
       <span class="wins">${wins}</span></span></div>`;
-  }).join("") || `<div class="muted" style="padding:16px">보이는 세션이 없습니다.</div>`);
+  };
+  // 위에서부터: 지상 층(높은 층 먼저) → 로비(컴퓨터들) → 지하 층(B1 부터 깊은 쪽으로)
+  const up = fl.filter(f => f.n > 0).reverse(), down = fl.filter(f => f.n < 0);
+  const lobby = `<div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts">${state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" ")}</span></div><div class="street"></div>`;
+  setHTML($("floors"), (up.map(story).join("") || (down.length ? "" : `<div class="muted" style="padding:16px">보이는 세션이 없습니다.</div>`)) + lobby +
+    (down.length ? `<div class="under-sign"><i class="fa-solid fa-stairs"></i> 지하 · 1시간 넘게 쉬는 층</div>` + down.map(story).join("") : ""));
   tickTimes($("floors"), now);
   renderLimits();
-  setHTML($("lobbyHosts"), state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" "));
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
   const f = fl.find(x => x.project === floorKey);
-  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${(f.n * 47) % 360}">${f.n}F</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · 세션 ${f.agents.length}개</small>` : "");
+  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · 세션 ${f.agents.length}개</small>` : "");
 }
 $("floors").addEventListener("click", e => {
   const f = e.target.closest("[data-p]");
@@ -1445,7 +1461,7 @@ function renderFeed() {
       : e.type === "approval" && e.tool ? `${FEED_WORD[e.type]} · <code>${esc(e.tool)}</code> · ${esc(e.project)}` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
     return `<li data-id="${esc(e.id)}" data-p="${esc(e.project)}" class="${e.ts > feedSeenTs ? "unseen" : ""}">
       <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${agoSpan(e.ts, " 전")}</span>
-      <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b>${esc(e.title)}</b></span>
+      <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${floorLabel(n)}</span>` : ""}<b>${esc(e.title)}</b></span>
       <span class="what">${what}</span></li>`;
   }).join("") || `<li class="empty">${q || feedFilter !== "all" ? "조건에 맞는 소식이 없습니다." : "아직 소식이 없습니다."}</li>`);
   tickTimes($("feedList"), now);
@@ -1558,7 +1574,7 @@ function renderTimeline() {
     const pms = tl.prompts.filter(p => p >= from).map(p => `<i class="pm" style="left:${pct(p)}%" title="내가 말을 건 때"></i>`).join("");
     const n = floorN.get(a.project), st = stateOf(a);
     return `<div class="lane${selected === a.id ? " sel" : ""}" data-id="${esc(a.id)}" data-p="${esc(a.project)}">
-      <span class="ln"><span class="sd" style="--sc:${STATE_COLOR[st]}" title="${STATE_WORD[st]}"></span>${tlScope === "busy" && n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b title="${esc(a.title || a.name)}">${esc(a.title || a.name)}</b></span>
+      <span class="ln"><span class="sd" style="--sc:${STATE_COLOR[st]}" title="${STATE_WORD[st]}"></span>${tlScope === "busy" && n ? `<span class="badge" style="--h:${floorHue(n)}">${floorLabel(n)}</span>` : ""}<b title="${esc(a.title || a.name)}">${esc(a.title || a.name)}</b></span>
       <span class="tr">${spans}${pms}</span></div>`;
   }).join("");
   const ticks = [0, 1, 2, 3, 4, 5].map(i => {
@@ -1626,7 +1642,7 @@ function renderAttention() {
     const n = floorN.get(x.a.project);
     const what = x.type === "approval" ? `${x.a.tool ? esc(x.a.tool) + " · " : ""}${agoSpan(x.ts || null, "째")}`
       : x.type === "stalled" ? `조용한 지 ${agoSpan(x.a.lastActivity)}` : `${agoSpan(x.ts, " 전")}${x.a.say ? ` · ${esc(x.a.say)}` : ""}`;
-    return `<li data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}
+    return `<li data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">${n ? `<span class="badge" style="--h:${floorHue(n)}">${floorLabel(n)}</span>` : ""}
       <span class="w"><b>${esc(x.a.title || x.a.name)}</b><small>${what}</small></span></li>`;
   }).join("") + (attnOpen === "done" ? `<li class="all" data-all="1"><i class="fa-solid fa-check-double"></i> 모두 확인</li>` : "") : "");
   $("attnList").hidden = !items.length;
@@ -1700,7 +1716,7 @@ function notify(ev) {
   const a = ev.a, n = (floors().find(f => f.project === a.project) || {}).n;
   try {
     const note = new Notification(ev.type === "approval" ? `승인 대기 · ${a.title || a.name}` : `작업 완료 · ${a.title || a.name}`, {
-      body: `${n ? n + "F " : ""}${a.project}${ev.type === "approval" && a.tool ? " · " + a.tool : a.say ? " · " + a.say : ""}`,
+      body: `${n ? floorLabel(n) + " " : ""}${a.project}${ev.type === "approval" && a.tool ? " · " + a.tool : a.say ? " · " + a.say : ""}`,
       tag: "office-" + a.id, silent: true,
     });
     note.onclick = () => { window.focus(); jumpTo(a.id, a.project); note.close(); };
@@ -1737,8 +1753,9 @@ function renderKeys() {
 }
 function toggleKeys(on) { $("keys").hidden = !(on ?? $("keys").hidden); }
 function stepFloor(d) {
-  const fl = floors(), cur = (fl.find(f => f.project === floorKey) || {}).n || 0;
-  const next = fl.find(f => f.n === cur + d);
+  const fl = floors(), cur = (fl.find(f => f.project === floorKey) || {}).n;
+  if (cur == null) return;
+  const next = fl.find(f => f.n === nOfLevel(levelOf(cur) + d));   // 1F 아래는 B1
   if (next) jumpFloor(next.project);
 }
 function jumpFloor(project) {

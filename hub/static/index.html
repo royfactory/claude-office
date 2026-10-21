@@ -129,6 +129,18 @@
   .limits .lt i { display: block; height: 100%; background: var(--good); }
   .limits .lr[data-lv=mid] .lt i { background: var(--warning); } .limits .lr[data-lv=hi] .lt i { background: var(--bad); }
   .limits .rs { color: var(--text-dim2); font-size: 10px; text-align: right; white-space: nowrap; }
+  /* 로비는 빌딩 안 지상·지하 사이에 있다. 그 아래 지하 층: 창 없는 콘크리트, 번호판은 회색 */
+  #floors .lobby { border-left: 0; border-right: 0; }
+  #floors .street { margin: 0; border-radius: 0; height: 5px; }
+  .under-sign { padding: 5px 8px; font-size: 10.5px; letter-spacing: .06em; color: #94a3b8; background: #0b0f17; border-bottom: 1px solid #1e293b; }
+  .under-sign i { margin-right: 4px; }
+  .story.under { background: repeating-linear-gradient(135deg, #0a0d14 0 10px, #0c1018 10px 20px); border-bottom-color: #020409; }
+  .story.under:hover { background: repeating-linear-gradient(135deg, #111623 0 10px, #131a28 10px 20px); }
+  .story.under .no { background: #334155; filter: none; color: #cbd5e1; }
+  .story.under .info b { color: #556070; } .story.under .info small { color: #3c4656; }
+  .story.under .win { opacity: .55; }
+  .story.under.cur { background: linear-gradient(#141b29, #111725); }
+  .story.under.cur .info b { color: #94a3b8; }
   .street { flex: none; height: 6px; background: repeating-linear-gradient(90deg, #475569 0 14px, transparent 14px 22px); border-radius: 3px; margin-top: 3px; }
 
   /* 무대 */
@@ -456,8 +468,6 @@
     <div class="bldg">
       <div class="roof"><span class="antenna"></span><span class="sign">CLAUDE OFFICE</span></div>
       <div class="tower"><div id="floors"></div><div id="car"><i class="fa-solid fa-elevator"></i></div></div>
-      <div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts"></span></div>
-      <div class="street"></div>
       <div class="limits" id="limits" hidden></div>
     </div>
   </aside>
