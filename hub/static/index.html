@@ -11,14 +11,26 @@
   .app { display: grid; grid-template-columns: 260px minmax(0, 1fr) 330px; height: 100vh; }
   aside { background: var(--bg-2); overflow-y: auto; padding: 14px 12px; }
   aside.left { border-right: 1px solid var(--border); }
-  aside.right { border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
-  aside.right > .card { display: flex; flex-direction: column; min-height: 0; }
-  aside.right > .card > ol { overflow-y: auto; min-height: 0; flex: 1; margin-right: -6px; padding-right: 6px; }
-  #peopleBox { flex: 1.4 1 0; }
-  #logBox { flex: 1 1 0; }
-  #legendBox { flex: 0 0 172px; }
+  /* 오른쪽 패널 = 탭. 고른 탭 하나가 패널 높이를 다 쓰고, 넘치면 그 안에서 스크롤한다 */
+  aside.right { border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+  .tabs { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 3px; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 10px; }
+  .tabs button { border: 0; background: transparent; border-radius: 7px; padding: 6px 4px; font-size: 12px; font-weight: 600;
+                 color: var(--text-dim); display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+  .tabs button:hover { background: var(--surface-2); color: var(--text-hi); }
+  .tabs button.on { background: var(--surface-3); color: var(--text-hi); box-shadow: inset 0 -2px 0 var(--brand); }
+  .tabs em { font-style: normal; font-weight: 700; font-size: 10px; color: var(--text-dim2); }
+  .tabs button.on em { color: var(--brand-light); }
+  .tabs em.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
+  .pane { flex: 1; min-height: 0; overflow-y: auto; display: none; flex-direction: column; gap: 10px; scrollbar-width: thin; }
+  .pane.on { display: flex; }
+  .pane[data-pane=people], .pane[data-pane=log], .pane[data-pane=legend] {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .pane-head { display: flex; align-items: center; font-size: 13px; font-weight: 700; color: var(--text-hi); }
+  .pane-head small { margin-left: auto; color: var(--text-dim); font-weight: 500; font-size: 12px; }
+  .empty-hint { padding: 18px 6px; text-align: center; line-height: 1.6; }
   #legend li { padding: 1px 0; }
-  #detail { flex: none; max-height: 26vh; overflow-y: auto; }
+  #detail { flex: none; }
   .ph { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; font-size: 13px; color: var(--text-hi); font-weight: 700; }
   .ph small { margin-left: auto; color: var(--text-dim2); font-weight: 600; font-size: 10px; letter-spacing: .08em; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
@@ -181,6 +193,8 @@
   .detail .quote { margin: 10px 0 0; font-size: 12px; color: var(--text-hi); background: var(--bg-2); border-radius: 8px; padding: 8px; }
   .detail h4 { margin: 10px 0 4px; font-size: 11px; color: var(--text-dim); }
   #compose { flex: none; }
+  #compose h3 { flex-wrap: wrap; }
+  #compose h3 small { flex-basis: 100%; margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #compose textarea { width: 100%; resize: vertical; min-height: 64px; max-height: 30vh; background: var(--bg-2); color: var(--text-hi);
                       border: 1px solid var(--border-2); border-radius: 8px; padding: 8px; font: 13px/1.45 var(--font); }
   #compose textarea:disabled { opacity: .5; }
@@ -210,10 +224,7 @@
     #floorBadge { display: none; }
     .topr { top: auto; bottom: 14px; }
     aside.left { order: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; }
-    aside.right { order: 2; border-left: 0; padding: 12px 16px; overflow: visible; }
-    #peopleBox, #logBox { flex: none; height: 320px; }
-    #legendBox { flex: none; height: 200px; }
-    #detail { max-height: none; }
+    aside.right { order: 2; border-left: 0; padding: 12px 16px; height: 70vh; min-height: 420px; }
     .tower { max-height: 300px; }
     .hint { display: none; }
   }
@@ -249,18 +260,39 @@
   </main>
 
   <aside class="right">
-    <div id="detail"></div>
-    <!-- 고른 세션에 메시지 보내기. 1초마다 다시 그리는 상세 카드와 따로 둬서 입력 중인 글이 지워지지 않는다 -->
-    <section class="card" id="compose" hidden>
-      <h3>💬 이 세션에 메시지<small id="composeTarget"></small></h3>
-      <p class="muted" id="composeNote"></p>
-      <textarea id="composeText" rows="3" maxlength="4000" placeholder="Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)"></textarea>
-      <div class="crow"><span class="muted" id="composeCount">0 / 4000</span><button class="primary" id="composeSend">보내기</button></div>
-      <ol id="composeLog"></ol>
+    <nav class="tabs" role="tablist" aria-label="오른쪽 패널">
+      <button role="tab" data-tab="people">사람들<em id="tabPeopleN"></em></button>
+      <button role="tab" data-tab="session">세션<em id="tabSessionDot"></em></button>
+      <button role="tab" data-tab="log">활동 로그</button>
+      <button role="tab" data-tab="legend">안내</button>
+    </nav>
+
+    <section class="pane" data-pane="people" role="tabpanel">
+      <div class="pane-head">사무실 사람들<small id="peopleHead"></small></div>
+      <ol id="people"></ol>
     </section>
-    <section class="card" id="peopleBox"><h3>사무실 사람들<small id="peopleHead"></small></h3><ol id="people"></ol></section>
-    <section class="card" id="logBox"><h3>활동 로그</h3><ol id="log"></ol></section>
-    <section class="card" id="legendBox"><h3>어디서 무엇을 하나</h3><ol id="legend"></ol></section>
+
+    <section class="pane" data-pane="session" role="tabpanel">
+      <div class="muted empty-hint" id="sessionEmpty">3D 화면이나 「사람들」 탭에서 캐릭터를 누르면 그 세션의 상세와 메시지 칸이 여기 나옵니다.</div>
+      <div id="detail"></div>
+      <!-- 고른 세션에 메시지 보내기. 1초마다 다시 그리는 상세 카드와 따로 둬서 입력 중인 글이 지워지지 않는다 -->
+      <section class="card" id="compose" hidden>
+        <h3>💬 이 세션에 메시지<small id="composeTarget"></small></h3>
+        <p class="muted" id="composeNote"></p>
+        <textarea id="composeText" rows="3" maxlength="4000" placeholder="Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)"></textarea>
+        <div class="crow"><span class="muted" id="composeCount">0 / 4000</span><button class="primary" id="composeSend">보내기</button></div>
+        <ol id="composeLog"></ol>
+      </section>
+    </section>
+
+    <section class="pane" data-pane="log" role="tabpanel">
+      <ol id="log"></ol>
+    </section>
+
+    <section class="pane" data-pane="legend" role="tabpanel">
+      <div class="pane-head">어디서 무엇을 하나</div>
+      <ol id="legend"></ol>
+    </section>
   </aside>
 </div>
 <script src="/static/shared.js"></script>

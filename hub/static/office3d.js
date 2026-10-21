@@ -827,6 +827,7 @@ function renderLabels() {
 }
 function select(key) {
   selected = selected === key ? null : key;
+  if (selected) showTab("session");   // 캐릭터를 고르면 그 세션 탭으로
   renderLabels();
   if (state) { const fl = floors(); renderPeople(fl.find(f => f.project === floorKey), assignCharacters(cfg, state.agents)); }
 }
@@ -865,7 +866,7 @@ setPlaying(playing);
 
 function renderPeople(floor, chars) {
   const now = Date.now() / 1000 - skew;
-  if (!floor) { $("people").innerHTML = ""; $("detail").innerHTML = ""; updateCompose(null); return; }
+  if (!floor) { $("people").innerHTML = ""; $("detail").innerHTML = ""; updateCompose(null); updateSessionTab(null); return; }
   const rows = [];
   for (const a of floor.agents) {
     rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.name, now, false));
@@ -873,10 +874,12 @@ function renderPeople(floor, chars) {
   }
   const busy = floor.agents.filter(a => a.kind !== "idle").length;
   $("peopleHead").textContent = `${floor.agents.length}명 · ${busy}명 근무 중`;
+  $("tabPeopleN").textContent = floor.agents.length || "";
   $("people").innerHTML = rows.join("");
   const a = floor.agents.find(x => x.id === selected) || floor.agents.find(x => selected && selected.startsWith(x.id + "/"));
   $("detail").innerHTML = a ? detailCard(a, chars.get(a.id), now) : "";
   updateCompose(a, now);
+  updateSessionTab(a);
 }
 function personRow(key, a, ch, st, title, sub, now, isSub) {
   const label = { working: "근무", thinking: "고민", stalled: "막힘", idle: "휴식" }[st];
@@ -899,6 +902,28 @@ function detailCard(a, ch, now) {
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
 }
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });
+
+// ---------- 오른쪽 패널 탭 ----------
+// 사람들 · 세션(고른 세션의 상세 + 메시지) · 활동 로그 · 안내. 마지막에 본 탭은 이 브라우저에 기억한다
+const TABS = ["people", "session", "log", "legend"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = "people";
+  document.querySelectorAll(".tabs [data-tab]").forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  document.querySelectorAll(".pane[data-pane]").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
+  try { localStorage.setItem("office.tab", name); } catch (_) {}
+}
+document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) showTab(b.dataset.tab); });
+function updateSessionTab(a) {
+  $("sessionEmpty").hidden = !!a;
+  $("tabSessionDot").className = a ? "dot" : "";   // 고른 세션이 있으면 탭에 점
+}
+let savedTab = "people";
+try { savedTab = localStorage.getItem("office.tab") || "people"; } catch (_) {}
+showTab(savedTab);
+updateSessionTab(null);
 
 // ---------- 고른 세션에 메시지 보내기 ----------
 // 허브 → 그 컴퓨터의 수집기 → 세션 수신함 소켓으로 간다. 받는 Claude 는 '다른 세션이 보낸 메시지'로 받고,
