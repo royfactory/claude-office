@@ -1219,3 +1219,9 @@ def test_setup_status_reports_repo_location_under_home(collector, home, monkeypa
     monkeypatch.setattr(collector, "ROOT_GLOBS", [str(home / ".claude")])
     collector._setup_cache["val"] = None
     assert collector.setup_status()["repo"] == "~/work/claude-office"
+
+
+def test_profile_of_labels(collector, home):
+    assert collector.profile_of(str(home / ".claude")) == "기본"
+    assert collector.profile_of("/x/Library/Application Support/orca/claude-profiles/f23251ba-5d08-45e3/home") == "Orca f23251ba"
+    assert collector.profile_of("/opt/claude-work") == "claude-work"

@@ -165,6 +165,15 @@ def status_line(sid, now):
     return out
 
 
+def profile_of(root):
+    """설정 폴더의 짧은 이름: ~/.claude → 기본, Orca 프로필 → 'Orca f23251ba', 그 밖은 폴더 이름(계정 구별용)."""
+    r = root.replace("\\", "/").rstrip("/")
+    if os.path.abspath(root) == os.path.abspath(os.path.expanduser("~/.claude")):
+        return "기본"
+    m = re.search(r"claude-profiles/([^/]+)/home$", r)
+    return "Orca " + m.group(1)[:8] if m else os.path.basename(r)[:24]
+
+
 def claude_roots():
     roots = []
     for g in ROOT_GLOBS:
@@ -700,6 +709,7 @@ class Collector:
                 "title": tr.title,
                 "project": project,
                 "worktree": worktree,
+                "profile": profile_of(root),
                 "status": status,
                 "kind": kind,
                 "tool": cur["tool"] if cur else (str(ev.get("tool_name") or "") if approval else ""),

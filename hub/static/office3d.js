@@ -1047,7 +1047,8 @@ function renderLimits() {
   for (const a of state.agents) {
     const l = a.limits; if (!l || (!l.five_hour && !l.seven_day)) continue;
     const key = a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
-    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set() };
+    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set(), profiles: new Set() };
+    if (a.profile) g.profiles.add(a.profile);
     g.l = { five_hour: pick(g.l.five_hour, l.five_hour), seven_day: pick(g.l.seven_day, l.seven_day), ts: Math.max(g.l.ts || 0, l.ts || 0) };
     g.projects.add(a.project); groups.set(key, g);
   }
@@ -1061,7 +1062,7 @@ function renderLimits() {
     return `<div class="lr" data-lv="${lv}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, p)}%"></i></span><em>${p}%</em>
 <span class="rs" title="${w.resets ? untilText(w.resets - now) : ""}">${w.resets ? untilShort(w.resets - now) : ""}</span></div>`;
   };
-  const html = list.map((g, i) => `<div class="acct"><h4><i class="fa-solid fa-gauge-high"></i>사용 한도<small title="${esc([...g.projects].join(", "))}">${esc(g.host)}${perHost.get(g.host) > 1 ? ` · ${esc([...g.projects][0])} 외` : ""}</small></h4>
+  const html = list.map((g, i) => `<div class="acct"><h4><i class="fa-solid fa-gauge-high"></i>사용 한도<small title="${esc([...g.projects].join(", "))}">${esc(g.host)}${perHost.get(g.host) > 1 ? ` · ${esc(g.profiles.size ? [...g.profiles].join("·") : [...g.projects][0] + " 외")}` : ""}</small></h4>
     ${row("5시간", g.l.five_hour)}${row("주간", g.l.seven_day)}</div>`).join("");
   $("limits").hidden = !html;
   setHTML($("limits"), html);
