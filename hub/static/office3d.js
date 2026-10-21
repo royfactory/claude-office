@@ -499,12 +499,27 @@ function route(from, to, dest) {
 let state = null, cfg = null, floorKey = null, selected = null, skew = 0, dirtyLooks = false;
 const logs = new Map();       // project -> [{ts, who, text}]
 const prevTool = new Map();   // key -> "tool target"
-// 순회 재생: ▶ 이면 근무 중인 층을 위층부터 정해진 간격으로 돌아가며 보여 준다
-let playing = false, rotateSec = 20, rotateAt = 0;
+// 순회 재생: ▶ 이면 근무 중인 층을 아래층부터 정해진 간격으로 돌아가며 보여 준다.
+// 사람이 화면을 쓰는 동안(클릭·드래그·휠·키 입력, 메시지 칸에 커서나 쓰던 글이 있을 때)은 잠깐 멈추고,
+// IDLE_RESUME_MS 동안 입력이 없으면 멈춘 자리에서 남은 시간만큼 이어서 돈다.
+const IDLE_RESUME_MS = 20000;
+let playing = false, rotateSec = 20, rotateAt = 0, lastInput = 0, lastTick = Date.now(), pausedNow = false;
+const PLAYER_CONTROLS = "#play, #rotate";   // 재생 버튼·간격 고르기는 '사용 중'으로 치지 않는다
+for (const ev of ["pointerdown", "keydown", "wheel", "input"]) {
+  document.addEventListener(ev, e => {
+    if (e.target instanceof Element && e.target.closest(PLAYER_CONTROLS)) return;
+    lastInput = Date.now();
+  }, { capture: true, passive: true });
+}
+function userBusy() {
+  const ta = $("composeText");
+  return Date.now() - lastInput < IDLE_RESUME_MS || document.activeElement === ta || (ta && ta.value.trim() !== "");
+}
 try { playing = localStorage.getItem("office.play") === "1"; rotateSec = +localStorage.getItem("office.rotate") || 20; } catch (_) {}
 function savePlay() { try { localStorage.setItem("office.play", playing ? "1" : "0"); localStorage.setItem("office.rotate", String(rotateSec)); } catch (_) {} }
 function setPlaying(on) {
-  playing = on; rotateAt = Date.now(); savePlay();
+  playing = on; rotateAt = Date.now(); lastInput = 0; pausedNow = false; savePlay();
+  $("progress").parentElement.classList.remove("paused");
   $("play").textContent = on ? "■ 정지" : "▶ 재생";
   $("play").classList.toggle("on", on);
   $("playHint").textContent = on ? "근무 중인 층을 돌아가며 보는 중" : "근무 중인 층 순회";
@@ -514,8 +529,22 @@ $("play").onclick = () => setPlaying(!playing);
 $("rotate").value = String(rotateSec);
 $("rotate").onchange = e => { rotateSec = +e.target.value; rotateAt = Date.now(); savePlay(); };
 function rotateTick() {
+  const nowMs = Date.now(), dt = nowMs - lastTick;
+  lastTick = nowMs;
   if (!playing || !state) return;
-  const p = Math.min(1, (Date.now() - rotateAt) / (rotateSec * 1000));
+  const busy = userBusy() && !transit;
+  if (busy) {
+    rotateAt += dt;   // 멈춘 동안 흐른 시간만큼 미뤄 남은 시간을 그대로 둔다
+    const ta = $("composeText");
+    const left = Math.ceil((IDLE_RESUME_MS - (nowMs - lastInput)) / 1000);
+    $("playHint").textContent = document.activeElement === ta || (ta && ta.value.trim())
+      ? "⏸ 메시지를 쓰는 중이라 멈춤" : `⏸ 사용 중이라 잠깐 멈춤 · ${Math.max(1, left)}초 뒤 이어서`;
+  } else if (pausedNow) {
+    $("playHint").textContent = "근무 중인 층을 돌아가며 보는 중";
+  }
+  if (busy !== pausedNow) { pausedNow = busy; $("progress").parentElement.classList.toggle("paused", busy); }
+  if (busy) return;
+  const p = Math.min(1, (nowMs - rotateAt) / (rotateSec * 1000));
   $("progress").style.width = (p * 100).toFixed(1) + "%";
   if (p < 1) return;
   if (transit) return;
