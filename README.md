@@ -253,6 +253,21 @@ py hooks\install_hooks.py --apply                  # Windows(%USERPROFILE%\.clau
 3. 그 컴퓨터 `.env` 의 `CLAUDE_OFFICE_APPROVE=on` 후 수집기 설치를 다시 실행(설정을 `~/.claude-office/.env` 로 복사)
 4. 훅 설치에 `--approve`: `/usr/bin/python3 hooks/install_hooks.py --approve --apply` (Windows `py hooks\install_hooks.py --approve --apply`). 승인 대기 감지 훅도 함께 들어갑니다. 빼려면 `--approve` 없이 다시 `--apply`, 다 빼려면 `--remove`.
 
+### 사용 한도 막대 (선택: 상태 표시줄)
+
+Claude Code 는 구독 계정의 **사용 한도(5시간·주간)**를 [상태 표시줄](https://code.claude.com/docs/en/statusline) 명령에만 알려 줍니다. `hooks/claude_office_statusline.py` 를 상태 표시줄로 걸면 그 값을 `~/.claude-office/status/<세션 ID>.json` 에 남기고(사용률·초기화 시각·컨텍스트 창 크기·모델 이름만), 수집기가 읽어 빌딩 아래 「사용 한도」 칸에 계정마다 5시간·주간 막대와 초기화까지 남은 시간을 보여 줍니다. 세션 탭에도 그 세션 계정의 값이 나오고, 컨텍스트 게이지의 창 크기도 짐작 대신 이 값을 씁니다.
+
+```bash
+/usr/bin/python3 hooks/install_hooks.py --statusline            # 미리 보기
+/usr/bin/python3 hooks/install_hooks.py --statusline --apply    # 걸기(백업, 승인 대기 감지 훅도 함께)
+/usr/bin/python3 hooks/install_hooks.py --remove                # 훅을 빼고 상태 표시줄을 원래대로
+```
+
+- **원래 쓰던 상태 표시줄은 그대로 보입니다**: 설치할 때 원래 설정을 `~/.claude-office/statusline-next/` 에 적어 두고, 같은 입력으로 이어서 돌려 그 출력을 보여 줍니다. 원래 것이 없었으면 `opus-5-5 · ctx 19% · 5h 42% · 7d 18%` 한 줄을 보여 줍니다.
+- 값은 Pro·Max 구독에서, 세션의 첫 응답 뒤에만 옵니다(API 키 사용자는 없음). 상태 표시줄은 답변이 올 때마다 다시 그려지므로, 오래 쉬는 세션의 값은 마지막으로 받은 값입니다. 초기화 시각이 지난 창은 0% 로 봅니다.
+- 같은 계정의 세션들은 주간 초기화 시각이 같아 한 칸으로 묶입니다(컴퓨터마다).
+- 상태 표시줄을 다른 도구가 관리하면(예: Orca 프로필의 `settings.json`) 그 도구가 다시 덮어쓸 수 있습니다. 그때는 `--settings <그 설정 파일>` 로 걸되, 덮어써지면 막대가 멈춘다는 것만 알아 둡니다.
+
 ## 운영
 
 | 일 | 명령 |

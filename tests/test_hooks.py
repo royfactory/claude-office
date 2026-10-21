@@ -504,3 +504,70 @@ def test_install_approve_adds_long_timeout_entry_and_reapply_removes(inst):
     again = inst.merged(s, python="py")
     assert len(again["hooks"]["PermissionRequest"]) == 1
     assert inst.strip_ours(s) == len(inst.EVENTS) + 1
+
+
+# ---------- 상태 표시줄(사용 한도) ----------
+
+STATUS_PY = REPO / "hooks" / "claude_office_statusline.py"
+SL_IN = {"session_id": "s1", "model": {"id": "claude-opus-5-5", "display_name": "Opus"}, "cwd": "/secret/path",
+         "transcript_path": "/secret/t.jsonl",
+         "rate_limits": {"five_hour": {"used_percentage": 42.25, "resets_at": 1792600000},
+                         "seven_day": {"used_percentage": 18, "resets_at": 1793000000}},
+         "context_window": {"used_percentage": 19, "context_window_size": 1000000, "total_input_tokens": 5}}
+
+
+def run_status(tmp_path, payload, *args):
+    env = dict(os.environ, CLAUDE_OFFICE_STATUS=str(tmp_path / "status"))
+    return subprocess.run([sys.executable, str(STATUS_PY), *args], input=json.dumps(payload).encode(),
+                          capture_output=True, env=env, timeout=20)
+
+
+def test_statusline_writes_limits_only_and_prints_fallback(tmp_path):
+    p = run_status(tmp_path, SL_IN)
+    assert p.returncode == 0
+    assert p.stdout.decode().strip() == "opus-5-5 · ctx 19% · 5h 42% · 7d 18%"
+    rec = json.loads((tmp_path / "status" / "s1.json").read_text())
+    assert rec["limits"] == {"five_hour": {"pct": 42.2, "resets": 1792600000}, "seven_day": {"pct": 18.0, "resets": 1793000000}}
+    assert rec["ctx"] == {"pct": 19, "size": 1000000} and rec["model"] == "claude-opus-5-5"
+    assert "secret" not in json.dumps(rec)   # 경로·대화는 남기지 않는다
+
+
+def test_statusline_runs_original_command_with_same_input(tmp_path):
+    nxt = tmp_path / "next.json"
+    cmd = '"%s" -c "import sys,json; d=json.load(sys.stdin); print(\'ORIG \' + d[\'session_id\'])"' % sys.executable.replace("\\", "/")
+    nxt.write_text(json.dumps({"statusLine": {"type": "command", "command": cmd}}))
+    p = run_status(tmp_path, SL_IN, "--next", str(nxt))
+    assert p.stdout.decode().strip() == "ORIG s1"
+    assert (tmp_path / "status" / "s1.json").exists()
+
+
+def test_statusline_without_limits_and_bad_input(tmp_path):
+    p = run_status(tmp_path, {"session_id": "s2", "model": {"id": "claude-sonnet-4-5"}})
+    assert p.stdout.decode().strip() == "sonnet-4-5"
+    assert "limits" not in json.loads((tmp_path / "status" / "s2.json").read_text())
+    p = run_status(tmp_path, {"session_id": "../evil"})
+    assert p.returncode == 0 and not (tmp_path / "evil.json").exists()
+
+
+def test_install_statusline_keeps_and_restores_original(inst, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path)); monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    settings_path = str(tmp_path / "settings.json")
+    orig = {"type": "command", "command": "orca-statusline.sh", "padding": 1}
+    out, keep = inst.with_statusline({"statusLine": orig, "model": "x"}, settings_path, python="py")
+    assert keep == {"statusLine": orig}
+    assert "claude_office_statusline.py" in out["statusLine"]["command"] and out["statusLine"]["padding"] == 1
+    inst.save_next(settings_path, keep)
+    again, keep2 = inst.with_statusline(out, settings_path, python="py")   # 다시 걸어도 원래 것을 덮지 않는다
+    assert keep2 is None
+    back, restored = inst.without_statusline(again, settings_path)
+    assert restored and back["statusLine"] == orig and back["model"] == "x"
+
+
+def test_install_statusline_when_none_before(inst, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path)); monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    sp = str(tmp_path / "s.json")
+    out, keep = inst.with_statusline({}, sp, python="py")
+    inst.save_next(sp, keep)
+    back, restored = inst.without_statusline(out, sp)
+    assert restored and "statusLine" not in back
+    assert inst.without_statusline({"statusLine": {"command": "other"}}, sp) == ({"statusLine": {"command": "other"}}, False)

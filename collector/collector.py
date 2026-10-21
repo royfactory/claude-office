@@ -127,6 +127,43 @@ def hook_event(sid, started_at):
     return dict(ev, ts=ts)
 
 
+# 선택 기능: hooks/claude_office_statusline.py 를 상태 표시줄로 걸면 세션별 사용 한도·컨텍스트가 여기 쌓인다.
+STATUS_DIR = os.environ.get("CLAUDE_OFFICE_STATUS") or os.path.join(os.path.expanduser("~"), ".claude-office", "status")
+STATUS_FRESH_SEC = 8 * 24 * 3600   # 주간 한도 창(7일)보다 오래된 파일은 버린다
+
+
+def status_line(sid, now):
+    """그 세션의 상태 표시줄 요약 {ts, model, limits, ctx}. 없거나 너무 오래됐으면 None."""
+    if not sid or not _SID_FILE.match(sid):
+        return None
+    try:
+        with open(os.path.join(STATUS_DIR, sid + ".json"), encoding="utf-8") as f:
+            st = json.load(f)
+        ts = float(st.get("ts", 0))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if now - ts > STATUS_FRESH_SEC:
+        return None
+    out = {"ts": ts}
+    lim = st.get("limits")
+    if isinstance(lim, dict):
+        clean = {}
+        for k in ("five_hour", "seven_day"):
+            w = lim.get(k)
+            if isinstance(w, dict) and isinstance(w.get("pct"), (int, float)):
+                resets = w.get("resets") if isinstance(w.get("resets"), (int, float)) else None
+                if resets and resets < now:   # 이미 초기화된 창의 값은 0 으로 본다
+                    clean[k] = {"pct": 0, "resets": None}
+                else:
+                    clean[k] = {"pct": round(float(w["pct"]), 1), "resets": resets}
+        if clean:
+            out["limits"] = clean
+    ctx = st.get("ctx")
+    if isinstance(ctx, dict) and isinstance(ctx.get("size"), (int, float)) and ctx["size"] > 0:
+        out["ctxSize"] = int(ctx["size"])
+    return out
+
+
 def claude_roots():
     roots = []
     for g in ROOT_GLOBS:
@@ -648,6 +685,10 @@ class Collector:
             since = (ev["ts"] if approval else None) or (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
             subs = self.subagents(jsonl, tr, now) if jsonl else []
             project, worktree = project_of(cwd)
+            sl = status_line(sid, now)
+            usage = tr.usage()
+            if sl and sl.get("ctxSize") and usage.get("ctx"):   # 상태 표시줄이 알려 준 창 크기가 짐작보다 정확하다
+                usage["ctx"] = dict(usage["ctx"], max=sl["ctxSize"])
             sock = s.get("messagingSocketPath") or ""
             if sock:
                 socks[sid] = sock
@@ -671,7 +712,8 @@ class Collector:
                 "say": self.said(tr),
                 "mode": tr.mode,
                 "branch": tr.branch,
-                **tr.usage(),
+                **usage,
+                "limits": dict(sl["limits"], ts=sl["ts"]) if sl and sl.get("limits") else None,
                 "timeline": tr.timeline(now),
                 "bg": [{"tool": b["tool"], "target": b["target"], "ts": b.get("ts")} for b in bg][:5],
                 "todos": list(tr.tasks.values())[:30],

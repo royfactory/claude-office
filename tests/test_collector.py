@@ -1171,3 +1171,20 @@ def test_project_of_does_not_climb_to_home_repo(collector, home):
     d.mkdir(parents=True)
     collector._project_cache.clear()
     assert collector.project_of(str(d)) == ("x", "")
+
+
+# ---------- 상태 표시줄 요약(사용 한도) ----------
+
+def test_status_line_reads_limits_and_drops_passed_windows(collector, tmp_path, monkeypatch):
+    monkeypatch.setattr(collector, "STATUS_DIR", str(tmp_path))
+    now = time.time()
+    (tmp_path / "s1.json").write_text(json.dumps({"v": 1, "ts": now - 10, "limits": {
+        "five_hour": {"pct": 42.2, "resets": now - 5}, "seven_day": {"pct": 18, "resets": now + 3600}},
+        "ctx": {"pct": 19, "size": 1000000}}))
+    st = collector.status_line("s1", now)
+    assert st["limits"]["five_hour"] == {"pct": 0, "resets": None}       # 초기화가 지난 창
+    assert st["limits"]["seven_day"] == {"pct": 18.0, "resets": now + 3600}
+    assert st["ctxSize"] == 1000000
+    assert collector.status_line("nope", now) is None and collector.status_line("../x", now) is None
+    (tmp_path / "old.json").write_text(json.dumps({"ts": now - 9 * 24 * 3600, "limits": {}}))
+    assert collector.status_line("old", now) is None

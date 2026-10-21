@@ -1015,6 +1015,43 @@ function select(key) {
   if (state) { const fl = floors(); renderPeople(fl.find(f => f.project === floorKey), assignCharacters(cfg, state.agents)); }
 }
 
+// ---------- 사용 한도 ----------
+// 상태 표시줄 스크립트(hooks/claude_office_statusline.py)를 건 컴퓨터의 세션만 값이 있다. 같은 계정의 세션은 주간 창의
+// 초기화 시각이 같으므로 (컴퓨터, 주간 초기화 시각)으로 묶고, 묶음마다 가장 최근에 받은 값을 보여 준다
+function untilText(sec) {
+  if (sec <= 0) return "곧";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return (d ? `${d}일 ${h}시간` : h ? `${h}시간 ${m}분` : `${Math.max(1, m)}분`) + " 뒤 초기화";
+}
+function untilShort(sec) {   // 칸이 좁아 큰 단위 하나만(자세한 건 마우스를 올리면)
+  if (sec <= 0) return "곧";
+  return sec >= 86400 ? `${Math.floor(sec / 86400)}일 뒤` : sec >= 3600 ? `${Math.floor(sec / 3600)}시간 뒤` : `${Math.max(1, Math.floor(sec / 60))}분 뒤`;
+}
+function renderLimits() {
+  const now = Date.now() / 1000 - skew, groups = new Map();
+  for (const a of state.agents) {
+    const l = a.limits; if (!l || (!l.five_hour && !l.seven_day)) continue;
+    const key = a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
+    const g = groups.get(key) || { host: a.host, l, projects: new Set() };
+    if ((l.ts || 0) > (g.l.ts || 0)) g.l = l;
+    g.projects.add(a.project); groups.set(key, g);
+  }
+  // 초기화가 지나 값이 0 이 된 오래된 묶음(같은 계정의 예전 창)은 새 값이 있으면 뺀다
+  let list = [...groups.values()];
+  if (list.some(g => g.l.seven_day && g.l.seven_day.resets)) list = list.filter(g => (g.l.seven_day && g.l.seven_day.resets) || now - (g.l.ts || 0) < 3600);
+  const perHost = new Map(); for (const g of list) perHost.set(g.host, (perHost.get(g.host) || 0) + 1);
+  const row = (label, w) => {
+    if (!w) return "";
+    const p = Math.round(w.pct), lv = p >= 85 ? "hi" : p >= 65 ? "mid" : "lo";
+    return `<div class="lr" data-lv="${lv}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, p)}%"></i></span><em>${p}%</em>
+<span class="rs" title="${w.resets ? untilText(w.resets - now) : ""}">${w.resets ? untilShort(w.resets - now) : ""}</span></div>`;
+  };
+  const html = list.map((g, i) => `<div class="acct"><h4><i class="fa-solid fa-gauge-high"></i>사용 한도<small title="${esc([...g.projects].join(", "))}">${esc(g.host)}${perHost.get(g.host) > 1 ? ` · ${esc([...g.projects][0])} 외` : ""}</small></h4>
+    ${row("5시간", g.l.five_hour)}${row("주간", g.l.seven_day)}</div>`).join("");
+  $("limits").hidden = !html;
+  setHTML($("limits"), html);
+}
+
 const MAX_WINDOWS = 8;
 function renderFloors(fl) {
   const now = Date.now() / 1000 - skew;
@@ -1033,6 +1070,7 @@ function renderFloors(fl) {
       <span class="wins">${wins}</span></span></div>`;
   }).join("") || `<div class="muted" style="padding:16px">보이는 세션이 없습니다.</div>`);
   tickTimes($("floors"), now);
+  renderLimits();
   setHTML($("lobbyHosts"), state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" "));
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
@@ -1145,6 +1183,8 @@ function sessionMeta(a) {
   if (a.branch) bits.push(`<span title="git 브랜치"><i class="fa-solid fa-code-branch"></i>${esc(a.branch)}</span>`);
   const ln = a.lines || [0, 0];
   if (ln[0] || ln[1]) bits.push(`<span title="이 세션이 Edit·Write 로 더하고 뺀 줄"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
+  const lm = a.limits || {};
+  if (lm.five_hour || lm.seven_day) bits.push(`<span title="이 세션 계정의 사용 한도(상태 표시줄이 알려 준 값)"><i class="fa-solid fa-gauge-high"></i>${lm.five_hour ? `5시간 ${Math.round(lm.five_hour.pct)}%` : ""}${lm.five_hour && lm.seven_day ? " · " : ""}${lm.seven_day ? `주간 ${Math.round(lm.seven_day.pct)}%` : ""}</span>`);
   if (a.outTokens) bits.push(`<span title="이 세션이 쓴 출력 토큰(기록이 아주 크면 끝부분만 센 값)"><i class="fa-solid fa-feather"></i>출력 ${fmtTok(a.outTokens)}</span>`);
   const p = ctxPct(a);
   const bar = p == null ? "" : `<div class="ctxbar" data-lv="${ctxLevel(p)}"><div class="row"><b>컨텍스트</b><span>${fmtTok(a.ctx.used)} / ${fmtTok(a.ctx.max)} · ${p}%</span></div>

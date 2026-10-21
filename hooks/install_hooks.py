@@ -6,12 +6,15 @@
   python3 hooks/install_hooks.py --remove        백업을 만든 뒤 이 훅만 뺀다
   --approve                                      대시보드 승인 훅(claude_office_approve.py)도 함께 넣는다.
                                                  다시 --apply 할 때 빼면 승인 훅은 빠진다
+  --statusline                                   사용 한도를 읽는 상태 표시줄(claude_office_statusline.py)도 건다.
+                                                 원래 상태 표시줄은 따로 적어 두고 그대로 이어 돌린다. --remove 하면 원래대로
   --settings <경로>                              기본 ~/.claude/settings.json 대신 다른 설정 파일
 
 이 스크립트가 넣은 항목은 명령에 claude_office_hook.py 가 들어 있는 것으로 알아본다. 다시 --apply 하면
 그 항목만 지금 경로로 바꿔 끼우고, 다른 훅·설정은 손대지 않는다. 표준 라이브러리만 쓴다(Python 3.9).
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -20,7 +23,9 @@ import time
 
 HOOK_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_office_hook.py")
 APPROVE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_office_approve.py")
+STATUS_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_office_statusline.py")
 MARKS = ("claude_office_hook.py", "claude_office_approve.py")
+STATUS_MARK = "claude_office_statusline.py"
 TIMEOUT = 5   # 초. 훅은 보통 0.1초 안에 끝난다
 APPROVE_TIMEOUT = 600   # 승인 훅은 대시보드의 결정을 기다린다(그동안에도 터미널 권한 창은 떠 있다)
 
@@ -116,6 +121,60 @@ def merged(settings, python=None, script=None, approve=False):
     return out
 
 
+# ---------- 상태 표시줄 ----------
+
+def next_file(settings_path):
+    """설정 파일마다 원래 상태 표시줄을 적어 두는 곳(~/.claude-office/statusline-next/<설정 경로 해시>.json)."""
+    h = hashlib.sha1(os.path.abspath(settings_path).encode("utf-8")).hexdigest()[:12]
+    return os.path.join(os.path.expanduser("~"), ".claude-office", "statusline-next", h + ".json")
+
+
+def _q(p):
+    # 상태 표시줄 명령은 셸로 돈다. Windows(Git Bash)에서도 되게 / 로 바꾸고 큰따옴표로 감싼다
+    return '"%s"' % (p.replace("\\", "/") if os.name == "nt" else p)
+
+
+def is_our_status(sl):
+    return isinstance(sl, dict) and isinstance(sl.get("command"), str) and STATUS_MARK in sl["command"]
+
+
+def with_statusline(settings, settings_path, python=None):
+    """(바꾼 설정, 적어 둘 원래 상태 표시줄 또는 None=이미 우리 것). 원래의 padding 등 다른 키는 옮겨 둔다."""
+    out = json.loads(json.dumps(settings))
+    cur = out.get("statusLine")
+    keep = None if is_our_status(cur) else {"statusLine": cur}
+    base = {k: v for k, v in cur.items() if k not in ("type", "command")} if isinstance(cur, dict) else {}
+    out["statusLine"] = dict(base, type="command",
+                             command="%s %s --next %s" % (_q(python or sys.executable), _q(STATUS_SCRIPT), _q(next_file(settings_path))))
+    return out, keep
+
+
+def without_statusline(settings, settings_path):
+    """우리 상태 표시줄이면 적어 둔 원래 것으로 되돌린다. (바꾼 설정, 되돌렸는지)."""
+    if not is_our_status(settings.get("statusLine")):
+        return settings, False
+    out = json.loads(json.dumps(settings))
+    orig = None
+    try:
+        with open(next_file(settings_path), encoding="utf-8") as f:
+            orig = json.load(f).get("statusLine")
+    except (OSError, ValueError, AttributeError):
+        pass
+    if orig:
+        out["statusLine"] = orig
+    else:
+        out.pop("statusLine", None)
+    return out, True
+
+
+def save_next(settings_path, keep):
+    p = next_file(settings_path)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(keep, f, ensure_ascii=False, indent=2)
+    return p
+
+
 def load(path):
     if not os.path.exists(path):
         return {}
@@ -152,6 +211,7 @@ def main(argv=None):
     g.add_argument("--dry-run", action="store_true", help="보여 주기만 한다(기본)")
     ap.add_argument("--python", help="훅을 돌릴 파이썬(기본: 지금 이 스크립트를 돌린 파이썬)")
     ap.add_argument("--approve", action="store_true", help="대시보드 승인 훅도 넣는다(.env 의 CLAUDE_OFFICE_APPROVE=on 도 필요)")
+    ap.add_argument("--statusline", action="store_true", help="사용 한도를 읽는 상태 표시줄도 건다(원래 것은 이어서 돈다)")
     args = ap.parse_args(argv)
     path = os.path.abspath(os.path.expanduser(args.settings))
 
@@ -164,11 +224,12 @@ def main(argv=None):
     if args.remove:
         out = json.loads(json.dumps(settings))
         n = strip_ours(out)
-        if not n:
-            print("넣어 둔 claude-office 훅이 없다. 바꾸지 않았다: %s" % path)
+        out, restored = without_statusline(out, path)
+        if not n and not restored:
+            print("넣어 둔 claude-office 훅·상태 표시줄이 없다. 바꾸지 않았다: %s" % path)
             return 0
         backup = save(path, out)
-        print("claude-office 훅 %d개를 뺐다: %s" % (n, path))
+        print("claude-office 훅 %d개를 뺐다%s: %s" % (n, ", 상태 표시줄은 원래대로 되돌렸다" if restored else "", path))
         if backup:
             print("백업: %s" % backup)
         return 0
@@ -177,9 +238,17 @@ def main(argv=None):
         print("훅 스크립트를 찾지 못했다: %s" % HOOK_SCRIPT, file=sys.stderr)
         return 1
     out = merged(settings, args.python, approve=args.approve)
+    keep = None
+    if args.statusline:
+        if not os.path.isfile(STATUS_SCRIPT):
+            print("상태 표시줄 스크립트를 찾지 못했다: %s" % STATUS_SCRIPT, file=sys.stderr)
+            return 1
+        out, keep = with_statusline(out, path, args.python)
     if args.apply:
+        if keep is not None:
+            print("원래 상태 표시줄을 적어 두었다(이어서 돈다): %s" % save_next(path, keep))
         backup = save(path, out)
-        print("claude-office 훅을 넣었다: %s" % path)
+        print("claude-office 훅%s을 넣었다: %s" % ("·상태 표시줄" if args.statusline else "", path))
         if backup:
             print("백업: %s" % backup)
         print("이미 열린 세션에는 바로 적용되지 않을 수 있다. 새 Claude Code 세션의 /hooks 에서 확인한다.")
@@ -187,6 +256,9 @@ def main(argv=None):
 
     print("[미리 보기] 아래 훅을 %s 의 \"hooks\" 에 더한다. 기존 훅은 그대로 둔다." % path)
     print(json.dumps({"hooks": groups_to_add(args.python, approve=args.approve)}, ensure_ascii=False, indent=2))
+    if args.statusline:
+        print("[미리 보기] \"statusLine\" 을 다음으로 바꾼다(원래 것은 %s 에 적어 두고 이어서 돌린다):" % next_file(path))
+        print(json.dumps(out["statusLine"], ensure_ascii=False, indent=2))
     print("바꾸지 않았다. 넣으려면 --apply, 나중에 빼려면 --remove.")
     return 0
 

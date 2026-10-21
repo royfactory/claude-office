@@ -117,6 +117,18 @@
   .lobby .doors { width: 56px; height: 26px; border: 2px solid #475569; border-bottom: 0; background: linear-gradient(90deg, #7dd3fc33 49%, #475569 49%, #475569 51%, #7dd3fc33 51%); }
   .lobby small { color: var(--text-dim2); font-size: 10px; letter-spacing: .12em; }
   #lobbyHosts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+  /* 사용 한도(상태 표시줄을 건 컴퓨터만): 계정마다 5시간·주간 막대 */
+  .limits { flex: none; margin-top: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 11px; }
+  .limits[hidden] { display: none; }
+  .limits h4 { margin: 0 0 3px; font-size: 11px; color: var(--text-dim); display: flex; gap: 6px; align-items: center; }
+  .limits h4 small { margin-left: auto; color: var(--text-dim2); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+  .limits .acct + .acct { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .limits .lr { display: grid; grid-template-columns: 30px 1fr 30px 44px; gap: 6px; align-items: center; margin: 2px 0; }
+  .limits .lr b { color: var(--text-dim); font-weight: 600; } .limits .lr em { font-style: normal; text-align: right; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+  .limits .lt { height: 6px; border-radius: 3px; background: var(--bg-2); border: 1px solid var(--border); overflow: hidden; }
+  .limits .lt i { display: block; height: 100%; background: var(--good); }
+  .limits .lr[data-lv=mid] .lt i { background: var(--warning); } .limits .lr[data-lv=hi] .lt i { background: var(--bad); }
+  .limits .rs { color: var(--text-dim2); font-size: 10px; text-align: right; white-space: nowrap; }
   .street { flex: none; height: 6px; background: repeating-linear-gradient(90deg, #475569 0 14px, transparent 14px 22px); border-radius: 3px; margin-top: 3px; }
 
   /* 무대 */
@@ -446,6 +458,7 @@
       <div class="tower"><div id="floors"></div><div id="car"><i class="fa-solid fa-elevator"></i></div></div>
       <div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts"></span></div>
       <div class="street"></div>
+      <div class="limits" id="limits" hidden></div>
     </div>
   </aside>
 
