@@ -8,6 +8,8 @@
                                                  한 번 넣으면 다음 --apply 에서 빠뜨려도 남는다(빼려면 --no-approve)
   --statusline                                   사용 한도를 읽는 상태 표시줄(claude_office_statusline.py)도 건다.
                                                  원래 상태 표시줄은 따로 적어 두고 그대로 이어 돌린다. --remove 하면 원래대로
+  --rule                                         그 설정 폴더의 CLAUDE.md(전역 지침)에 '할 일 체크리스트' 규칙을 덧붙인다.
+                                                 이미 있으면(@다른 파일로 불러오는 것까지 한 단계 확인) 그대로 둔다. 백업을 남긴다
   --todo-tools                                   "env" 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣어 할 일 도구(TaskCreate…)를 켠다.
                                                  새 모델은 이게 없으면 할 일 도구가 빠져 체크리스트가 생기지 않는다. --remove 는 건드리지 않는다
   --settings <경로>                              기본 ~/.claude/settings.json 대신 다른 설정 파일
@@ -19,6 +21,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -189,6 +192,50 @@ def save_next(settings_path, keep):
 
 TODO_ENV = "CLAUDE_CODE_ENABLE_TODO_TOOLS"
 
+# 대시보드 「안내」 탭의 문장과 같다(hub/static/office3d.js 의 CHECKLIST_RULE)
+RULE = ("## 할 일 체크리스트\n\n"
+        "- 단계가 2개 이상인 작업은 시작할 때 할 일 도구(`TaskCreate`, 없으면 `TodoWrite`)로 단계 목록을 만들고,\n"
+        "  단계를 시작하고 끝낼 때마다 `TaskUpdate`로 상태(진행 중·완료)를 바꾼다. 한 번에 끝나는 질문·작은 수정에는 만들지 않는다.\n")
+
+
+def claude_md(settings_path):
+    """설정 파일과 같은 폴더의 CLAUDE.md(그 설정 폴더의 전역 지침)."""
+    return os.path.join(os.path.dirname(os.path.abspath(settings_path)), "CLAUDE.md")
+
+
+def has_rule(md_path):
+    """CLAUDE.md 에 할 일 체크리스트 규칙이 있는지. '@경로' 로 불러오는 파일은 한 단계만 따라간다."""
+    try:
+        with open(md_path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except OSError:
+        return False
+    for inc in re.findall(r"(?m)^@(\S+)", text):
+        try:
+            with open(os.path.expanduser(inc), encoding="utf-8-sig") as f:
+                text += "\n" + f.read()
+        except OSError:
+            pass
+    return "TaskCreate" in text or "TodoWrite" in text
+
+
+def add_rule(md_path):
+    """규칙이 없으면 백업을 남기고 끝에 덧붙인다. (덧붙였는지, 백업 경로)."""
+    if has_rule(md_path):
+        return False, None
+    text, backup = "", None
+    if os.path.exists(md_path):
+        with open(md_path, encoding="utf-8-sig") as f:
+            text = f.read()
+        backup = "%s.bak-%s" % (md_path, time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(md_path, backup)
+    os.makedirs(os.path.dirname(md_path), exist_ok=True)
+    # 기존 내용과 빈 줄 하나를 두고 붙인다
+    sep = "" if not text else ("" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n")
+    with open(md_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text + sep + RULE)
+    return True, backup
+
 
 def with_todo_tools(settings):
     """settings 의 "env" 에 할 일 도구를 켜는 값을 넣는다(다른 env 는 그대로)."""
@@ -237,6 +284,7 @@ def main(argv=None):
     ap.add_argument("--no-approve", action="store_true", help="이미 넣은 대시보드 승인 훅을 뺀다")
     ap.add_argument("--statusline", action="store_true", help="사용 한도를 읽는 상태 표시줄도 건다(원래 것은 이어서 돈다)")
     ap.add_argument("--todo-tools", action="store_true", help="env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1(할 일 도구 켜기)")
+    ap.add_argument("--rule", action="store_true", help="그 설정 폴더의 CLAUDE.md 에 할 일 체크리스트 규칙을 덧붙인다(없을 때만)")
     args = ap.parse_args(argv)
     path = os.path.abspath(os.path.expanduser(args.settings))
 
@@ -275,6 +323,11 @@ def main(argv=None):
     if args.todo_tools:
         out = with_todo_tools(out)
     if args.apply:
+        if args.rule:
+            md = claude_md(path)
+            added, mbak = add_rule(md)
+            print(("할 일 체크리스트 규칙을 덧붙였다: %s" % md) + (" (백업 %s)" % mbak if mbak else "") if added
+                  else "할 일 체크리스트 규칙은 이미 있다: %s" % md)
         if keep is not None:
             print("원래 상태 표시줄을 적어 두었다(이어서 돈다): %s" % save_next(path, keep))
         backup = save(path, out)
@@ -288,6 +341,9 @@ def main(argv=None):
     print(json.dumps({"hooks": groups_to_add(args.python, approve=approve)}, ensure_ascii=False, indent=2))
     if args.todo_tools:
         print("[미리 보기] \"env\" 에 %s=1 을 넣는다(새 세션부터 할 일 도구가 켜진다)" % TODO_ENV)
+    if args.rule:
+        md = claude_md(path)
+        print("[미리 보기] %s" % ("규칙이 이미 있어 그대로 둔다: " + md if has_rule(md) else "%s 끝에 덧붙인다:\n%s" % (md, RULE)))
     if args.statusline:
         print("[미리 보기] \"statusLine\" 을 다음으로 바꾼다(원래 것은 %s 에 적어 두고 이어서 돌린다):" % next_file(path))
         print(json.dumps(out["statusLine"], ensure_ascii=False, indent=2))

@@ -811,7 +811,14 @@ def setup_status():
         repo = ("~" + r[len(home):].replace("\\", "/")) if r.startswith(home) else r.replace("\\", "/")
     except OSError:
         pass
-    val = {"repo": repo[:200], "os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
+    # 이 수집기를 돌리는 파이썬(창 없는 pythonw 대신 같은 폴더의 python). 점검표가 이걸로 명령을 만든다 —
+    # Windows 는 py 실행기가 없거나(Anaconda 등) 다른 파이썬일 수 있다
+    exe = sys.executable or ""
+    if WINDOWS and os.path.basename(exe).lower() == "pythonw.exe":
+        alt = os.path.join(os.path.dirname(exe), "python.exe")
+        exe = alt if os.path.exists(alt) else exe
+    py = ("~" + exe[len(home):]) if exe.startswith(home) else exe
+    val = {"repo": repo[:200], "python": py.replace("\\", "/")[:200], "os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
            "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rootsDetail": detail[:10],
            "messagesEnv": MESSAGES, "approveEnv": APPROVE}
     _setup_cache.update(at=time.time(), val=val)

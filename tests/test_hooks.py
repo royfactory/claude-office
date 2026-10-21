@@ -599,3 +599,35 @@ def test_install_apply_keeps_existing_approve_hook_unless_no_approve(inst, tmp_p
     assert inst.main(["--settings", str(sp), "--no-approve", "--apply", "--python", "py"]) == 0
     data = json.loads(sp.read_text())
     assert not inst.has_approve(data) and len(data["hooks"]["PermissionRequest"]) == 1
+
+
+# ---------- --rule: 체크리스트 규칙을 CLAUDE.md 에 ----------
+
+def test_add_rule_appends_once_with_backup(inst, tmp_path):
+    md = tmp_path / "CLAUDE.md"
+    md.write_text("# 내 지침\n- 기존 줄", encoding="utf-8")
+    added, backup = inst.add_rule(str(md))
+    assert added and backup and open(backup, encoding="utf-8").read() == "# 내 지침\n- 기존 줄"
+    text = md.read_text(encoding="utf-8")
+    assert text.startswith("# 내 지침\n- 기존 줄\n\n## 할 일 체크리스트") and text.count("TaskCreate") == 1
+    assert inst.add_rule(str(md)) == (False, None)          # 두 번째는 그대로
+
+
+def test_add_rule_follows_include_and_creates_new(inst, tmp_path):
+    base = tmp_path / "base.md"
+    base.write_text("## 할 일 체크리스트\n- TaskCreate 를 쓴다\n", encoding="utf-8")
+    prof = tmp_path / "prof" / "CLAUDE.md"
+    prof.parent.mkdir()
+    prof.write_text(f"@{base}\n", encoding="utf-8")
+    assert inst.add_rule(str(prof)) == (False, None) and prof.read_text(encoding="utf-8") == f"@{base}\n"
+    new = tmp_path / "new" / "CLAUDE.md"
+    assert inst.add_rule(str(new))[0] and new.read_text(encoding="utf-8") == inst.RULE
+
+
+def test_install_cli_rule_uses_settings_folder(inst, tmp_path):
+    sp = tmp_path / "home" / "settings.json"
+    sp.parent.mkdir()
+    sp.write_text("{}")
+    assert inst.main(["--settings", str(sp), "--rule", "--todo-tools", "--apply", "--python", "py"]) == 0
+    assert "TaskUpdate" in (tmp_path / "home" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert json.loads(sp.read_text())["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"] == "1"

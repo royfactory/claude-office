@@ -1173,8 +1173,8 @@ function avatarSmall(ch, st) {
 const CHECKLIST_RULE = "## 할 일 체크리스트\n\n- 단계가 2개 이상인 작업은 시작할 때 할 일 도구(`TaskCreate`, 없으면 `TodoWrite`)로 단계 목록을 만들고,\n  단계를 시작하고 끝낼 때마다 `TaskUpdate`로 상태(진행 중·완료)를 바꾼다. 한 번에 끝나는 질문·작은 수정에는 만들지 않는다.\n";
 function ruleHint(host) {
   return `<div class="rule-hint"><p><i class="fa-solid fa-circle-info"></i> <b>${esc(host)}</b> 의 Claude 전역 지침에 할 일 체크리스트 규칙이 없어 목록이 잘 안 생깁니다.
-    그 컴퓨터의 <code>~/.claude/CLAUDE.md</code>(Windows: <code>%USERPROFILE%\\.claude\\CLAUDE.md</code>)에 아래 문장을 넣고 세션을 다시 시작하세요.</p>
-    <pre>${esc(CHECKLIST_RULE)}</pre><button class="copy" data-copy="rule"><i class="fa-solid fa-copy"></i> 문장 복사</button></div>`;
+    「안내」 탭 설정 점검 2단계의 명령 한 줄로 넣을 수 있습니다(직접 고치지 않아도 됩니다).</p>
+    <button class="copy" data-goto-tab="legend"><i class="fa-solid fa-list-check"></i> 설정 점검 열기</button></div>`;
 }
 function hostInfo(host) { return (state && state.hosts.find(h => h.host === host)) || {}; }
 function copyText(text) {
@@ -1196,7 +1196,11 @@ function setupSteps(h) {
   // 예전 수집기는 운영체제를 알려 주지 않는다 — 그때는 지금 이 화면을 보는 브라우저의 운영체제로 짐작한다
   const browserWin = /Win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
   const su = h.setup, m = state.messaging || {}, win = su ? su.os === "windows" : browserWin;
-  const py = win ? "py hooks\\install_hooks.py" : "/usr/bin/python3 hooks/install_hooks.py";
+  // Windows 는 그 수집기를 돌리는 파이썬으로 실행한다(py 실행기가 없거나 Anaconda 일 수 있다. 모르면 py)
+  const HV = win ? "$env:USERPROFILE" : "$HOME";
+  const pyPath = su && su.python ? (su.python.startsWith("~") ? HV + su.python.slice(1) : su.python) : "";
+  const py = win ? (pyPath ? `& "${pyPath.replace(/\//g, "\\")}" hooks\\install_hooks.py` : "py hooks\\install_hooks.py")
+    : "/usr/bin/python3 hooks/install_hooks.py";   // macOS 수집기는 늘 /usr/bin/python3(launchd)
   // 설정 폴더마다 명령 한 줄. 다시 --apply 하면 빠진 옵션의 훅은 빠지므로 그 폴더에 이미 넣은 것은 같이 적는다.
   // 기본 폴더(~/.claude)가 아니면 --settings 로 그 폴더의 settings.json 을 준다(홈은 셸 변수로)
   const HOMEVAR = win ? "$env:USERPROFILE" : "$HOME";
@@ -1221,8 +1225,8 @@ function setupSteps(h) {
       { ok: !!h.online, label: "허브와 연결됨", fix: win ? "그 컴퓨터에서 start.bat" : "그 컴퓨터에서 sh collector/install.sh" },
       { ok: !!su, label: "설정 점검을 지원하는 수집기", fix: reinstall }] },
     { t: "할 일 체크리스트 규칙", must: true, items: [
-      { ok: h.checklistRule === true, label: "Claude 전역 지침(CLAUDE.md)에 규칙", fix: win ? "%USERPROFILE%\\.claude\\CLAUDE.md 에 아래 문장 넣기" : "~/.claude/CLAUDE.md 에 아래 문장 넣기", copy: CHECKLIST_RULE, copyLabel: "문장 복사" },
-      { ok: frac(su && su.todoTools, su && su.roots), label: `할 일 도구를 켠 설정 폴더 ${su ? (su.todoTools ?? "?") : "?"}/${su ? su.roots : "?"}곳 (새 모델은 기본으로 꺼져 있음)`, fix: "claude-office 저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터", copy: cmd("todoTools", "--todo-tools") }],
+      { ok: h.checklistRule === true, label: "Claude 전역 지침(CLAUDE.md)에 규칙", fix: "claude-office 폴더에서 실행 — CLAUDE.md 끝에 규칙을 덧붙인다(이미 있으면 그대로, 백업을 남김). 할 일 도구 켜기도 함께", copy: inRepo(rowCmd(rows.find(r => r.label === "~/.claude") || { label: "~/.claude" }, ["--rule", "--todo-tools"])) },
+      { ok: frac(su && su.todoTools, su && su.roots), label: `할 일 도구를 켠 설정 폴더 ${su ? (su.todoTools ?? "?") : "?"}/${su ? su.roots : "?"}곳 (새 모델은 기본으로 꺼져 있음)`, fix: "claude-office 저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터", copy: cmd("todoTools", "--rule", "--todo-tools") }],
       note: `지금 할 일 목록이 있는 세션 ${mine.filter(a => a.todos && a.todos.length).length}/${mine.length}개 · 둘 다 새로 시작한 세션부터 적용` },
     { t: "승인 대기 감지(훅)", items: [
       { ok: frac(su && su.hooks, su && su.roots), label: `훅을 넣은 설정 폴더 ${su ? su.hooks : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행(설정 폴더마다 한 줄)", copy: cmd("hooks") }] },
@@ -1296,6 +1300,7 @@ async function enableConfig(key, b) {
   b.disabled = false;
 }
 document.addEventListener("click", e => {
+  const gt = e.target.closest("[data-goto-tab]"); if (gt) { showTab(gt.dataset.gotoTab); return; }
   const en = e.target.closest("[data-enable]"); if (en) { enableConfig(en.dataset.enable, en); return; }
   const b = e.target.closest("[data-copy-text]"); if (!b) return;
   const label = b.innerHTML;

@@ -1219,6 +1219,7 @@ def test_setup_status_reports_repo_location_under_home(collector, home, monkeypa
     monkeypatch.setattr(collector, "ROOT_GLOBS", [str(home / ".claude")])
     collector._setup_cache["val"] = None
     assert collector.setup_status()["repo"] == "~/work/claude-office"
+    assert collector.setup_status()["python"]   # 이 수집기를 돌리는 파이썬(점검표가 Windows 명령에 쓴다)
 
 
 def test_profile_of_labels(collector, home):

@@ -122,7 +122,13 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 
 ### 꼭 할 것: Claude 전역 지침에 체크리스트 규칙 넣기
 
-대시보드의 **할 일 체크리스트**는 각 세션의 Claude 가 할 일 도구로 목록을 만들어야 생깁니다. Claude 는 이걸 늘 만들지는 않으니, **세션을 띄우는 컴퓨터마다** Claude 전역 지침 `~/.claude/CLAUDE.md`(Windows: `%USERPROFILE%\.claude\CLAUDE.md`)에 다음을 넣습니다. 새로 시작하거나 다시 연 세션부터 적용됩니다.
+대시보드의 **할 일 체크리스트**는 각 세션의 Claude 가 할 일 도구로 목록을 만들어야 생깁니다. Claude 는 이걸 늘 만들지는 않으니, **세션을 띄우는 컴퓨터마다** Claude 전역 지침 `~/.claude/CLAUDE.md`(Windows: `%USERPROFILE%\.claude\CLAUDE.md`)에 규칙을 넣습니다. 직접 고칠 필요 없이 저장소 폴더에서 한 줄이면 됩니다(끝에 덧붙이고 백업을 남김, 이미 있으면 그대로, 할 일 도구 켜기도 함께):
+
+```bash
+/usr/bin/python3 hooks/install_hooks.py --rule --todo-tools --apply      # Windows: py hooks\install_hooks.py --rule --todo-tools --apply
+```
+
+새로 시작하거나 다시 연 세션부터 적용됩니다. 넣는 문장은 이것입니다:
 
 ```markdown
 ## 할 일 체크리스트

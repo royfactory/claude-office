@@ -103,15 +103,17 @@ $Hub = (Select-String -Path $AppEnv -Pattern '^CLAUDE_OFFICE_HUB=(.*)$' | Select
 if (-not $Hub) { $Hub = "http://127.0.0.1:3006" }
 Write-Host "[collector] 설치함 → $Hub (python: $PyW, 로그 $Log)"
 
-# Claude 전역 지침에 '할 일 체크리스트' 규칙이 없으면 넣을 문장을 보여 준다(대시보드의 할 일 목록이 이걸로 생긴다)
+# Claude 전역 지침에 '할 일 체크리스트' 규칙이 없으면 넣는 명령을 보여 준다(대시보드의 할 일 목록이 이걸로 생긴다)
 $Rule = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
 if (-not ((Test-Path $Rule) -and (Select-String -Path $Rule -Pattern "TaskCreate|TodoWrite" -Quiet))) {
     Write-Host ""
-    Write-Host "[claude-office] 할 일 체크리스트를 보려면 Claude 전역 지침($Rule)에 아래 문장을 넣으세요." -ForegroundColor Yellow
-    Write-Host "               (새로 시작한 세션부터 적용, 대시보드 '안내' 탭에도 같은 문장과 복사 버튼이 있습니다)"
+    Write-Host "[claude-office] Claude 전역 지침($Rule)에 할 일 체크리스트 규칙이 없습니다. 아래 한 줄로 넣습니다" -ForegroundColor Yellow
+    Write-Host "               (끝에 덧붙이고 백업을 남김, 할 일 도구 켜기도 함께, 새로 시작한 세션부터):"
     Write-Host ""
-    Write-Host "## 할 일 체크리스트"
-    Write-Host ""
-    Write-Host "- 단계가 2개 이상인 작업은 시작할 때 할 일 도구(``TaskCreate``, 없으면 ``TodoWrite``)로 단계 목록을 만들고,"
-    Write-Host "  단계를 시작하고 끝낼 때마다 ``TaskUpdate``로 상태(진행 중·완료)를 바꾼다. 한 번에 끝나는 질문·작은 수정에는 만들지 않는다."
+    Write-Host ("  cd `"{0}`"; & `"{1}`" hooks\install_hooks.py --rule --todo-tools --apply" -f $Repo, $PyExe)
 }
+
+# 나머지 설정(할 일 도구 켜기·승인 훅·사용 한도…)은 대시보드가 이 컴퓨터 상태를 보고 순서대로 안내한다
+Write-Host ""
+Write-Host "[claude-office] 다음: 대시보드 '안내' 탭 맨 위 '설정 점검'을 위에서부터 따라 하세요($Hub)." -ForegroundColor Cyan
+Write-Host "               새 모델(Opus 4.7·Sonnet 4.6·Haiku 4.5 보다 뒤)은 할 일 도구가 기본으로 꺼져 있어, 2단계 명령으로 켜야 체크리스트가 생깁니다."

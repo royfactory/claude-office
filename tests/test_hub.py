@@ -957,3 +957,11 @@ def test_meta_roots_detail_is_sanitized(hub):
     rd = c.get("/api/state").json()["hosts"][0]["setup"]["rootsDetail"]
     assert rd[0] == {"label": "~/.claude", "hooks": True, "approveHook": False, "statusline": True, "todoTools": False}
     assert len(rd) == 9   # 앞 10개 중 dict 만
+
+
+def test_meta_setup_keeps_repo_and_python(hub):
+    mod, c = hub
+    c.post("/api/ingest", json={"host": "w", "agents": [], "meta": {"setup": {
+        "os": "windows", "repo": "D:/01_Developer/claude-office", "python": "~/AppData/Local/anaconda3/python.exe", "junk": "x"}}})
+    su = c.get("/api/state").json()["hosts"][0]["setup"]
+    assert su["repo"] == "D:/01_Developer/claude-office" and su["python"] == "~/AppData/Local/anaconda3/python.exe" and "junk" not in su
