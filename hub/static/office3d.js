@@ -497,6 +497,9 @@ function route(from, to, dest) {
 
 // ---------- 상태 ----------
 let state = null, cfg = null, floorKey = null, selected = null, skew = 0, dirtyLooks = false;
+// 층에 들어오면 그 층에서 가장 최근에 일한 세션을 골라 둔다(일하는 중인 세션 먼저).
+// pickPending = 이 층에서 아직 자동으로 고르지 않음, autoPicked = 지금 선택이 자동으로 고른 것
+let pickPending = true, autoPicked = false;
 const logs = new Map();       // project -> [{ts, who, text}]
 const prevTool = new Map();   // key -> "tool target"
 // 순회 재생: ▶ 이면 근무 중인 층을 아래층부터 정해진 간격으로 돌아가며 보여 준다.
@@ -668,7 +671,7 @@ function chooseFloor(fl) {
 }
 function gotoFloor(p) {
   if (p === floorKey) return;
-  floorKey = p; selected = null;
+  floorKey = p; selected = null; pickPending = true; autoPicked = false;
   history.replaceState(null, "", "#p=" + encodeURIComponent(p));
   for (const a of actors.values()) disposeActor(a);
   actors.clear(); seatOf.clear();
@@ -708,8 +711,9 @@ function apply(instant) {
   const fl = floors();
   const before = floorKey;
   chooseFloor(fl);
-  if (before !== floorKey) { for (const a of actors.values()) disposeActor(a); actors.clear(); seatOf.clear(); instant = true; }
+  if (before !== floorKey) { for (const a of actors.values()) disposeActor(a); actors.clear(); seatOf.clear(); instant = true; selected = null; pickPending = true; autoPicked = false; }
   const floor = fl.find(f => f.project === floorKey);
+  autoPick(floor);
   const agents = floor ? floor.agents : [];
   if (floor && !(transit && transit.phase === "ride")) applyTheme(floor.n, fl.length, floor.project);
   const chars = assignCharacters(cfg, state.agents);
@@ -825,7 +829,18 @@ function renderLabels() {
     lab._dirty = true;
   }
 }
+function autoPick(floor) {
+  if (!floor || !floor.agents.length) return;
+  const alive = selected && floor.agents.some(a => a.id === selected || selected.startsWith(a.id + "/"));
+  if (alive) return;
+  if (selected && autoPicked) pickPending = true;     // 자동으로 고른 세션이 끝나 사라졌으면 다음 후보
+  if (!pickPending) return;                           // 사람이 선택을 풀었으면 이 층에서는 다시 고르지 않는다
+  const best = floor.agents.slice().sort((a, b) =>
+    (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0))[0];
+  selected = best.id; pickPending = false; autoPicked = true;
+}
 function select(key) {
+  pickPending = false; autoPicked = false;   // 사람이 고르거나 풀면 자동 선택은 손을 뗀다
   selected = selected === key ? null : key;
   if (selected) showTab("session");   // 캐릭터를 고르면 그 세션 탭으로
   renderLabels();
