@@ -110,7 +110,7 @@ def main():
         data = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
         out = decide(data, load_env())
         if out:
-            sys.stdout.write(json.dumps(out))
+            sys.stdout.buffer.write(json.dumps(out).encode("utf-8"))   # ensure_ascii 라 어느 콘솔 인코딩에서도 같다
             sys.stdout.flush()
     except BaseException:
         pass

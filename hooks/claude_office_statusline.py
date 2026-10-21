@@ -120,7 +120,8 @@ def main(argv=None):
         except BaseException:
             pass
     if rec:
-        sys.stdout.write(fallback_line(rec) + "\n")
+        # Windows 기본 인코딩(cp949 등)이 아니라 UTF-8 바이트로 쓴다 — Claude Code 는 UTF-8 로 읽는다
+        sys.stdout.buffer.write((fallback_line(rec) + "\n").encode("utf-8"))
         sys.stdout.flush()
     return 0
 
