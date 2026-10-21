@@ -22,7 +22,9 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 
 | | 필요한 것 |
 |---|---|
-| 수집기 | macOS + `/usr/bin/python3`(명령줄 도구, 없으면 `xcode-select --install`). 리눅스는 직접 실행으로 동작할 것으로 보이나 시험하지 않았습니다. **Windows 는 지원하지 않습니다**(세션 생존 확인 방식 때문에 Claude 세션을 끌 수 있어 수집기가 스스로 멈춥니다). |
+| 수집기 (macOS) | `/usr/bin/python3`(명령줄 도구, 없으면 `xcode-select --install`) |
+| 수집기 (Windows) | Windows 10/11 + [Python](https://www.python.org/downloads/windows/) 3.9 이상(설치할 때 「py launcher」 포함), PowerShell(기본 설치). 관리자 권한은 필요 없습니다 |
+| 수집기 (리눅스) | `python3` 3.9 이상. 직접 실행으로 동작할 것으로 보이나 시험하지 않았습니다 |
 | 허브 | Docker(Compose) 또는 [uv](https://docs.astral.sh/uv/) |
 | 브라우저 | WebGL 이 되는 최신 브라우저 |
 
@@ -31,10 +33,16 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 ```bash
 git clone https://github.com/royfactory/claude-office.git
 cd claude-office
-cp .env.example .env
+cp .env.example .env          # Windows(PowerShell): copy .env.example .env
 ```
 
-이제 구성에 따라 A 또는 B 를 따릅니다.
+이제 구성에 따라 A 또는 B 를 따릅니다. 수집기 설치 명령은 OS 마다 다릅니다.
+
+| OS | 수집기 설치·갱신 | 상태 / 내리기 |
+|---|---|---|
+| macOS | `sh collector/install.sh` | `sh collector/install.sh --status` / `--uninstall` |
+| Windows | `powershell -ExecutionPolicy Bypass -File collector\install.ps1` | 같은 명령 뒤에 `-Status` / `-Uninstall` |
+| 리눅스 | 아래 「운영」의 직접 실행 | |
 
 ### A. 한 컴퓨터에서 다 돌리기 (가장 간단)
 
@@ -42,9 +50,10 @@ cp .env.example .env
 
 ```bash
 docker compose up -d --build          # 허브 (Docker 가 없으면 아래 '허브 직접 실행')
-sh collector/install.sh               # 수집기를 상시 실행으로 등록(macOS)
-open http://127.0.0.1:3006            # 사무실 화면
+sh collector/install.sh               # 수집기를 상시 실행으로 등록(Windows 는 위 표의 install.ps1)
 ```
+
+브라우저로 `http://127.0.0.1:3006` 을 엽니다.
 
 ### B. 허브는 서버에, 수집기는 여러 컴퓨터에
 
@@ -73,9 +82,17 @@ CLAUDE_OFFICE_HOST=work-mac        # 화면에 보일 이름(선택)
 ```
 
 ```bash
-sh collector/install.sh
+sh collector/install.sh              # macOS
 sh collector/install.sh --status     # state = running, 로그에 오류가 없으면 됨
 ```
+
+```powershell
+# Windows (저장소 폴더에서 PowerShell)
+powershell -ExecutionPolicy Bypass -File collector\install.ps1
+powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Status    # 상태 Running, 로그에 오류가 없으면 됨
+```
+
+Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 등록되어 로그온할 때마다 창 없이(`pythonw`) 뜨고, 꺼지면 1분 뒤 다시 뜹니다. 코드·설정·로그는 `%USERPROFILE%\.claude-office\` 에 복사되며 `.env` 는 그 사용자만 읽을 수 있게 권한을 좁힙니다.
 
 컴퓨터마다 호스트 이름으로 구분되어 화면 왼쪽 아래 로비에 연결 상태가 뜹니다. 여러 컴퓨터에서 같은 이름의 프로젝트 폴더로 작업하면 그 세션들은 한 층에 같이 섭니다.
 
@@ -92,9 +109,9 @@ sh collector/install.sh --status     # state = running, 로그에 오류가 없�
 | `OFFICE_DATA` | 허브(직접 실행) | `./data` | 설정·이미지 저장 폴더. 도커는 볼륨 `office_data` |
 | `OFFICE_TOKEN` | 둘 다 | (없음) | 정하면 쓰기 요청(수집기 전송·설정 저장·이미지)에 필요. 관리 화면은 처음 저장할 때 물어봅니다 |
 
-`.env` 를 고친 뒤에는 허브는 `docker compose up -d`, 수집기는 `sh collector/install.sh` 를 다시 실행합니다.
+`.env` 를 고친 뒤에는 허브는 `docker compose up -d`, 수집기는 설치 명령(`install.sh` / `install.ps1`)을 다시 실행합니다.
 
-수집기가 읽는 Claude 설정 폴더는 `~/.claude` 와 Orca 프로필(`~/Library/Application Support/orca/claude-profiles/*/home`)입니다. `CLAUDE_CONFIG_DIR` 로 다른 폴더를 쓰는 세션이 있으면 `CLAUDE_OFFICE_ROOTS` 에 더합니다.
+수집기가 읽는 Claude 설정 폴더는 `~/.claude`(Windows 는 `%USERPROFILE%\.claude`)와 Orca 프로필(`~/Library/Application Support/orca/claude-profiles/*/home`)입니다. `CLAUDE_CONFIG_DIR` 로 다른 폴더를 쓰는 세션이 있으면 `CLAUDE_OFFICE_ROOTS` 에 더합니다.
 
 ## 무엇을 보내나 (개인정보)
 
@@ -130,9 +147,8 @@ sh collector/install.sh --status     # state = running, 로그에 오류가 없�
 
 | 일 | 명령 |
 |---|---|
-| 업데이트 | `git pull` 후 허브 `docker compose up -d --build`, 수집기 `sh collector/install.sh` |
-| 수집기 상태 / 내리기 | `sh collector/install.sh --status` / `--uninstall` |
-| 수집기가 무엇을 보내는지 보기 | `/usr/bin/python3 collector/collector.py --dump` |
+| 업데이트 | `git pull` 후 허브 `docker compose up -d --build`, 수집기는 설치 명령을 다시 |
+| 수집기가 무엇을 보내는지 보기 | macOS `/usr/bin/python3 collector/collector.py --dump` · Windows `py -3 collector\collector.py --dump` |
 | 허브 로그 | `docker compose logs -f hub` |
 | 허브 직접 실행(도커 없이) | `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (`.env` 를 읽고, 데이터는 `data/`) |
 | 리눅스에서 수집기 | `python3 collector/collector.py --env .env` 를 systemd 사용자 서비스 등으로 상시 실행(시험 전) |
@@ -140,7 +156,9 @@ sh collector/install.sh --status     # state = running, 로그에 오류가 없�
 ### 잘 안 될 때
 
 - **세션이 안 보임**: `--dump` 에 그 세션이 나오는지 봅니다. 안 나오면 그 세션의 `CLAUDE_CONFIG_DIR` 을 `CLAUDE_OFFICE_ROOTS` 에 더합니다.
-- **로비에 컴퓨터가 「끊김」**: `install.sh --status` 의 로그를 봅니다. `HTTP Error 401` 이면 `OFFICE_TOKEN` 이 허브와 다르고, `Connection refused`·시간 초과면 `CLAUDE_OFFICE_HUB` 주소나 허브의 `OFFICE_BIND`·방화벽을 확인합니다.
+- **Windows 에서 `install.ps1` 이 막힘**: 「스크립트를 실행할 수 없습니다」면 위처럼 `-ExecutionPolicy Bypass` 를 붙여 실행합니다. 「Python 3.9 이상을 찾지 못했다」면 python.org 설치본을 설치합니다(Microsoft Store 의 바로가기 `python` 은 쓰지 않습니다).
+- **Windows 에서 세션이 0개**: `py -3 collector\collector.py --dump` 결과를 봅니다. Claude Code 를 WSL 안에서 쓰면 세션 기록이 WSL 쪽에 있으니 수집기도 WSL(리눅스)에서 돌립니다.
+- **로비에 컴퓨터가 「끊김」**: 상태 명령(`--status` / `-Status`)의 로그를 봅니다. `HTTP Error 401` 이면 `OFFICE_TOKEN` 이 허브와 다르고, `Connection refused`·시간 초과면 `CLAUDE_OFFICE_HUB` 주소나 허브의 `OFFICE_BIND`·방화벽을 확인합니다.
 - **관리 화면에서 저장이 안 됨**: 토큰을 물으면 허브의 `OFFICE_TOKEN` 값을 넣습니다. 잘못 넣었으면 다시 저장할 때 다시 묻습니다.
 
 ## 라이선스

@@ -13,7 +13,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DOMAIN="gui/$(id -u)"
 
 if [[ "$(uname)" != "Darwin" ]]; then
-  echo "이 설치 스크립트는 macOS(launchd) 전용이다. 다른 OS 는 README 의 '직접 실행'을 본다." >&2
+  echo "이 설치 스크립트는 macOS(launchd) 전용이다. Windows 는 collector/install.ps1, 리눅스는 README 의 '운영 > 리눅스에서 수집기'를 본다." >&2
   exit 1
 fi
 

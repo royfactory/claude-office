@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""claude-office 수집기: 이 컴퓨터의 Claude Code 세션들을 읽어 허브로 보낸다(macOS, 리눅스는 시험 전).
+"""claude-office 수집기: 이 컴퓨터의 Claude Code 세션들을 읽어 허브로 보낸다(macOS·Windows, 리눅스는 시험 전).
 
 읽는 곳(읽기만 한다):
   <설정 폴더>/sessions/<pid>.json                     세션 목록·이름·idle/busy
@@ -33,16 +33,48 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-if os.name == "nt":
-    # Windows 에서는 os.kill(pid, 0) 이 '살아 있는지 확인'이 아니라 그 프로세스를 끝낸다 — Claude 세션이 꺼진다
-    sys.exit("claude-office 수집기는 Windows 를 지원하지 않습니다(세션 생존 확인 방식이 다릅니다).")
+WINDOWS = os.name == "nt"
+
+
+def pid_alive(pid):
+    """세션 프로세스가 살아 있는지 조회만 한다. 프로세스에는 아무 신호도 보내지 않는다.
+
+    Windows 에서는 os.kill(pid, 0) 이 '확인'이 아니라 TerminateProcess 라서 절대 쓰지 않는다
+    — 그대로 쓰면 Claude 세션이 꺼진다. 대신 OpenProcess + GetExitCodeProcess 로 묻는다."""
+    if pid <= 0:
+        return False
+    if WINDOWS:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        h = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION — 조회 권한만
+        if not h:
+            return ctypes.get_last_error() == 5   # ACCESS_DENIED = 있긴 한데 못 여는 프로세스
+        try:
+            code = wintypes.DWORD()
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259   # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)   # POSIX 에서 신호 0 은 보내지 않고 존재만 확인한다
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def load_env(path):
     """KEY=VALUE 파일을 읽어 아직 없는 환경변수만 채운다."""
     if not path or not os.path.isfile(path):
         return
-    with open(path) as f:
+    with open(path, encoding="utf-8-sig") as f:   # 메모장이 붙이는 BOM 도 견딘다
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -244,7 +276,7 @@ class Collector:
         m = self.metas.get(path)
         if m is None:
             try:
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     m = json.load(f)
             except (OSError, ValueError):
                 m = {}
@@ -293,10 +325,11 @@ class Collector:
         files = [(r, f) for r in claude_roots() for f in glob.glob(os.path.join(glob.escape(r), "sessions", "*.json"))]
         for root, f in files:
             try:
-                with open(f) as fh:
+                with open(f, encoding="utf-8") as fh:
                     s = json.load(fh)
-                os.kill(int(s["pid"]), 0)  # 죽은 프로세스의 파일이 남아 있을 수 있다
-            except (OSError, ValueError, KeyError, ProcessLookupError, PermissionError):
+                if not pid_alive(int(s["pid"])):  # 죽은 프로세스의 파일이 남아 있을 수 있다
+                    continue
+            except (OSError, ValueError, KeyError):
                 continue
             sid, cwd = s.get("sessionId", ""), s.get("cwd", "")
             if sid in seen:  # 같은 세션이 두 설정 폴더에 잡히면 한 번만
@@ -320,7 +353,7 @@ class Collector:
                 "pid": s.get("pid"),
                 "name": s.get("name") or os.path.basename(cwd),
                 "title": tr.title,
-                "project": os.path.basename(cwd.rstrip("/")),
+                "project": os.path.basename(cwd.rstrip("/\\")),
                 "status": status,
                 "kind": kind,
                 "tool": cur["tool"] if cur else "",
@@ -365,7 +398,17 @@ def main():
     ap.add_argument("--interval", type=float, default=1.0)
     ap.add_argument("--detail", choices=["basic", "none"], default=os.environ.get("CLAUDE_OFFICE_DETAIL") or "basic")
     ap.add_argument("--dump", action="store_true", help="한 번 모아 출력만 하고 끝낸다")
+    ap.add_argument("--log", help="출력을 이 파일에 이어 쓴다(1MB 넘으면 시작할 때 비움). Windows 작업 스케줄러용")
     args = ap.parse_args()
+    if args.log:
+        try:
+            if os.path.getsize(args.log) > 1024 * 1024:
+                open(args.log, "w").close()
+        except OSError:
+            pass
+        sys.stdout = sys.stderr = open(args.log, "a", encoding="utf-8", buffering=1)
+    elif sys.stdout is None:   # 창 없는 pythonw 로 떴는데 --log 가 없으면 출력은 버린다
+        sys.stdout = sys.stderr = open(os.devnull, "w")
 
     col = Collector(args.detail)
     if args.dump:
@@ -390,16 +433,16 @@ def main():
                 post(args.hub, {"host": args.host, "agents": agents})
                 last_sent, last_at = sig, time.time()
                 if failing:
-                    print(time.strftime("%F %T"), "허브 연결 복구", flush=True)
+                    print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False
                     cfg_at = 0.0
         except (urllib.error.URLError, OSError) as e:
             if not failing:  # 끊길 때 한 번만 남긴다(로그가 쌓이지 않게)
-                print(time.strftime("%F %T"), "허브에 보내지 못함:", e, flush=True)
+                print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브에 보내지 못함:", e, flush=True)
                 failing = True
             last_sent = None
         except Exception as e:  # 한 세션 파일이 이상해도 수집기는 죽지 않는다
-            print(time.strftime("%F %T"), "수집 오류:", repr(e), flush=True)
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집 오류:", repr(e), flush=True)
         time.sleep(args.interval if not failing else 5)
 
 
