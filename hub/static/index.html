@@ -167,9 +167,45 @@
   .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
   .live.off { color: #991b1b; } .live.off::before { background: #ef4444; }
   .topr a { background: rgba(255,255,255,.95); color: #0f172a; font-size: 12px; padding: 4px 10px; border-radius: 999px; text-decoration: none; }
-  .zoom { left: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .zoom { left: 14px; bottom: calc(var(--feedH) + 12px); transition: bottom .25s ease; display: flex; flex-direction: column; gap: 6px; }
   .zoom button { width: 34px; height: 34px; padding: 0; border-radius: 9px; background: rgba(255,255,255,.95); color: #0f172a; border: 0; font-size: 17px; }
-  .hint { right: 14px; bottom: 12px; font-size: 11px; color: #94a3b8; }
+  .hint { right: 14px; bottom: calc(var(--feedH) + 10px); transition: bottom .25s ease; font-size: 11px; color: #94a3b8; }
+  /* 최근 소식 서랍: 무대 아래에 붙는다. 열리면 무대 높이의 42% 를 쓰고, 확대 버튼·도움말은 그 위로 올라간다 */
+  .stage { --feedH: 40px; }
+  .stage.feed-open { --feedH: 42%; }
+  #feed { position: absolute; left: 0; right: 0; bottom: 0; height: var(--feedH); z-index: 7; display: flex; flex-direction: column;
+          background: rgba(9,17,33,.94); border-top: 1px solid var(--border-2); backdrop-filter: blur(6px); transition: height .25s ease; }
+  .feed-bar { flex: none; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; border: 0; border-radius: 0;
+              background: transparent; color: var(--text); font-size: 12px; text-align: left; cursor: pointer; }
+  .feed-bar:hover { background: rgba(255,255,255,.03); }
+  .feed-bar b { color: var(--text-hi); font-size: 13px; white-space: nowrap; }
+  .feed-bar .chev { color: var(--text-dim); transition: transform .25s; }
+  .stage.feed-open .feed-bar .chev { transform: rotate(180deg); }
+  .stage.feed-open .hint { display: none; }
+  .feed-bar .counts { display: flex; gap: 6px; white-space: nowrap; }
+  .feed-bar .counts span { padding: 1px 8px; border-radius: 999px; font-weight: 700; font-size: 11px; }
+  .feed-bar .counts .done { background: rgba(52,211,153,.15); color: var(--good); }
+  .feed-bar .counts .start { background: rgba(56,189,248,.15); color: var(--info); }
+  .feed-bar .latest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+  .feed-body { flex: 1; min-height: 0; display: none; flex-direction: column; padding: 0 14px 10px; }
+  .stage.feed-open .feed-body { display: flex; }
+  .feed-filter { flex: none; display: flex; gap: 6px; margin-bottom: 8px; }
+  .feed-filter button { padding: 3px 10px; font-size: 12px; border-radius: 999px; background: var(--surface); color: var(--text-dim); }
+  .feed-filter button.on { background: var(--surface-3); color: var(--text-hi); border-color: var(--brand); }
+  #feedList { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  #feedList li { display: grid; grid-template-columns: 18px 64px auto 1fr; gap: 4px 10px; align-items: center; padding: 6px 8px;
+                 border-radius: 8px; cursor: pointer; font-size: 12px; }
+  #feedList li:hover { background: var(--surface-2); }
+  #feedList li.unseen { box-shadow: inset 3px 0 0 var(--brand); }
+  #feedList .ic { text-align: center; }
+  #feedList .ic.done { color: var(--good); } #feedList .ic.start { color: var(--info); } #feedList .ic.new { color: var(--accent-alt); } #feedList .ic.end { color: var(--text-dim2); }
+  #feedList .t { color: var(--text-dim2); white-space: nowrap; }
+  #feedList .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  #feedList .who b { color: var(--text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+  #feedList .who .badge { min-width: 30px; height: 18px; font-size: 10px; }
+  #feedList .what { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #feedList .what q { color: var(--text-dim); quotes: "“" "”"; }
+  #feedList .empty { display: block; color: var(--text-dim2); cursor: default; }
   .center-msg { position: absolute; inset: 0; display: none; place-items: center; color: var(--text); font-size: 14px; text-align: center; padding: 16px; z-index: 6; }
 
   /* 오른쪽 */
@@ -240,7 +276,10 @@
     .app { display: flex; flex-direction: column; height: auto; }
     .stage { height: max(340px, 96vw); order: 1; }
     #floorBadge { display: none; }
-    .topr { top: auto; bottom: 14px; }
+    .topr { top: auto; bottom: calc(var(--feedH) + 12px); }
+    #feedList .who b { max-width: 140px; }
+    #feedList li { grid-template-columns: 18px 52px 1fr; }
+    #feedList .what { grid-column: 2 / -1; }
     aside.left { order: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; }
     aside.right { order: 2; border-left: 0; padding: 12px 16px; height: 70vh; min-height: 420px; }
     .tower { max-height: 300px; }
@@ -275,6 +314,20 @@
     <div class="ov hint">드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다</div>
     <div class="center-msg" id="empty">수집기에서 아직 소식이 없습니다.<br>메인 맥에서 수집기가 돌고 있는지 확인하세요.</div>
     <div class="center-msg" id="nogl">이 브라우저에서는 3D를 그릴 수 없습니다(WebGL 꺼짐).</div>
+    <!-- 최근 소식: 모든 층의 세션이 일을 마치거나 시작한 순간을 최신 순으로. 접으면 맨 위 한 줄만 -->
+    <section id="feed" aria-label="최근 소식">
+      <button class="feed-bar" id="feedToggle" aria-expanded="false">
+        <i class="fa-solid fa-chevron-up chev"></i><b>최근 소식</b>
+        <span class="counts" id="feedCounts"></span>
+        <span class="latest" id="feedLatest"></span>
+      </button>
+      <div class="feed-body">
+        <div class="feed-filter" id="feedFilter">
+          <button data-f="all" class="on">전체</button><button data-f="done"><i class="fa-solid fa-circle-check"></i> 완료</button><button data-f="start"><i class="fa-solid fa-circle-play"></i> 시작</button><button data-f="life"><i class="fa-solid fa-power-off"></i> 새 세션·종료</button>
+        </div>
+        <ol id="feedList"></ol>
+      </div>
+    </section>
   </main>
 
   <aside class="right">

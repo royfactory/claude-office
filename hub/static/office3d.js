@@ -1046,6 +1046,86 @@ function layoutLabels(list) {
   }
 }
 
+// ---------- 최근 소식(아래 서랍) ----------
+// 모든 층의 세션이 일을 마친(근무 → 휴식) 때, 시작한(휴식 → 근무) 때, 새로 생기거나 끝난 때를 최신 순으로 모은다.
+// 처음 열 때는 지금 상태로 채운다: 쉬는 세션 = 마지막으로 마친 시각, 일하는 세션 = 시작 시각(근사).
+const FEED_MAX = 300;
+const feed = [];                 // {ts, type: done|start|new|end, id, project, title, say}
+const feedKind = new Map();      // 세션 id -> 지난번 근무 여부
+let feedOpen = false, feedFilter = "all", feedSeenTs = 0;
+try { feedOpen = localStorage.getItem("office.feed") === "1"; feedSeenTs = +localStorage.getItem("office.feedSeen") || 0; } catch (_) {}
+const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off" };
+const FEED_WORD = { done: "작업 완료", start: "작업 시작", new: "새 세션", end: "세션 종료" };
+function feedPush(e) { feed.push(e); if (feed.length > FEED_MAX) feed.splice(0, feed.length - FEED_MAX); }
+function trackFeed(first) {
+  const now = Date.now() / 1000 - skew, seen = new Set();
+  for (const a of state.agents) {
+    seen.add(a.id);
+    const busy = a.kind !== "idle", base = { id: a.id, project: a.project, title: a.title || a.name };
+    if (first) {
+      feedPush({ ...base, type: busy ? "start" : "done", ts: (busy ? a.since : a.since || a.lastActivity) || now, say: busy ? "" : a.say });
+    } else if (!feedKind.has(a.id)) {
+      feedPush({ ...base, type: "new", ts: a.startedAt || now });
+      if (busy) feedPush({ ...base, type: "start", ts: now });
+    } else if (feedKind.get(a.id) !== busy) {
+      feedPush({ ...base, type: busy ? "start" : "done", ts: now, say: busy ? "" : a.say });
+    }
+    feedKind.set(a.id, busy);
+  }
+  for (const id of [...feedKind.keys()]) if (!seen.has(id)) {
+    const last = [...feed].reverse().find(e => e.id === id);
+    if (last) feedPush({ id, project: last.project, title: last.title, type: "end", ts: now });
+    feedKind.delete(id);
+  }
+  renderFeed();
+}
+function renderFeed() {
+  const now = Date.now() / 1000 - skew;
+  const fl = state ? floors() : [];
+  const floorN = new Map(fl.map(f => [f.project, f.n]));
+  const sorted = [...feed].sort((a, b) => b.ts - a.ts);
+  const recent = sorted.filter(e => now - e.ts < 3600);
+  const done = recent.filter(e => e.type === "done").length, start = recent.filter(e => e.type === "start").length;
+  $("feedCounts").innerHTML = (done ? `<span class="done" title="최근 1시간 완료">완료 ${done}</span>` : "") +
+    (start ? `<span class="start" title="최근 1시간 시작">시작 ${start}</span>` : "");
+  const top = sorted[0];
+  $("feedLatest").innerHTML = top ? `<i class="fa-solid fa-${FEED_ICON[top.type]}"></i> ${esc(top.title)} · ${FEED_WORD[top.type]} · ${ago(now - top.ts)} 전` : "";
+  if (!feedOpen) return;
+  const list = sorted.filter(e => feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter));
+  $("feedList").innerHTML = list.slice(0, 120).map(e => {
+    const n = floorN.get(e.project);
+    const what = e.type === "done" && e.say ? `${FEED_WORD[e.type]} · <q>${esc(e.say)}</q>` : `${FEED_WORD[e.type]} · ${esc(e.project)}`;
+    return `<li data-id="${esc(e.id)}" data-p="${esc(e.project)}" class="${e.ts > feedSeenTs ? "unseen" : ""}">
+      <i class="fa-solid fa-${FEED_ICON[e.type]} ic ${e.type}"></i><span class="t">${ago(now - e.ts)} 전</span>
+      <span class="who">${n ? `<span class="badge" style="--h:${floorHue(n)}">${n}F</span>` : ""}<b>${esc(e.title)}</b></span>
+      <span class="what">${what}</span></li>`;
+  }).join("") || `<li class="empty">아직 소식이 없습니다.</li>`;
+}
+function setFeedOpen(on) {
+  feedOpen = on;
+  $("stage").classList.toggle("feed-open", on);
+  $("feedToggle").setAttribute("aria-expanded", on ? "true" : "false");
+  renderFeed();
+  if (on) { feedSeenTs = Date.now() / 1000 - skew; try { localStorage.setItem("office.feedSeen", String(feedSeenTs)); } catch (_) {} }
+  try { localStorage.setItem("office.feed", on ? "1" : "0"); } catch (_) {}
+  setTimeout(resize, 260);   // 서랍 높이가 바뀌어도 3D 화면 크기는 그대로(무대 위에 겹친다). 라벨 위치만 다시
+}
+$("feedToggle").onclick = () => setFeedOpen(!feedOpen);
+$("feedFilter").addEventListener("click", e => {
+  const b = e.target.closest("[data-f]"); if (!b) return;
+  feedFilter = b.dataset.f;
+  $("feedFilter").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  renderFeed();
+});
+$("feedList").addEventListener("click", e => {
+  const li = e.target.closest("li[data-id]"); if (!li) return;
+  if (!state.agents.some(a => a.id === li.dataset.id)) return;   // 끝난 세션은 갈 곳이 없다
+  if (li.dataset.p !== floorKey) gotoFloor(li.dataset.p);
+  if (selected !== li.dataset.id) select(li.dataset.id);
+});
+setFeedOpen(feedOpen);
+setInterval(() => { if (state) renderFeed(); }, 15000);   // '몇 분 전' 갱신
+
 // ---------- 매 프레임 ----------
 const tmp = new THREE.Vector3();
 let lastT = performance.now();
@@ -1105,7 +1185,7 @@ function connect() {
     state = JSON.parse(e.data);
     skew = Date.now() / 1000 - state.now;
     cfg = state.config;
-    trackLogs(!seeded); seeded = true;
+    trackLogs(!seeded); trackFeed(!seeded); seeded = true;
     apply(first);
     first = false;
   };
