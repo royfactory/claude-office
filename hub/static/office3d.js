@@ -715,11 +715,13 @@ setInterval(rotateTick, 200);
 function stateOf(a) {
   if (a.stalled) return "stalled";
   if (a.kind === "working" || a.kind === "shell") return "working";
+  if (a.kind === "waiting") return "waiting";   // 턴은 끝났지만 백그라운드 작업을 기다리는 중(불은 켜 둔다)
   return a.kind === "thinking" ? "thinking" : "idle";
 }
 function roomFor(key, a, parentRoom) {
   let room;
   if (a.kind === "idle") room = "lounge";
+  else if (a.kind === "waiting") room = (a.bg && a.bg[0]) ? roomForTool(cfg, a.bg[0].tool) : (lastRoom.get(key) || "server");
   else if (a.kind === "shell") room = "server";
   else if (a.tool) room = roomForTool(cfg, a.tool);
   else room = lastRoom.get(key) || parentRoom || (a.recent && a.recent[0] ? roomForTool(cfg, a.recent[0].tool) : cfg.defaultRoom);
@@ -871,7 +873,11 @@ function updateMe() {
 
 // ---------- 화면 글자 ----------
 function stateHTML(a, st, now) {
-  if (st === "stalled") return `<i class="fa-solid fa-hourglass-half"></i>턱 괴고 고민 중 <small>${ago(now - a.lastActivity)}</small>`;
+  if (st === "waiting") {
+    const n = (a.bg || []).length, b = (a.bg || [])[0];
+    return `<i class="fa-solid fa-hourglass-half"></i>백그라운드 기다리는 중${n ? ` <small>${n}개${b ? " · " + esc(b.target || b.tool) : ""}</small>` : ""}`;
+  }
+  if (st === "stalled") return `<i class="fa-solid fa-hourglass-end"></i>턱 괴고 고민 중 <small>${ago(now - a.lastActivity)}</small>`;
   if (st === "working") {
     if (a.kind === "shell") return `<i class="fa-solid fa-terminal"></i>셸 명령`;
     const long = a.since && now - a.since > 120 ? ` <small><i class="fa-solid fa-clock"></i> ${ago(now - a.since)}</small>` : "";
@@ -880,7 +886,7 @@ function stateHTML(a, st, now) {
   if (st === "thinking") return `<i class="fa-solid fa-brain"></i>고민 중 <small>${ago(now - (a.since || now))}째</small>`;
   return now - (a.since || now) > 600 ? `<i class="fa-solid fa-bed"></i>휴식 <small>${ago(now - a.since)}</small>` : `<i class="fa-solid fa-mug-hot"></i>휴식 <small>${ago(now - (a.since || now))}</small>`;
 }
-const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", idle: "#94a3b8" };
+const STATE_COLOR = { working: "#38bdf8", thinking: "#a78bfa", stalled: "#fbbf24", waiting: "#2dd4bf", idle: "#94a3b8" };
 function renderLabels() {
   const now = Date.now() / 1000 - skew;
   for (const ac of actors.values()) {
@@ -972,23 +978,36 @@ function renderPeople(floor, chars) {
   updateSessionTab(a);
 }
 function personRow(key, a, ch, st, title, sub, now, isSub) {
-  const label = { working: "근무", thinking: "고민", stalled: "막힘", idle: "휴식" }[st];
+  const label = { working: "근무", thinking: "고민", stalled: "막힘", waiting: "대기", idle: "휴식" }[st];
   const line = st === "working" ? `${a.tool || "셸"}${a.target ? " · " + a.target : ""}` : (a.say || "");
   return `<li data-k="${esc(key)}" class="${isSub ? "sub" : ""}${selected === key ? " on" : ""}">
     <span class="av" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, st) : ""}</span>
     <span class="body"><span class="r1"><b>${esc(title)}</b><span class="st st-${st}">${label}</span></span>
     <span class="r2">${esc(line)}</span>
-    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${ago(now - (a.since || now))}</span></span></li>`;
+    <span class="r3">${esc(sub)} · 도구 ${a.tools || 0}회 · ${ago(now - (a.since || now))}${todoCount(a.todos)}</span></span></li>`;
 }
 function avatarSmall(ch, st) {
   const l = lookFor(ch, st);
   return l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt=""${ch.pixel ? ' style="image-rendering:pixelated"' : ""}>` : `<span class="emo">${esc(l.emoji || "🙂")}</span>`;
+}
+// 할 일 체크리스트: 세션의 Claude 가 TaskCreate/TaskUpdate(또는 TodoWrite)로 만든 목록을 보여 주기만 한다
+function todoCount(todos) {
+  if (!todos || !todos.length) return "";
+  return ` · 할 일 ${todos.filter(t => t.st === "completed").length}/${todos.length}`;
+}
+function todoList(todos) {
+  if (!todos || !todos.length) return "";
+  const done = todos.filter(t => t.st === "completed").length;
+  const icon = { completed: "circle-check", in_progress: "circle-play", pending: "circle" };
+  return `<h4>할 일 <span class="todo-n">${done}/${todos.length}</span></h4><ol class="todos">` + todos.map(t =>
+    `<li class="${t.st}"><i class="fa-solid fa-${icon[t.st] || "circle"}"></i><span>${esc(t.s)}</span></li>`).join("") + `</ol>`;
 }
 function detailCard(a, ch, now) {
   const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? ago(now - r.ts) : ""}</span></li>`).join("");
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? ch.name : "")} · PID ${esc(a.pid)}</small></span></div>
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
+    ${todoList(a.todos)}
     <h4>최근 도구</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">기록 없음</div>`}</div>`;
 }
 $("people").addEventListener("click", e => { const s = e.target.closest("[data-k]"); if (s) select(s.dataset.k); });
@@ -1165,9 +1184,19 @@ function renderFeed() {
       <span class="what">${what}</span></li>`;
   }).join("") || `<li class="empty">아직 소식이 없습니다.</li>`;
 }
+// 끌어서 정한 높이(px). 0 이면 기본(무대의 42%)
+let feedH = 0;
+try { feedH = +localStorage.getItem("office.feedH") || 0; } catch (_) {}
+const FEED_MIN = 40, FEED_CLOSE_BELOW = 84;
+function applyFeedH() {
+  const st = $("stage");
+  if (feedOpen && feedH) st.style.setProperty("--feedH", Math.min(feedH, st.clientHeight - 90) + "px");
+  else st.style.removeProperty("--feedH");
+}
 function setFeedOpen(on) {
   feedOpen = on;
   $("stage").classList.toggle("feed-open", on);
+  applyFeedH();
   $("feedToggle").setAttribute("aria-expanded", on ? "true" : "false");
   renderFeed();
   if (on) { feedSeenTs = Date.now() / 1000 - skew; try { localStorage.setItem("office.feedSeen", String(feedSeenTs)); } catch (_) {} }
@@ -1175,6 +1204,47 @@ function setFeedOpen(on) {
   setTimeout(resize, 260);   // 서랍 높이가 바뀌어도 3D 화면 크기는 그대로(무대 위에 겹친다). 라벨 위치만 다시
 }
 $("feedToggle").onclick = () => setFeedOpen(!feedOpen);
+// 위쪽 가장자리를 끌어 높이 조절. 아주 낮추면 접히고, 접힌 상태에서 끌어올리면 펼쳐진다
+$("feedGrip").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  const st = $("stage"), grip = e.currentTarget, startY = e.clientY, startH = $("feed").offsetHeight;
+  grip.setPointerCapture(e.pointerId);
+  st.classList.add("feed-dragging");
+  let h = startH;
+  const move = ev => {
+    h = Math.max(FEED_MIN, Math.min(st.clientHeight - 90, startH + (startY - ev.clientY)));
+    if (!feedOpen && h > FEED_CLOSE_BELOW) { feedOpen = true; st.classList.add("feed-open"); renderFeed(); }
+    st.style.setProperty("--feedH", h + "px");
+  };
+  const up = () => {
+    grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); grip.removeEventListener("pointercancel", up);
+    st.classList.remove("feed-dragging");
+    if (h <= FEED_CLOSE_BELOW) { setFeedOpen(false); return; }
+    feedH = Math.round(h);
+    try { localStorage.setItem("office.feedH", String(feedH)); } catch (_) {}
+    setFeedOpen(true);
+  };
+  grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up); grip.addEventListener("pointercancel", up);
+});
+addEventListener("resize", applyFeedH);
+
+// ---------- 왼쪽·오른쪽 패널 접기 ----------
+function setPanel(side, closed) {
+  const app = document.querySelector(".app"), btn = $(side === "left" ? "toggleLeft" : "toggleRight");
+  app.classList.toggle(side + "-closed", closed);
+  const toLeft = side === "left" ? !closed : closed;   // 화살표는 누르면 패널이 움직일 방향
+  btn.innerHTML = `<i class="fa-solid fa-chevron-${toLeft ? "left" : "right"}"></i>`;
+  btn.title = (side === "left" ? "빌딩 패널 " : "오른쪽 패널 ") + (closed ? "펼치기" : "접기");
+  try { localStorage.setItem("office.panel." + side, closed ? "1" : "0"); } catch (_) {}
+  if (side === "left" && !closed && floorKey) placeCar(floorKey);   // 다시 보이면 엘리베이터 칸 위치를 맞춘다
+}
+for (const side of ["left", "right"]) {
+  let closed = false;
+  try { closed = localStorage.getItem("office.panel." + side) === "1"; } catch (_) {}
+  setPanel(side, closed);
+  $(side === "left" ? "toggleLeft" : "toggleRight").onclick = () =>
+    setPanel(side, !document.querySelector(".app").classList.contains(side + "-closed"));
+}
 $("feedFilter").addEventListener("click", e => {
   const b = e.target.closest("[data-f]"); if (!b) return;
   feedFilter = b.dataset.f;

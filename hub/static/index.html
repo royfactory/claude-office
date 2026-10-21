@@ -10,7 +10,16 @@
 <link rel="stylesheet" href="/static/theme.css">
 <style>
   html, body { height: 100%; overflow: hidden; }
-  .app { display: grid; grid-template-columns: 260px minmax(0, 1fr) 330px; height: 100vh; }
+  .app { --lw: 260px; --rw: 330px; display: grid; grid-template-columns: var(--lw) minmax(0, 1fr) var(--rw); height: 100vh; }
+  /* 왼쪽(빌딩)·오른쪽(탭) 패널 접기. 접으면 그만큼 3D 화면이 넓어진다 */
+  aside.left { grid-column: 1; } .stage { grid-column: 2; } aside.right { grid-column: 3; }   /* 접어도 자리가 밀리지 않게 */
+  .app.left-closed { --lw: 0px; } .app.left-closed aside.left { display: none; }
+  .app.right-closed { --rw: 0px; } .app.right-closed aside.right { display: none; }
+  .edge { position: absolute; top: 50%; z-index: 8; width: 18px; height: 58px; padding: 0; border: 1px solid var(--border-2);
+          background: rgba(16,30,53,.92); color: var(--text-dim); display: grid; place-items: center; font-size: 11px; transform: translateY(-50%); }
+  .edge:hover { color: var(--text-hi); background: var(--surface-3); }
+  .edge.left { left: 0; border-left: 0; border-radius: 0 8px 8px 0; }
+  .edge.right { right: 0; border-right: 0; border-radius: 8px 0 0 8px; }
   aside { background: var(--bg-2); overflow-y: auto; padding: 14px 12px; }
   aside.left { border-right: 1px solid var(--border); }
   /* 오른쪽 패널 = 탭. 고른 탭 하나가 패널 높이를 다 쓰고, 넘치면 그 안에서 스크롤한다 */
@@ -137,6 +146,7 @@
   .lab .pill[data-st=working]  { background: #e0f2fe; color: #075985; border-color: #38bdf8; }
   .lab .pill[data-st=thinking] { background: #ede9fe; color: #5b21b6; border-color: #a78bfa; }
   .lab .pill[data-st=stalled]  { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
+  .lab .pill[data-st=waiting]  { background: #ccfbf1; color: #115e59; border-color: #2dd4bf; }
   .lab .pill[data-st=idle]     { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
   .lab .pill[data-st=trip]     { background: #fff7ed; color: #9a3412; border-color: #fb923c; }
   .lab .pill:empty { display: none; }
@@ -175,6 +185,11 @@
   .stage.feed-open { --feedH: 42%; }
   #feed { position: absolute; left: 0; right: 0; bottom: 0; height: var(--feedH); z-index: 7; display: flex; flex-direction: column;
           background: rgba(9,17,33,.94); border-top: 1px solid var(--border-2); backdrop-filter: blur(6px); transition: height .25s ease; }
+  .feed-grip { position: absolute; left: 0; right: 0; top: -5px; height: 10px; cursor: ns-resize; z-index: 2; touch-action: none; }
+  .feed-grip::after { content: ""; position: absolute; left: 50%; top: 3px; width: 44px; height: 4px; margin-left: -22px;
+                      border-radius: 2px; background: var(--border-2); transition: background .15s; }
+  .feed-grip:hover::after, .stage.feed-dragging .feed-grip::after { background: var(--brand); }
+  .stage.feed-dragging #feed, .stage.feed-dragging .zoom, .stage.feed-dragging .hint { transition: none; }
   .feed-bar { flex: none; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; border: 0; border-radius: 0;
               background: transparent; color: var(--text); font-size: 12px; text-align: left; cursor: pointer; }
   .feed-bar:hover { background: rgba(255,255,255,.03); }
@@ -227,6 +242,15 @@
   .st-working { color: var(--info); border-color: rgba(56,189,248,.4); }
   .st-thinking { color: var(--accent-alt); border-color: rgba(167,139,250,.4); }
   .st-stalled { color: var(--warning); border-color: rgba(251,191,36,.45); }
+  .st-waiting { color: #2dd4bf; border-color: rgba(45,212,191,.45); }
+  .todos { margin: 0 0 4px; }
+  .todos li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px; line-height: 1.45; color: var(--text-hi); }
+  .todos li i { flex: none; width: 14px; font-size: 11px; text-align: center; }
+  .todos li.completed { color: var(--text-dim2); } .todos li.completed span { text-decoration: line-through; }
+  .todos li.completed i { color: var(--good); }
+  .todos li.in_progress { color: var(--text-hi); font-weight: 700; } .todos li.in_progress i { color: var(--info); }
+  .todos li.pending i { color: var(--text-dim2); font-size: 7px; }
+  .todo-n { color: var(--text-dim2); font-weight: 500; margin-left: 4px; }
   .st-idle { color: var(--text-dim); border-color: var(--border-2); }
   .detail .dh { display: flex; gap: 10px; align-items: center; }
   .detail .dh b { display: block; color: var(--text-hi); }
@@ -270,8 +294,10 @@
   #legend li { display: grid; grid-template-columns: 22px 70px 1fr; gap: 4px; font-size: 12px; padding: 3px 0; align-items: center; }
   #legend b { color: var(--text-hi); font-weight: 600; } #legend span:last-child { color: var(--text-dim); }
 
-  @media (max-width: 1100px) { .app { grid-template-columns: 220px minmax(0, 1fr) 290px; } }
+  @media (max-width: 1100px) { .app { --lw: 220px; --rw: 290px; } .app.left-closed { --lw: 0px; } .app.right-closed { --rw: 0px; } }
   @media (max-width: 860px) {
+    .edge, .feed-grip { display: none; }
+    .app.left-closed aside.left, .app.right-closed aside.right { display: flex; }
     html, body { overflow: auto; height: auto; }
     .app { display: flex; flex-direction: column; height: auto; }
     .stage { height: max(340px, 96vw); order: 1; }
@@ -310,12 +336,15 @@
     <div class="ov" id="floorBadge"></div>
     <div class="ov" id="ride"></div>
     <div class="ov topr"><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin"><i class="fa-solid fa-gear"></i> 캐릭터 관리</a></div>
+    <button class="edge left" id="toggleLeft" title="빌딩 패널 접기"><i class="fa-solid fa-chevron-left"></i></button>
+    <button class="edge right" id="toggleRight" title="오른쪽 패널 접기"><i class="fa-solid fa-chevron-right"></i></button>
     <div class="ov zoom"><button id="zin" title="확대"><i class="fa-solid fa-plus"></i></button><button id="zout" title="축소"><i class="fa-solid fa-minus"></i></button><button id="zreset" title="원위치"><i class="fa-solid fa-rotate-left"></i></button></div>
     <div class="ov hint">드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다</div>
     <div class="center-msg" id="empty">수집기에서 아직 소식이 없습니다.<br>메인 맥에서 수집기가 돌고 있는지 확인하세요.</div>
     <div class="center-msg" id="nogl">이 브라우저에서는 3D를 그릴 수 없습니다(WebGL 꺼짐).</div>
     <!-- 최근 소식: 모든 층의 세션이 일을 마치거나 시작한 순간을 최신 순으로. 접으면 맨 위 한 줄만 -->
     <section id="feed" aria-label="최근 소식">
+      <div class="feed-grip" id="feedGrip" title="위아래로 끌어 높이 조절(아주 낮추면 접힘)"></div>
       <button class="feed-bar" id="feedToggle" aria-expanded="false">
         <i class="fa-solid fa-chevron-up chev"></i><b>최근 소식</b>
         <span class="counts" id="feedCounts"></span>

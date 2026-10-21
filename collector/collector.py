@@ -113,6 +113,9 @@ def claude_roots():
 FIRST_READ_BYTES = 32 * 1024 * 1024  # 처음 열 때 이보다 크면 끝부분만 읽는다(도구 횟수는 그만큼 근사)
 SAY_CHARS = 80
 CONFIG_POLL_SEC = 30
+# 도구 결과가 '백그라운드로 돌기 시작했다'는 뜻인지(Bash run_in_background·시간 초과로 넘어감·비동기 서브에이전트·Monitor)
+BG_STARTED = re.compile(r"(Command running in background|Command did not complete within .{0,40}moved to the background|Async agent launched|Monitor started)", re.I)
+BG_MAX_SEC = 6 * 3600   # 완료 알림을 놓쳐도 6시간 지나면 기다림에서 뺀다
 SUBAGENT_ACTIVE_SEC = 45     # 서브에이전트 기록이 이 시간 안에 바뀌었으면 출근 중으로 본다
 SUBAGENT_SCAN_SEC = 600      # 이보다 오래된 서브에이전트 파일은 아예 열지 않는다
 STALL_SEC = 90               # 생각만 하는데 기록이 이만큼 조용하면 '막힘'
@@ -182,6 +185,10 @@ class Transcript:
         self.title = ""
         self.say = ""
         self.mode = ""
+        self.bg = {}            # 아직 끝나지 않은 백그라운드 작업: tool_use_id -> {tool, target, ts}
+        self.tools_by_id = {}   # tool_use_id -> {tool, target, ts} (결과가 올 때 백그라운드인지 판단용, 최근 것만)
+        self.tasks = {}         # 할 일 목록: 번호 -> {s: 제목, st: pending|in_progress|completed}
+        self.task_create = {}   # TaskCreate 의 tool_use_id -> 제목(결과의 'Task #N' 으로 번호를 받는다)
         self.last = None
         self.ino = None
 
@@ -218,6 +225,14 @@ class Transcript:
         except ValueError:
             return
         t = rec.get("type")
+        if t == "queue-operation" and "<task-notification>" in str(rec.get("content") or ""):
+            self._notification(str(rec.get("content")))
+            return
+        if t == "attachment":
+            att = rec.get("attachment") or {}
+            if isinstance(att, dict) and att.get("type") == "queued_command":
+                self._notification(str(att.get("prompt") or ""))
+            return
         if t == "permission-mode":
             self.mode = str(rec.get("permissionMode") or "")[:32]
             return
@@ -228,6 +243,9 @@ class Transcript:
         if ts:
             self.last = ts
         msg = rec.get("message")
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str) and "<task-notification>" in msg["content"]:
+            self._notification(msg["content"])   # 백그라운드 완료 알림은 문자열 사용자 메시지로도 온다
+            return
         if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
             return
         for c in msg["content"]:
@@ -236,16 +254,71 @@ class Transcript:
             ct = c.get("type")
             if ct == "tool_use":
                 name = c.get("name", "?")
-                item = {"tool": name, "target": target_of(name, c.get("input"), detail), "ts": ts}
+                inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                item = {"tool": name, "target": target_of(name, inp, detail), "ts": ts}
                 self.pending[c.get("id")] = item
+                self.tools_by_id[c.get("id")] = dict(item, bg=bool(inp.get("run_in_background")))
+                if len(self.tools_by_id) > 400:
+                    for k in list(self.tools_by_id)[:200]:
+                        del self.tools_by_id[k]
                 self.recent = (self.recent + [item])[-RECENT_N:]
                 self.tools += 1
+                self._task_tool(name, inp, c.get("id"), detail)
             elif ct == "tool_result":
-                self.pending.pop(c.get("tool_use_id"), None)
+                tid = c.get("tool_use_id")
+                self.pending.pop(tid, None)
+                text = c.get("content")
+                if not isinstance(text, str):
+                    text = " ".join(x.get("text", "") for x in text if isinstance(x, dict)) if isinstance(text, list) else ""
+                info = self.tools_by_id.get(tid)
+                # 결과가 '백그라운드로 시작했다'로 시작할 때만(명령 출력에 그 문구가 섞여 있어도 오판하지 않게)
+                if info and (info.get("bg") or BG_STARTED.match(text.lstrip())):
+                    self.bg[tid] = {"tool": info["tool"], "target": info["target"], "ts": ts or time.time()}
+                if tid in self.task_create:
+                    m = re.search(r"Task #(\d+)", text)
+                    if m:
+                        self.tasks[m.group(1)] = {"s": self.task_create.pop(tid), "st": "pending"}
+            elif ct == "text" and msg.get("role") == "user" and "<task-notification>" in c.get("text", ""):
+                self._notification(c.get("text", ""))
             elif ct == "text" and msg.get("role") == "assistant" and detail != "none":
                 txt = say_of(c.get("text", ""))
                 if txt:
                     self.say = txt
+
+    def _notification(self, text):
+        """백그라운드 작업 완료 알림(<task-notification>)이 오면 그 작업을 기다림 목록에서 뺀다."""
+        for block in re.findall(r"<task-notification>(.*?)</task-notification>", text, re.S):
+            tid = re.search(r"<tool-use-id>([^<]+)</tool-use-id>", block)
+            st = re.search(r"<status>([^<]+)</status>", block)
+            if tid and (not st or st.group(1).strip() != "running"):
+                self.bg.pop(tid.group(1).strip(), None)
+
+    def _task_tool(self, name, inp, use_id, detail):
+        """Claude Code 의 할 일 목록 도구를 따라가 체크리스트를 유지한다(TaskCreate/TaskUpdate, 예전 TodoWrite)."""
+        if name == "TaskCreate":
+            if self.tasks and all(t["st"] == "completed" for t in self.tasks.values()):
+                self.tasks = {}   # 다 끝난 목록 뒤에 새로 만들면 새 묶음으로 본다
+            self.task_create[use_id] = short(inp.get("subject") or inp.get("activeForm") or "", 80) if detail != "none" else "할 일"
+        elif name == "TaskUpdate":
+            t = self.tasks.get(str(inp.get("taskId", "")))
+            if t:
+                st = inp.get("status")
+                if st == "deleted":
+                    self.tasks.pop(str(inp.get("taskId")), None)
+                elif st in ("pending", "in_progress", "completed"):
+                    t["st"] = st
+                if inp.get("subject") and detail != "none":
+                    t["s"] = short(inp["subject"], 80)
+        elif name == "TodoWrite" and isinstance(inp.get("todos"), list):
+            self.tasks = {str(i + 1): {"s": short(x.get("content", ""), 80) if detail != "none" else "할 일",
+                                       "st": x.get("status", "pending")}
+                          for i, x in enumerate(inp["todos"]) if isinstance(x, dict)}
+
+    def background(self, now):
+        """아직 끝나지 않은 백그라운드 작업(너무 오래된 것은 끝난 것으로 본다)."""
+        for k in [k for k, v in self.bg.items() if now - (v.get("ts") or now) > BG_MAX_SEC]:
+            del self.bg[k]
+        return list(self.bg.values())
 
     def current(self):
         if not self.pending:
@@ -352,10 +425,13 @@ class Collector:
             tr = self.transcript(jsonl) if jsonl else Transcript("")
             last = tr.last or (s.get("updatedAt", 0) / 1000)
             cur = tr.current() if status == "busy" else None
+            bg = tr.background(now)
             if status == "busy":
                 kind = "working" if cur else "thinking"
             elif status == "shell":
                 kind = "shell"
+            elif bg or status == "waiting":
+                kind = "waiting"   # 턴은 끝났지만 백그라운드 작업(명령·서브에이전트)을 기다리는 중
             else:
                 kind = "idle"
             since = (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
@@ -381,6 +457,8 @@ class Collector:
                 "tools": tr.tools,
                 "say": self.said(tr),
                 "mode": tr.mode,
+                "bg": [{"tool": b["tool"], "target": b["target"], "ts": b.get("ts")} for b in bg][:5],
+                "todos": list(tr.tasks.values())[:30],
                 "canMessage": MESSAGES and not WINDOWS and socket_ok(sock),
                 "recent": [{"tool": r["tool"], "target": r["target"], "ts": r["ts"]} for r in tr.recent[::-1]],
                 "subagents": subs,
