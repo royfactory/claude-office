@@ -200,6 +200,33 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 - 수집기는 허브에 연결을 걸어 두고 기다리다(롱폴링) 메시지가 들어오면 **즉시** 받아 전달합니다. 자기가 보고 있는 세션에만, Claude Code 가 만든 수신함 소켓 경로에만 보냅니다. 1분 안에 수집기가 가져가지 않으면 「만료」가 됩니다.
 - Windows 수집기는 아직 메시지 보내기를 지원하지 않습니다(Windows 수신함은 세션별 인증이 필요).
 
+## 선택: 승인 대기 감지(훅)
+
+수집기는 세션 기록만 읽어서는 **세션이 권한 승인을 기다리며 멈춘 순간**(터미널에 「Do you want to …?」 창이 떠 있음)을 알 수 없습니다. 그래서 그냥 '작업 중'으로 보입니다. [Claude Code 훅](https://code.claude.com/docs/en/hooks)을 넣으면 그 순간을 바로 알아 「승인 대기」로 보냅니다. 넣지 않아도 나머지는 지금과 똑같이 동작합니다.
+
+하는 일:
+- 훅 스크립트 `hooks/claude_office_hook.py` 가 Claude Code 이벤트(`PreToolUse` · `PermissionRequest` · `PostToolUse` · `PostToolUseFailure` · `PermissionDenied` · `Notification`(`permission_prompt`) · `UserPromptSubmit` · `Stop` · `StopFailure`)마다 불려, 세션별 **마지막 이벤트 하나**만 `~/.claude-office/events/<세션 ID>.json` 에 덮어 씁니다. 예: `{"event": "PermissionRequest", "kind": "permission", "ts": …, "tool_name": "Bash"}`
+- 수집기는 마지막 이벤트가 권한 요청이고 세션이 `busy` 이면 그 세션을 「승인 대기」(`kind: approval`)로 보냅니다. 승인해서 도구가 끝나거나, 거절·Stop·새 입력이 오면 풀립니다. 세션이 시작되기 전에 적힌 파일은 무시합니다.
+
+기록하지 않는 것: 명령 원문(`tool_input`), 도구 결과, 사용자 프롬프트, Claude 의 답, 알림 문구, 작업 폴더 경로. 남기는 것은 이벤트 이름·시각·도구 이름뿐이고, **네트워크로 아무것도 보내지 않습니다**(그 컴퓨터의 파일에만 씀). 훅은 결정을 내리지 않고(출력 없음) 어떤 오류에도 exit 0 으로 끝나 Claude Code 를 막지 않습니다. 도구를 쓸 때마다 두 번(시작·끝) 짧은 파이썬 프로세스가 뜹니다(macOS 에서 한 번에 약 0.04초).
+
+설치는 **세션을 띄우는 컴퓨터마다** 저장소 폴더에서 합니다. 먼저 무엇을 넣을지 봅니다(바꾸지 않음):
+
+```bash
+/usr/bin/python3 hooks/install_hooks.py            # macOS·리눅스: 미리 보기
+/usr/bin/python3 hooks/install_hooks.py --apply    # ~/.claude/settings.json 에 더하기(백업 settings.json.bak-날짜)
+/usr/bin/python3 hooks/install_hooks.py --remove   # 이 훅만 빼기(백업을 남김)
+```
+
+```powershell
+py hooks\install_hooks.py --apply                  # Windows(%USERPROFILE%\.claude\settings.json)
+```
+
+- 이미 있는 훅과 다른 설정은 그대로 두고 claude-office 항목만 더하거나 뺍니다. 다시 `--apply` 하면 겹치지 않고 지금 경로로 바꿔 끼웁니다.
+- 훅은 설치할 때 돌린 파이썬과 저장소 경로를 적어 둡니다. 저장소 폴더를 옮기면 `--apply` 를 다시 합니다(옮긴 채로 두어도 훅은 조용히 아무것도 안 하고 끝납니다). 다른 파이썬을 쓰려면 `--python <경로>`, Orca 프로필처럼 다른 설정 파일이면 `--settings <경로>`.
+- 이미 열린 세션에는 바로 적용되지 않을 수 있습니다. 새 세션의 `/hooks` 에서 들어갔는지 확인합니다.
+- 다 뺀 뒤 남은 `~/.claude-office/events/` 는 지워도 됩니다.
+
 ## 운영
 
 | 일 | 명령 |

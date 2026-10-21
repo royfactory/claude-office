@@ -6,6 +6,7 @@
     (설정 폴더 = ~/.claude 와 Orca 프로필 ~/Library/Application Support/orca/claude-profiles/*/home)
   ~/.claude/projects/<cwd>/<sessionId>.jsonl          대화 기록 → 지금 쓰는 도구
   ~/.claude/projects/<cwd>/<sessionId>/subagents/     서브에이전트 기록
+  ~/.claude-office/events/<sessionId>.json            (선택) 훅이 남긴 마지막 이벤트 → 승인 대기
 
 보내는 것: 세션 이름·제목(ai-title), 프로젝트 폴더 이름, 상태, 도구 이름과 짧은 대상(파일 이름,
 Bash 의 description, 검색어 앞부분 등), 도구 호출 횟수, 그리고 말풍선용으로 Claude 마지막 답변의 앞 80자.
@@ -103,6 +104,27 @@ ROOT_GLOBS = [
     os.path.expanduser("~/.claude"),
     os.path.expanduser("~/Library/Application Support/orca/claude-profiles/*/home"),
 ] + [p for p in os.environ.get("CLAUDE_OFFICE_ROOTS", "").split(":") if p]
+
+
+# 선택 기능: hooks/claude_office_hook.py 를 Claude Code 훅으로 넣으면 세션별 마지막 훅 이벤트가 여기 쌓인다.
+# 없으면 지금처럼 기록 파일만 보고 판단한다.
+EVENTS_DIR = os.environ.get("CLAUDE_OFFICE_EVENTS") or os.path.join(os.path.expanduser("~"), ".claude-office", "events")
+_SID_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def hook_event(sid, started_at):
+    """그 세션의 마지막 훅 이벤트 {event, kind, ts, tool_name?}. 파일이 없거나 세션 시작 전 것이면 None."""
+    if not sid or not _SID_FILE.match(sid):
+        return None
+    try:
+        with open(os.path.join(EVENTS_DIR, sid + ".json"), encoding="utf-8") as f:
+            ev = json.load(f)
+        ts = float(ev.get("ts", 0))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if ts < started_at - 5:   # 같은 세션 ID 를 이어 연(--resume) 예전 프로세스의 것
+        return None
+    return dict(ev, ts=ts)
 
 
 def claude_roots():
@@ -437,7 +459,11 @@ class Collector:
                 kind = "waiting"   # 턴은 끝났지만 백그라운드 작업(명령·서브에이전트)을 기다리는 중
             else:
                 kind = "idle"
-            since = (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
+            ev = hook_event(sid, s.get("startedAt", 0) / 1000) if status == "busy" else None
+            approval = bool(ev) and ev.get("kind") == "permission"
+            if approval:
+                kind = "approval"   # 권한 창을 띄우고 사용자의 승인을 기다리는 중(훅을 넣은 경우만 안다)
+            since = (ev["ts"] if approval else None) or (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
             subs = self.subagents(jsonl, tr, now) if jsonl else []
             sock = s.get("messagingSocketPath") or ""
             if sock:
@@ -450,7 +476,7 @@ class Collector:
                 "project": os.path.basename(cwd.rstrip("/\\")),
                 "status": status,
                 "kind": kind,
-                "tool": cur["tool"] if cur else "",
+                "tool": cur["tool"] if cur else (str(ev.get("tool_name") or "") if approval else ""),
                 "target": cur["target"] if cur else "",
                 "since": since,
                 "lastActivity": last,
