@@ -49,6 +49,10 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
+// 층 하나(바닥·벽·가구·사람)는 officeRoot 에 담는다. 엘리베이터를 탈 때 카메라·탑승칸은 그대로 두고
+// 이 묶음을 위아래로 흘려보내 '엘리베이터가 오르내리는' 것처럼 보이게 한다
+const officeRoot = new THREE.Group();
+scene.add(officeRoot);
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
 const CAM_OFFSET = new THREE.Vector3(34, 30, 34);
 const ELEV_SIN = Math.sin(Math.atan2(30, Math.hypot(34, 34)));
@@ -81,7 +85,7 @@ function box(w, h, d, c, x, y, z, o = {}) {
   m.castShadow = o.cast !== false;
   m.receiveShadow = true;
   if (o.ry) m.rotation.y = o.ry;
-  (o.parent || scene).add(m);
+  (o.parent || officeRoot).add(m);
   return m;
 }
 function cyl(r, h, c, x, y, z, o = {}) {
@@ -89,7 +93,7 @@ function cyl(r, h, c, x, y, z, o = {}) {
   m.scale.set(r, h, r);
   m.position.set(x, y + h / 2, z);
   m.castShadow = true; m.receiveShadow = true;
-  (o.parent || scene).add(m);
+  (o.parent || officeRoot).add(m);
   return m;
 }
 function ball(r, c, x, y, z) {
@@ -97,7 +101,7 @@ function ball(r, c, x, y, z) {
   m.scale.setScalar(r);
   m.position.set(x, y, z);
   m.castShadow = true;
-  scene.add(m);
+  officeRoot.add(m);
   return m;
 }
 function plant(x, z, s = 1) {
@@ -111,7 +115,7 @@ function chair(x, z, c = 0x3b5bdb, face = 0) { // face: 의자 등받이가 놓�
   box(0.55, 0.55, 0.08, c, 0, 0.5, -0.26, { parent: g });
   box(0.06, 0.42, 0.06, 0x64748b, 0, 0, 0, { parent: g });
   g.position.set(x, 0, z); g.rotation.y = face;
-  scene.add(g);
+  officeRoot.add(g);
 }
 function desk(x, z) {
   box(1.7, 0.07, 0.85, 0xf8fafc, x, 0.72, z);
@@ -183,18 +187,18 @@ function buildOffice() {
     const sign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, opacity: 0.92 }));
     sign.scale.set(4.8, 0.8, 1); sign.center.set(0.5, 0.5);
     sign.position.set(r.cx, 1.75, r.z0 + Math.min(2.2, (r.z1 - r.z0) * 0.32)); sign.renderOrder = 10;
-    scene.add(sign); signs[r.id] = sign;
+    officeRoot.add(sign); signs[r.id] = sign;
   }
   buildLibrary(R.library); buildMeeting(R.meeting); buildDev(R.dev); buildLounge(R.lounge);
-  buildMyDesk(R.mydesk); buildServer(R.server); buildSearch(R.search); buildElevator(); buildCafe();
+  buildMyDesk(R.mydesk); buildServer(R.server); buildSearch(R.search); buildElevator(); buildCafe(); buildCabin();
   [[-18, -12.8], [18, -12.8], [-4.4, 6.2], [4, 13], [-11, 13], [18, 6]].forEach(([x, z]) => plant(x, z, 0.9));
   // 층 표시: 엘리베이터 앞 복도 바닥에 크게 칠한 층 번호와, 엘리베이터 위 전광판
   floorDecal = new THREE.Mesh(new THREE.PlaneGeometry(8, 2), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
   floorDecal.rotation.x = -Math.PI / 2; floorDecal.position.set(-8.4, 0.07, 6.05);
-  scene.add(floorDecal);
+  officeRoot.add(floorDecal);
   elevSign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }));
   elevSign.position.set(-15, 3.9, 7.2); elevSign.renderOrder = 11;
-  scene.add(elevSign);
+  officeRoot.add(elevSign);
 }
 let floorDecal, elevSign;
 
@@ -233,6 +237,10 @@ function applyTheme(n, total, project) {
   setElevSign(`${n}F`, hue);
 }
 function setElevSign(text, hue) {
+  setSignOn(elevSign, text, hue);
+  if (cabin) setSignOn(cabin.sign, text, hue);
+}
+function setSignOn(sprite, text, hue) {
   const c = document.createElement("canvas"); c.width = 256; c.height = 128;
   const g = c.getContext("2d");
   g.fillStyle = "#0b1220"; roundRect(g, 4, 4, 248, 120, 18); g.fill();
@@ -240,9 +248,9 @@ function setElevSign(text, hue) {
   g.fillStyle = "#fbbf24"; g.shadowColor = "#f59e0b"; g.shadowBlur = 18;
   g.font = `800 76px ${FONT}`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, 128, 68);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  if (elevSign.material.map) elevSign.material.map.dispose();
-  elevSign.material.map = t; elevSign.material.needsUpdate = true;
-  elevSign.scale.set(1.9, 0.95, 1);
+  if (sprite.material.map) sprite.material.map.dispose();
+  sprite.material.map = t; sprite.material.needsUpdate = true;
+  sprite.scale.set(1.9, 0.95, 1);
 }
 function buildLibrary(r) {
   const books = [0xef4444, 0x3b82f6, 0x10b981, 0xf59e0b, 0x8b5cf6, 0x0ea5e9];
@@ -337,6 +345,50 @@ function buildElevator() {
   box(0.3, 0.3, 0.05, 0xfbbf24, x1 + 0.4, 1.5, z0 + 0.05, { mat: mat(0xfbbf24, { emissive: 0xf59e0b, emissiveIntensity: 0.6 }) });
 }
 let doorOpenUntil = 0;
+
+// 탑승칸과 승강로: 평소엔 숨기고, 엘리베이터가 움직이는 동안만 보인다(층 묶음 밖, 제자리에 고정)
+let cabin = null;
+function buildCabin() {
+  const [x, z] = ELEV.inside, g = new THREE.Group();
+  const glass = new THREE.MeshStandardMaterial({ color: 0xdbeafe, transparent: true, opacity: 0.22, depthWrite: false, roughness: 0.1 });
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(3.4, 3.0, 3.6), glass); shell.position.y = 1.5; g.add(shell);
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(shell.geometry), new THREE.LineBasicMaterial({ color: 0x94a3b8 }));
+  edges.position.y = 1.5; g.add(edges);
+  const floorPlate = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 3.6), mat(0x64748b)); floorPlate.position.y = 0.02; g.add(floorPlate);
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.06, 0.4), new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfde68a, emissiveIntensity: 1.2 }));
+  lamp.position.y = 2.96; g.add(lamp);
+  const sign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false })); sign.position.y = 3.7; sign.renderOrder = 12; g.add(sign);
+  // 승강로: 위아래로 길게 뻗은 틀. 이게 가만히 있고 층이 흘러가니 칸이 그 안을 오르내리는 것처럼 보인다
+  const shaftGeo = new THREE.BoxGeometry(4.2, 160, 4.4);
+  const shaft = new THREE.LineSegments(new THREE.EdgesGeometry(shaftGeo), new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.7 }));
+  const shaftGlass = new THREE.Mesh(shaftGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.05, depthWrite: false }));
+  for (const o of [shaft, shaftGlass]) { o.position.y = 0; g.add(o); }
+  // 승강로 레일(앞쪽 두 모서리를 조금 굵게)
+  for (const dx of [-2.1, 2.1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 160, 0.12), mat(0x475569)); rail.position.set(dx, 0, 2.2); g.add(rail); }
+  g.position.set(x, 0, z); g.visible = false;
+  scene.add(g);
+  cabin = { group: g, sign };
+}
+// 지나가는 층: 바닥판 + 층 번호(층 색). 타는 동안만 만들었다가 지운다
+function makeGhostFloor(n) {
+  const g = new THREE.Group(), hue = floorHue(n);
+  const slab = new THREE.Mesh(BOX, new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hue / 360, 0.35, 0.72), transparent: true, opacity: 0.9 }));
+  slab.scale.set(37, 0.3, 27); slab.position.set(0, -0.15, 0.25); g.add(slab);
+  const rim = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(37, 1.4, 27)), new THREE.LineBasicMaterial({ color: new THREE.Color().setHSL(hue / 360, 0.5, 0.45) }));
+  rim.position.set(0, 0.7, 0.25); g.add(rim);
+  const c = document.createElement("canvas"); c.width = 512; c.height = 256;
+  const gx = c.getContext("2d");
+  gx.fillStyle = `hsla(${hue}, 70%, 35%, 0.9)`; gx.font = `900 200px ${FONT}`; gx.textAlign = "center"; gx.textBaseline = "middle"; gx.fillText(`${n}F`, 256, 136);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
+  label.rotation.x = -Math.PI / 2; label.position.set(0, 0.06, 0.5); g.add(label);
+  scene.add(g);
+  return g;
+}
+function disposeGhost(g) {
+  scene.remove(g);
+  g.traverse(o => { if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } if (o.geometry && o.geometry !== BOX) o.geometry.dispose(); });
+}
 function buildCafe() {
   themed.push([box(11.5, 0.05, 4.8, 0xf3dfc6, 11, 0, 9.6, { cast: false }), 0xf3dfc6, 0.35]);
   for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
@@ -424,7 +476,7 @@ function newActor(key, sub) {
   const ring = new THREE.Mesh(RING, RINGMAT); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.07; ring.visible = false; group.add(ring);
   const hit = new THREE.Mesh(HIT, HITMAT); hit.position.y = 1.1; hit.userData.key = key; group.add(hit);
   const look = new THREE.Group(); group.add(look);
-  scene.add(group);
+  officeRoot.add(group);
   const lab = document.createElement("div");
   lab.className = "lab" + (sub ? " sub" : "");
   // 위에서부터: 말풍선(Claude가 한 말) · 상태 배지(지금 하는 일) · 명찰(누구인지)
@@ -465,7 +517,7 @@ function setOpacity(a, o) {
   });
 }
 function disposeActor(a) {
-  scene.remove(a.group);
+  a.group.removeFromParent();   // 사람은 층 묶음(officeRoot) 안에 있다
   a.group.traverse(m => { if (m.userData.own) m.material.dispose(); });
   a.lab.remove();
 }
@@ -591,16 +643,34 @@ function stepTransit(t) {
     if (!m.path.length) { tr.phase = "close"; tr.t = t; doorOpenUntil = 0; }
   } else if (tr.phase === "close" && t - tr.t > 800) {
     tr.phase = "ride"; tr.t = t;
-    tr.floors = Math.max(1, Math.abs(tr.n - (tr.from || tr.n)));
-    tr.dur = 1200 + tr.floors * 900;            // 한 층에 0.9초 + 출발·정지
-    tr.shown = null;
+    const from = tr.from || tr.n;
+    tr.dir = tr.n >= from ? 1 : -1;
+    tr.floors = Math.max(1, Math.abs(tr.n - from));
+    tr.dur = 1500 + tr.floors * 950;            // 한 층에 0.95초 + 출발·정지
+    // 층 하나가 화면 밖으로 완전히 나가는 거리. 층 사이를 그 두 배 남짓으로 잡아, 가운데에서
+    // 층을 바꿀 때 옛 층도 새 층도 화면에 없게 한다(바꾸는 순간이 보이지 않는다)
+    const off = (viewH / zoom / 2 + 16) / Math.cos(Math.atan2(30, Math.hypot(34, 34)));
+    tr.S = off * 2.1;
+    tr.shown = null; tr.swapped = false;
+    tr.ghosts = [];
+    for (let i = 1; i < tr.floors; i++) tr.ghosts.push({ i, g: makeGhostFloor(from + tr.dir * i) });
+    scene.attach(m.group);                      // '나'는 층 묶음에서 빠져 탑승칸과 함께 제자리에
+    cabin.group.visible = true;
+    $("labels").classList.add("riding");
     $("stage").classList.add("riding");
     $("ride").classList.add("on");
     placeCar(tr.target, tr.dur);
   } else if (tr.phase === "ride") {
-    // 가속·감속을 넣어 지금 지나는 층 숫자를 하나씩 바꾼다
+    // 가속·감속(easeInOut). 위로 가면 층들이 아래로 흘러가고, 아래로 가면 위로 흘러간다
     const p = Math.min(1, (t - tr.t) / tr.dur), e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-    const from = tr.from || tr.n, cur = Math.round(from + (tr.n - from) * e);
+    const from = tr.from || tr.n, total = tr.floors * tr.S, scroll = e * total;
+    if (!tr.swapped && scroll >= total / 2) {   // 옛 층도 새 층도 화면 밖일 때 층을 바꾼다
+      tr.swapped = true;
+      gotoFloor(tr.target);
+    }
+    officeRoot.position.y = (tr.swapped ? total - scroll : -scroll) * tr.dir;
+    for (const gh of tr.ghosts) gh.g.position.y = (gh.i * tr.S - scroll) * tr.dir;
+    const cur = Math.max(Math.min(from, tr.n), Math.min(Math.max(from, tr.n), from + tr.dir * Math.round(scroll / tr.S)));
     if (cur !== tr.shown) {
       tr.shown = cur;
       const arrow = tr.n > from ? "▲" : tr.n < from ? "▼" : "■";
@@ -609,11 +679,11 @@ function stepTransit(t) {
         (cur === tr.n ? ` <span>${esc(tr.target)}</span>` : ` <span><i class="fa-solid fa-arrow-right"></i> ${tr.n}F</span>`);
       setElevSign(`${arrow}${cur}`, floorHue(cur));
     }
-    if (p >= 1 && t - tr.t > tr.dur + 350) {
-      tr.phase = "arrive"; tr.t = t; doorOpenUntil = t + 2600;   // 먼저 단계를 바꿔야 새 층 분위기가 바로 입혀진다
-      gotoFloor(tr.target);
+    if (p >= 1 && t - tr.t > tr.dur + 250) {
+      if (!tr.swapped) { tr.swapped = true; gotoFloor(tr.target); }
+      endRide();
+      tr.phase = "arrive"; tr.t = t; doorOpenUntil = t + 2600;
       m.pos = ELEV.inside.slice();
-      $("stage").classList.remove("riding");
       setTimeout(() => $("ride").classList.remove("on"), 900);
     }
   } else if (tr.phase === "arrive" && t - tr.t > 600) {
@@ -621,6 +691,15 @@ function stepTransit(t) {
   } else if (tr.phase === "out" && !m.path.length) {
     transit = null; mePill(""); rotateAt = Date.now();
   }
+}
+// 탑승 연출을 정리하고 '나'를 다시 층 묶음에 넣는다(도착했을 때, 또는 손으로 층을 바꿔 끊었을 때)
+function endRide() {
+  officeRoot.position.y = 0;
+  if (transit && transit.ghosts) { transit.ghosts.forEach(gh => disposeGhost(gh.g)); transit.ghosts = []; }
+  if (cabin) cabin.group.visible = false;
+  if (me.actor && me.actor.group.parent !== officeRoot) officeRoot.attach(me.actor.group);
+  $("labels").classList.remove("riding");
+  $("stage").classList.remove("riding");
 }
 function placeCar(project, ms) {
   const story = [...$("floors").querySelectorAll(".story")].find(x => x.dataset.p === project);
@@ -726,7 +805,7 @@ function apply(instant) {
   const floor = fl.find(f => f.project === floorKey);
   autoPick(floor);
   const agents = floor ? floor.agents : [];
-  if (floor && !(transit && transit.phase === "ride")) applyTheme(floor.n, fl.length, floor.project);
+  if (floor && !(transit && transit.phase === "ride" && !transit.swapped)) applyTheme(floor.n, fl.length, floor.project);
   const chars = assignCharacters(cfg, state.agents);
   updateSigns();
   updateMe();
@@ -885,7 +964,7 @@ $("floors").addEventListener("click", e => {
   const f = e.target.closest("[data-p]");
   if (!f) return;
   if (playing) rotateAt = Date.now();  // 손으로 고른 층은 한 간격 동안 머문다
-  if (transit) { transit = null; me.actor.path = []; me.actor.pos = me.pos.slice(); mePill(""); $("ride").classList.remove("on"); }
+  if (transit) { endRide(); transit = null; me.actor.path = []; me.actor.pos = me.pos.slice(); mePill(""); $("ride").classList.remove("on"); }
   gotoFloor(f.dataset.p);
 });
 setPlaying(playing);
@@ -1148,7 +1227,8 @@ function frame(t) {
     }
     ac.group.position.set(ac.pos[0], moving ? Math.abs(Math.sin(t / 90)) * 0.14 : 0, ac.pos[1]);
     if (ac.head) ac.head.material.rotation = ac.item && ac.item.st === "stalled" ? Math.sin(t / 500) * 0.28 : 0;
-    tmp.set(ac.pos[0], (ac.head && ac.head.center.y === 0 ? 2.2 : 2.05) * ac.scale, ac.pos[1]).project(camera);
+    const lift = ac.group.parent === officeRoot ? officeRoot.position.y : 0;
+    tmp.set(ac.pos[0], (ac.head && ac.head.center.y === 0 ? 2.2 : 2.05) * ac.scale + lift, ac.pos[1]).project(camera);
     placed.push({ ac, x: (tmp.x + 1) / 2 * w, y: (1 - tmp.y) / 2 * h });
   }
   layoutLabels(placed);

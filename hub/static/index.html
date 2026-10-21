@@ -114,7 +114,8 @@
   .stage { position: relative; overflow: hidden; --fh: 215; --fl: 18%;
            background: radial-gradient(ellipse at 50% 40%, hsl(var(--fh) 38% var(--fl)) 0%, #0b1324 72%); transition: background 1.2s; }
   .stage::after { content: ""; position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity .6s; z-index: 4; }
-  .stage.riding::after { opacity: .62; }   /* 엘리베이터 안: 사무실이 어두워졌다가 새 층의 빛으로 밝아진다 */
+  .stage.riding::after { opacity: .18; }   /* 엘리베이터가 움직이는 동안 살짝 어둡게(층이 흘러가는 모습은 보이게) */
+  #labels.riding .lab:not(.me) { opacity: 0; }   /* 흘러가는 층 사람들의 이름표는 숨긴다 */
   #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
   #scene:active { cursor: grabbing; }
   #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
