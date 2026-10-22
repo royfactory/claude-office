@@ -1239,9 +1239,9 @@ function setupSteps(h) {
       { ok: !!cfg.approvals, label: "관리 화면 「대시보드에서 권한 요청 허용·거절」", fix: "아래 버튼으로 켜거나 /admin → 화면 설정에서 체크 후 저장", act: "approvals" },
       { ok: !!(su && su.approveEnv), label: "그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on", fix: "그 컴퓨터에서 붙여 넣기 — .env 값을 넣고 수집기를 다시 설치한다", copy: envCmd("CLAUDE_OFFICE_APPROVE=on") },
       { ok: frac(su && su.approveHook, su && su.roots), label: `승인 훅을 넣은 설정 폴더 ${su ? su.approveHook : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행", copy: cmd("approveHook", "--approve") }] },
-    { t: "사용 한도 막대", items: [
+    { t: "사용 한도 막대 (터미널 CLI 전용)", note: "터미널(CLI)에서 연 세션만 값을 보냅니다 — 상태 표시줄은 터미널 화면 기능이라 VS Code 등 IDE 확장 세션에서는 돌지 않습니다", items: [
       { ok: frac(su && su.statusline, su && su.roots), label: `상태 표시줄을 건 설정 폴더 ${su ? su.statusline : "?"}/${su ? su.roots : "?"}곳`, fix: "claude-office 저장소 폴더에서 실행 (원래 상태 표시줄은 이어서 보임)", copy: cmd("statusline", "--statusline") },
-      { ok: mine.some(a => a.limits), label: "사용 한도 값을 받는 중", fix: "구독 계정 세션에서 답변이 한 번 오면 채워짐(API 키 계정은 값 없음)" }] },
+      { ok: mine.some(a => a.limits), label: "사용 한도 값을 받는 중", fix: "터미널(CLI)의 구독 계정 세션에서 답변이 한 번 오면 채워짐(IDE 확장 세션·API 키 계정은 값 없음)" }] },
   ];
 }
 function stepState(st) {
