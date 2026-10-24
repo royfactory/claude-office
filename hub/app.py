@@ -20,7 +20,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 
 def _early_log() -> None:
@@ -148,6 +148,22 @@ class Character(BaseModel):
     pixel: bool = False  # 픽셀아트 이미지면 확대할 때 뭉개지지 않게 그린다
     # 상태별 모습(working·thinking·stalled·idle). 비면 기본 모습을 쓴다.
     states: dict[Literal["working", "thinking", "stalled", "idle"], StateLook] = {}
+    # 걸을 때 번갈아 보이는 이미지. 카메라가 고정 쿼터뷰라 걷는 방향은 화면 대각선 4개뿐이다:
+    # front = 화면 왼쪽 아래(↙)를 보고 걷는 앞모습, back = 오른쪽 위(↗)를 보고 걷는 뒷모습.
+    # ↘·↖ 는 화면에서 좌우를 뒤집어 그린다. 비면 걸을 때도 기본·상태 모습을 쓴다.
+    walk: dict[Literal["front", "back"], list[Annotated[str, Field(max_length=64)]]] = {}
+
+    @field_validator("walk")
+    @classmethod
+    def _walk_frames(cls, v: dict) -> dict:
+        for frames in v.values():
+            if len(frames) > 4:
+                raise ValueError("걷기 이미지는 방향마다 4장까지다")
+        return {k: [f for f in frames if f] for k, frames in v.items()}
+
+    def images(self) -> list[str]:
+        """이 캐릭터가 쓰는 이미지 전부(빈 값 포함)."""
+        return [self.image, *(s.image for s in self.states.values()), *(f for fr in self.walk.values() for f in fr)]
 
 
 class Assignment(BaseModel):
@@ -199,7 +215,7 @@ class Config(BaseModel):
         if sorted(r.id for r in self.rooms) != sorted(ROOM_IDS):
             raise ValueError("방 7개(" + "·".join(ROOM_IDS) + ")가 모두 있어야 한다")
         for c in self.characters:
-            for img in [c.image, *(s.image for s in c.states.values())]:
+            for img in c.images():
                 if img and not (ASSETS / img).is_file():
                     raise ValueError(f"이미지 {img} 가 없다")
 
@@ -857,6 +873,7 @@ def _used_assets() -> set[str]:
     for c in hub.config.get("characters", []):
         used.add(c.get("image", ""))
         used.update(s.get("image", "") for s in c.get("states", {}).values())
+        used.update(f for fr in c.get("walk", {}).values() for f in fr)
     return used - {""}
 
 

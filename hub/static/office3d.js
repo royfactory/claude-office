@@ -184,12 +184,14 @@ function emojiTexture(e) {
 }
 const imgTex = new Map();
 const loader = new THREE.TextureLoader();
-function imageTexture(name, pixel) {
-  const k = name + (pixel ? ":px" : "");
+// flip: 좌우를 뒤집은 텍스처. 스프라이트는 scale 의 부호를 무시해서(셰이더가 길이만 쓴다) 텍스처 쪽에서 뒤집는다
+function imageTexture(name, pixel, flip) {
+  const k = name + (pixel ? ":px" : "") + (flip ? ":flip" : "");
   if (!imgTex.has(k)) {
     const t = loader.load(`/assets/${encodeURIComponent(name)}`, () => { t.userData.ready = true; dirtyLooks = true; });
     t.colorSpace = THREE.SRGBColorSpace;
     if (pixel) { t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; }
+    if (flip) { t.repeat.x = -1; t.offset.x = 1; }
     imgTex.set(k, t);
   }
   return imgTex.get(k);
@@ -494,19 +496,22 @@ function newActor(key, sub) {
   return { key, sub, group, look, ring, hit, lab, lookKey: "", head: null, path: [], pos: [0, 0], room: "", leaving: false, opacity: 1, scale: s };
 }
 function setLook(a, ch, st) {
+  a.ch = ch;   // 걷기 이미지(ch.walk)는 매 프레임 이걸 본다 — 모습이 그대로여도 설정이 바뀌면 새 것으로
+  // 걷기 이미지를 미리 받아 둔다(첫 걸음에 아직 안 받은 장이 서 있는 모습으로 깜박이지 않게)
+  for (const fr of Object.values(ch.walk || {})) for (const n of fr) for (const f of [false, true]) if (n) imageTexture(n, ch.pixel, f);
   const l = lookFor(ch, st);
   const k = `${l.image}|${l.emoji}|${ch.color}|${ch.pixel}|${l.image && imageTexture(l.image, ch.pixel).userData.ready}`;
   if (a.lookKey === k) return;
   a.lookKey = k;
   a.look.traverse(disposeOwnMat);
   a.look.clear(); a.head = null;
+  a.baseTex = null;
   if (l.image) {
     const tex = imageTexture(l.image, ch.pixel);
     const sp = new THREE.Sprite(perActor(new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 })));
-    const img = tex.image, asp = img && img.width ? img.width / img.height : 1;
-    const h = 2.0;
-    sp.scale.set(h * asp, h, 1); sp.center.set(0.5, 0); sp.position.y = 0.05;
-    a.look.add(sp); a.head = sp;
+    spriteSize(sp, tex);
+    sp.center.set(0.5, 0); sp.position.y = 0.05;
+    a.look.add(sp); a.head = sp; a.baseTex = tex;
   } else {
     const body = new THREE.Mesh(CAPSULE, mat(new THREE.Color(ch.color).getHex()));
     body.position.y = 0.6; body.castShadow = true;
@@ -516,6 +521,32 @@ function setLook(a, ch, st) {
     a.look.add(sp); a.head = sp;
   }
   kick();
+}
+function spriteSize(sp, tex) {
+  const img = tex.image, asp = img && img.width ? img.width / img.height : 1;
+  sp.scale.set(2.0 * asp, 2.0, 1);
+}
+// 걷는 동안 보일 텍스처. 카메라가 (+x,+z) 쪽에서 내려다보므로 화면 아래 = +x+z, 화면 오른쪽 = +x−z.
+// 아래(↙↘)로 가면 앞모습, 위(↗↖)로 가면 뒷모습. 앞모습 원본은 ↙, 뒷모습 원본은 ↗ 를 보고 있어서
+// 앞모습이 오른쪽으로, 뒷모습이 왼쪽으로 갈 때 좌우를 뒤집는다. 걸음(통통 튀기 한 번)마다 다음 장으로 넘긴다
+const STEP_MS = Math.PI * 90;   // |sin(t/90)| 의 주기
+function walkTexture(ac, dir, t) {
+  const ch = ac.ch;
+  if (!dir || !ch || !ch.walk || !ac.baseTex) return null;
+  const down = dir[0] + dir[1], right = dir[0] - dir[1];
+  const view = down >= 0 ? "front" : "back";
+  const frames = (ch.walk[view] || []).filter(Boolean);
+  if (!frames.length) return null;
+  const flip = view === "front" ? right > 0 : right < 0;
+  const tex = imageTexture(frames[Math.floor(t / STEP_MS) % frames.length], ch.pixel, flip);
+  return tex.userData.ready ? tex : null;
+}
+function applyWalk(ac, dir, t) {
+  if (!ac.head || !ac.baseTex) return;
+  const tex = walkTexture(ac, dir, t) || ac.baseTex;
+  if (ac.head.material.map === tex) return;
+  ac.head.material.map = tex; ac.head.material.needsUpdate = true;
+  spriteSize(ac.head, tex);
 }
 // 사람마다 따로 만든 재질(얼굴 스프라이트, 흐리게 하려고 복제한 재질)은 그 사람이 없어질 때 함께 버린다.
 // 공용 재질(mat() 캐시, 그림자·고리)과 텍스처 캐시(emoji·이미지)는 버리지 않는다
@@ -1950,11 +1981,11 @@ function frame(t) {
   const all = me.actor ? [...actors.values(), me.actor] : [...actors.values()];
   const placed = [];
   for (const ac of all) {
-    let moving = false;
+    let moving = false, dir = null;
     if (ac.path.length) {
       const [tx, tz] = ac.path[0];
       const dx = tx - ac.pos[0], dz = tz - ac.pos[1], d = Math.hypot(dx, dz), step = (ac === me.actor && transit ? 9 : 5.5) * dt;
-      if (d <= step) { ac.pos = [tx, tz]; ac.path.shift(); } else { ac.pos[0] += dx / d * step; ac.pos[1] += dz / d * step; moving = true; }
+      if (d <= step) { ac.pos = [tx, tz]; ac.path.shift(); } else { ac.pos[0] += dx / d * step; ac.pos[1] += dz / d * step; moving = true; dir = [dx, dz]; }
       if (ac.leaving && !ac.path.length) { ac.fade = 1; doorOpenUntil = t + 1500; }
     }
     if (ac.fade !== undefined) {
@@ -1962,6 +1993,7 @@ function frame(t) {
       if (ac.fade <= 0) { disposeActor(ac); actors.delete(ac.key); continue; }
     }
     ac.group.position.set(ac.pos[0], (moving ? Math.abs(Math.sin(t / 90)) * 0.14 : 0) + (ac.rideY || 0), ac.pos[1]);
+    applyWalk(ac, dir, t);
     if (ac.head) ac.head.material.rotation = ac.item && ac.item.st === "stalled" ? Math.sin(t / 500) * 0.28 : 0;
     const lift = (ac.group.parent === officeRoot ? officeRoot.position.y : 0) + (ac.rideY || 0);
     tmp.set(ac.pos[0], (ac.head && ac.head.center.y === 0 ? 2.2 : 2.05) * ac.scale + lift, ac.pos[1]).project(camera);

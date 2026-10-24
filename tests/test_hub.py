@@ -343,6 +343,18 @@ def test_state_image_counts_as_used(hub):
     assert c.delete(f"/api/assets/{name}").status_code == 409
 
 
+def test_walk_images_count_as_used_and_must_exist(hub):
+    _, c = hub
+    name = c.post("/api/assets", content=GIF89).json()["name"]
+    walk = {"front": [name, name], "back": [name]}
+    r = _put(c, lambda cfg: cfg["characters"][2].update(walk=walk))
+    assert r.status_code == 200 and r.json()["characters"][2]["walk"] == walk
+    assert c.delete(f"/api/assets/{name}").status_code == 409
+    assert _put(c, lambda cfg: cfg["characters"][2].update(walk={"front": ["0123456789abcdef.png"]})).status_code == 400
+    assert _put(c, lambda cfg: cfg["characters"][2].update(walk={"side": [name]})).status_code == 422
+    assert _put(c, lambda cfg: cfg["characters"][2].update(walk={"front": [name] * 5})).status_code == 422
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404
