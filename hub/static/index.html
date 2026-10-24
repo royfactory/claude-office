@@ -111,6 +111,33 @@
   .win.lit.w-stalled { background: #fed7aa; border-color: #fb923c; }
   .win.lit.w-approval { background: #fdba74; border-color: #ea580c; box-shadow: 0 0 7px rgba(249,115,22,.85); }
   .win.more { width: auto; padding: 0 4px; font-family: var(--font); font-size: 10px; color: var(--text-dim); }
+  /* 화면 높이에 맞춘 밀도(.bldg[data-fit], office3d.js 의 fitBuilding): full 기본 · row 한 줄 · tight 한 줄 숫자만 */
+  .story .cnt, .win.m-row { display: none; }
+  .story .cnt { flex: none; font-size: 10.5px; color: #64748b; font-variant-numeric: tabular-nums; }
+  .story .cnt em { font-style: normal; } .story.busy .cnt { color: #e7d7a8; } .story.busy .cnt em { color: #bef264; font-weight: 700; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story { align-items: center; border-bottom-width: 2px; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info { flex-direction: row; align-items: center; gap: 6px; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info b { flex: 1; min-width: 0; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info small { display: none; }
+  .bldg[data-fit=row] .story { padding: 5px 8px; }
+  .bldg[data-fit=row] .story .no { width: 30px; height: 19px; font-size: 10px; }
+  .bldg[data-fit=row] .wins { margin-top: 0; flex: none; flex-wrap: nowrap; gap: 2px; }
+  .bldg[data-fit=row] .win { width: 16px; height: 15px; font-size: 9px; }
+  .bldg[data-fit=row] .win.x, .bldg[data-fit=row] .win.m-full { display: none; }
+  .bldg[data-fit=row] .win.m-row { display: grid; width: auto; }
+  .bldg[data-fit=row] .roof { height: 42px; } .bldg[data-fit=row] .roof .antenna { height: 12px; }
+  .bldg[data-fit=row] .roof .sign { height: 28px; }
+  .bldg[data-fit=tight] .story { padding: 2px 8px; gap: 6px; }
+  .bldg[data-fit=tight] .story .no { width: 28px; height: 16px; font-size: 9.5px; border-radius: 4px; }
+  .bldg[data-fit=tight] .story .info b { font-size: 11.5px; }
+  .bldg[data-fit=tight] .wins { display: none; }
+  .bldg[data-fit=tight] .story .cnt { display: inline; }
+  .bldg[data-fit=tight] .story.busy::before { height: 2px; }
+  .bldg[data-fit=tight] .roof { height: 26px; } .bldg[data-fit=tight] .roof .antenna { display: none; }
+  .bldg[data-fit=tight] .roof .sign { height: 24px; font-size: 10.5px; }
+  .bldg[data-fit=tight] .lobby { flex-direction: row; justify-content: center; padding: 4px 8px; }
+  .bldg[data-fit=tight] .lobby .doors, .bldg[data-fit=tight] .lobby small { display: none; }
+  .bldg[data-fit=tight] .under-sign { padding: 2px 8px; }
   #car { position: absolute; right: 3px; top: 0; width: 20px; border-radius: 3px; background: #475569; border: 1px solid #94a3b8;
          transition: transform .7s cubic-bezier(.45,.05,.35,1), height .3s; z-index: 2; display: grid; place-items: center; font-size: 11px; }
   .lobby { flex: none; background: #1e293b; border: 1px solid #334155; border-top: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
