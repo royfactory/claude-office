@@ -32,7 +32,7 @@ Requirements: Python 3.9+ for the collector, and Docker **or** [uv](https://docs
 git clone https://github.com/royfactory/claude-office.git
 cd claude-office
 cp .env.example .env
-docker compose up -d --build     # hub (no Docker? see "Run the hub without Docker" below)
+docker compose up -d --build     # hub with Docker — or on macOS without Docker: sh hub/install.sh
 sh collector/install.sh          # collector, kept running by launchd (macOS)
 ```
 
@@ -142,7 +142,7 @@ All of these are off unless you turn them on. Details are in the [Korean README]
 | Update | `git pull`, then `docker compose up -d --build` and re-run the collector install command (Windows: run `start.bat` again) |
 | Collector status | `sh collector/install.sh --status` (Windows `install.ps1 -Status`); `status.bat` on Windows |
 | Hub logs | `docker compose logs -f hub` |
-| Run the hub without Docker | `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (reads `.env`, data in `data/`) |
+| Run the hub without Docker | macOS: `sh hub/install.sh` (LaunchAgent, `--status` / `--uninstall`). Elsewhere: `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (reads `.env`, data in `data/`) |
 | Tests | `uv run --python 3.12 --with-requirements requirements-dev.txt --with-requirements hub/requirements.txt pytest -q` |
 | Linux collector | `python3 collector/collector.py --env .env` under a systemd user service (untested) |
 

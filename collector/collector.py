@@ -782,11 +782,6 @@ _cpu_delta = _CpuDelta()
 
 
 def _cpu():
-    if sys.platform == "darwin":
-        # top 의 두 번째 표본이 최근 1초 사용률이다(첫 표본은 부팅 뒤 평균)
-        out = _run(["top", "-l", "2", "-n", "0", "-s", "1"], timeout=8)   # 바쁠 때는 2초를 넘기기도 한다
-        m = re.findall(r"CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys", out)
-        return float(m[-1][0]) + float(m[-1][1]) if m else None
     # 처음이거나 앞 표본과 시간이 거의 안 벌어졌으면(타이머 눈금 10~16ms) 잠깐 뒤 한 번 더 잰다
     pair = _cpu_times()
     r = _cpu_delta(*pair) if pair else None
@@ -798,7 +793,17 @@ def _cpu():
 
 
 def _cpu_times():
-    """(바쁜 시간, 전체 시간) 누적값. Windows GetSystemTimes, 리눅스 /proc/stat."""
+    """(바쁜 시간, 전체 시간) 누적값. 맥 host_statistics(CPU 틱), Windows GetSystemTimes, 리눅스 /proc/stat."""
+    if sys.platform == "darwin":
+        # top 은 바쁠 때(수집기는 배경 우선순위라) 몇 초씩 걸려 틱 누적값을 직접 읽는다: user·system·idle·nice
+        import ctypes
+        lib = ctypes.CDLL("/usr/lib/libSystem.dylib")
+        lib.mach_host_self.restype = ctypes.c_uint
+        info, count = (ctypes.c_uint * 4)(), ctypes.c_uint(4)
+        if lib.host_statistics(lib.mach_host_self(), 3, ctypes.byref(info), ctypes.byref(count)) != 0:   # 3 = HOST_CPU_LOAD_INFO
+            return None
+        busy = info[0] + info[1] + info[3]
+        return busy, busy + info[2]
     if WINDOWS:
         import ctypes
         from ctypes import wintypes

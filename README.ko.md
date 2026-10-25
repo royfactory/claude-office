@@ -34,7 +34,7 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 git clone https://github.com/royfactory/claude-office.git
 cd claude-office
 cp .env.example .env
-docker compose up -d --build     # 허브(도커가 없으면 아래 「운영」의 허브 직접 실행)
+docker compose up -d --build     # 허브(도커). 도커가 없는 맥은 sh hub/install.sh
 sh collector/install.sh          # 수집기(macOS). Windows 는 아래 start.bat 하나로 끝납니다
 /usr/bin/python3 hooks/install_hooks.py --rule --todo-tools --apply   # 할 일 체크리스트 규칙(권장)
 ```
@@ -335,7 +335,7 @@ Claude Code 는 구독 계정의 **사용 한도(5시간·주간)**를 [상태 �
 | 업데이트 | `git pull` 후 허브 `docker compose up -d --build`, 수집기는 설치 명령을 다시 |
 | 수집기가 무엇을 보내는지 보기 | macOS `/usr/bin/python3 collector/collector.py --dump` · Windows `py -3 collector\collector.py --dump` |
 | 허브 로그 | `docker compose logs -f hub` |
-| 허브 직접 실행(도커 없이) | `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (`.env` 를 읽고, 데이터는 `data/`) |
+| 허브 직접 실행(도커 없이) | macOS 는 `sh hub/install.sh`(LaunchAgent 로 상시 실행, `--status`·`--uninstall`). 그 밖은 `uv run --python 3.12 --with-requirements hub/requirements.txt python hub/app.py` (`.env` 를 읽고, 데이터는 `data/`) |
 | 테스트 | `uv run --python 3.12 --with-requirements requirements-dev.txt --with-requirements hub/requirements.txt pytest -q` (수집기만은 `pytest -q tests/test_collector.py`, 3.9 에서도) |
 | 리눅스에서 수집기 | `python3 collector/collector.py --env .env` 를 systemd 사용자 서비스 등으로 상시 실행(시험 전) |
 
