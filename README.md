@@ -15,6 +15,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **Rooms follow tools.** Read/Grep → library, Edit/Write → dev room, Bash → server room, web and MCP tools → search room, planning → meeting room, idle → lounge. Characters walk around walls and furniture through the doors.
 - **Floors are projects.** The building on the left shows every project (git worktrees join their repository's floor). Busy floors light up; floors idle for over an hour sink into the basement. The building shrinks to fit your window without scrolling.
 - **What needs you.** A chip at the top gathers every session waiting for approval, stuck, or newly finished, across all floors — with sound and tab-title counts if you want them.
+- **Computer load.** CPU, GPU, memory and disk gauges for the computer on the floor you are viewing, right above the usage-limit bar.
 - **Session details.** Speech bubbles with Claude's last words, the current tool and target, todo checklists, a context-window gauge, a tool timeline, and a recent-activity feed.
 - **Optional extras.** Approve or deny permission prompts from the dashboard, send a message into a session, and show the 5-hour/weekly usage limits.
 - **3D characters built in.** 14 characters (13 animals plus "me") with standing and walking frames. Swap any of them for your own images or emoji.
@@ -101,6 +102,7 @@ The collector reads session logs and sends only:
 - the current tool and a short target: file name (no path), the Bash `description`, the first 32 characters of a search, the host of a URL, a sub-agent's description
 - **the first 80 characters of Claude's last message** (speech bubble)
 - model, git branch, token counts, compactions, lines added/removed by Edit/Write (counts, not content)
+- every 5 seconds: CPU, GPU, memory and disk usage percentages of that computer, plus total memory and disk size
 - for the timeline: tools used in the last 30 minutes with start/end time, target and failure, and the **times** you sent a message (not the text)
 
 Your prompts, command text, and file contents are never sent. Turn speech bubbles off in `/admin`, or set `CLAUDE_OFFICE_DETAIL=none` to send tool names and states only. Run `python3 collector/collector.py --dump` to see exactly what would be sent.

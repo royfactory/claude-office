@@ -1226,3 +1226,15 @@ def test_profile_of_labels(collector, home):
     assert collector.profile_of(str(home / ".claude")) == "기본"
     assert collector.profile_of("/x/Library/Application Support/orca/claude-profiles/f23251ba-5d08-45e3/home") == "Orca f23251ba"
     assert collector.profile_of("/opt/claude-work") == "claude-work"
+
+
+def test_sample_system_shape(collector):
+    """이 컴퓨터(CI 의 macOS·Windows·리눅스)에서 재 본다: 백분율은 0~100 정수이거나 None, 메모리·디스크는 잰다."""
+    v = collector.sample_system()
+    assert set(v) == {"ts", "cpu", "gpu", "mem", "memTotal", "disk", "diskTotal"}
+    for k in ("cpu", "gpu", "mem", "disk"):
+        assert v[k] is None or (isinstance(v[k], int) and 0 <= v[k] <= 100), (k, v[k])
+    assert v["mem"] is not None and v["memTotal"] > 0
+    assert v["disk"] is not None and v["diskTotal"] > 0
+    collector.sample_system()   # 두 번째 표본에서는 차로 재는 CPU(Windows·리눅스)도 나온다
+    assert collector.sample_system()["cpu"] is not None

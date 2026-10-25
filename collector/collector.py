@@ -744,6 +744,150 @@ class Collector:
 _rule_cache = {"at": 0.0, "ok": False}
 
 
+# ---------- 이 컴퓨터의 자원(CPU·GPU·메모리·디스크) ----------
+# 화면 왼쪽 아래 게이지용. 따로 도는 스레드가 SYS_SEC 마다 재고, 보낼 때는 마지막 값을 붙인다(수집 고리를 막지 않게).
+# 표준 라이브러리와 기본 명령만 쓴다. 잴 수 없는 값(예: GPU 를 읽을 길이 없는 컴퓨터)은 None.
+SYS_SEC = 5
+_sys = {"val": None, "started": False}
+
+
+def _run(cmd, timeout=4):
+    import subprocess
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           creationflags=0x08000000 if WINDOWS else 0)   # Windows: 콘솔 창을 띄우지 않는다
+        return r.stdout if r.returncode == 0 else ""
+    except (OSError, ValueError, Exception):
+        return ""
+
+
+def _pct(x):
+    return None if x is None else max(0, min(100, int(round(x))))
+
+
+class _CpuDelta:
+    """누적 (바쁜 시간, 전체 시간)의 차로 사용률을 낸다(리눅스 /proc/stat, Windows GetSystemTimes)."""
+
+    def __init__(self):
+        self.prev = None
+
+    def __call__(self, busy, total):
+        prev, self.prev = self.prev, (busy, total)
+        if not prev or total <= prev[1]:
+            return None
+        return 100.0 * (busy - prev[0]) / (total - prev[1])
+
+
+_cpu_delta = _CpuDelta()
+
+
+def _cpu():
+    if sys.platform == "darwin":
+        # top 의 두 번째 표본이 최근 1초 사용률이다(첫 표본은 부팅 뒤 평균)
+        out = _run(["top", "-l", "2", "-n", "0", "-s", "1"], timeout=8)   # 바쁠 때는 2초를 넘기기도 한다
+        m = re.findall(r"CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys", out)
+        return float(m[-1][0]) + float(m[-1][1]) if m else None
+    if WINDOWS:
+        import ctypes
+        from ctypes import wintypes
+        idle, kern, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kern), ctypes.byref(user)):
+            return None
+        v = lambda ft: (ft.dwHighDateTime << 32) | ft.dwLowDateTime   # noqa: E731
+        total = v(kern) + v(user)   # 커널 시간에 유휴 시간이 들어 있다
+        return _cpu_delta(total - v(idle), total)
+    try:
+        with open("/proc/stat") as f:
+            nums = [int(x) for x in f.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+    return _cpu_delta(sum(nums) - idle, sum(nums))
+
+
+def _mem():
+    if sys.platform == "darwin":
+        total = _run(["sysctl", "-n", "hw.memsize"]).strip()
+        vm = _run(["vm_stat"])
+        page = re.search(r"page size of (\d+)", vm)
+        got = {k: int(v) for k, v in re.findall(r'^"?([^":]+)"?:\s+(\d+)\.', vm, re.M)}
+        if not (total.isdigit() and page):
+            return None, None
+        # 활성 상태 보기의 '사용된 메모리'에 가깝게: 앱(익명) + 고정 + 압축
+        used = got.get("Anonymous pages", got.get("Pages active", 0)) - got.get("Pages purgeable", 0) \
+            + got.get("Pages wired down", 0) + got.get("Pages occupied by compressor", 0)
+        return 100.0 * used * int(page.group(1)) / int(total), int(total)
+    if WINDOWS:
+        import ctypes
+
+        class MS(ctypes.Structure):
+            _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                        ("avail", ctypes.c_ulonglong), ("pt", ctypes.c_ulonglong), ("pa", ctypes.c_ulonglong),
+                        ("vt", ctypes.c_ulonglong), ("va", ctypes.c_ulonglong), ("ve", ctypes.c_ulonglong)]
+        m = MS(); m.len = ctypes.sizeof(MS)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+            return None, None
+        return float(m.load), int(m.total)
+    try:
+        with open("/proc/meminfo") as f:
+            kv = {ln.split(":")[0]: int(ln.split()[1]) * 1024 for ln in f if ln.split()[1:2] and ln.split()[1].isdigit()}
+        return 100.0 * (kv["MemTotal"] - kv["MemAvailable"]) / kv["MemTotal"], kv["MemTotal"]
+    except (OSError, KeyError, ValueError, ZeroDivisionError):
+        return None, None
+
+
+def _gpu():
+    if sys.platform == "darwin":
+        # Apple 실리콘(그리고 일부 인텔 맥)의 GPU 드라이버가 사용률을 알려 준다. 권한 없이 읽힌다
+        m = re.findall(r'"Device Utilization %"\s*=\s*(\d+)', _run(["ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"]))
+        return max(int(x) for x in m) if m else None
+    import shutil
+    if shutil.which("nvidia-smi"):
+        vals = [int(x) for x in re.findall(r"\d+", _run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]))]
+        return max(vals) if vals else None
+    return None
+
+
+def _disk():
+    import shutil
+    try:
+        # 맥은 / 가 읽기 전용 시스템 볼륨이라 사용자 데이터가 있는 홈 쪽 볼륨을 잰다
+        u = shutil.disk_usage(os.path.expanduser("~"))
+        return 100.0 * u.used / u.total, u.total
+    except OSError:
+        return None, None
+
+
+def sample_system():
+    """한 번 재서 {cpu, gpu, mem, memTotal, disk, diskTotal, ts} 를 돌려준다(백분율은 0~100 정수)."""
+    out = {"ts": int(time.time())}
+    for name, fn in (("cpu", _cpu), ("gpu", _gpu)):
+        try:
+            out[name] = _pct(fn())
+        except Exception:
+            out[name] = None
+    for name, fn in (("mem", _mem), ("disk", _disk)):
+        try:
+            pct, total = fn()
+        except Exception:
+            pct, total = None, None
+        out[name], out[name + "Total"] = _pct(pct), total
+    return out
+
+
+def system_stats():
+    """마지막으로 잰 값. 처음 부를 때 재는 스레드를 띄운다(그 전에는 None)."""
+    if not _sys["started"]:
+        _sys["started"] = True
+
+        def loop():
+            while True:
+                _sys["val"] = sample_system()
+                time.sleep(SYS_SEC)
+        threading.Thread(target=loop, name="system-stats", daemon=True).start()
+    return _sys["val"]
+
+
 def checklist_rule_installed():
     if time.time() - _rule_cache["at"] < 60:
         return _rule_cache["ok"]
@@ -1070,7 +1214,10 @@ def run(args, col):
                 except Exception:
                     col.speech = False
             agents = col.collect()
-            if sender.send(agents, {"checklistRule": checklist_rule_installed(), "setup": setup_status()}):
+            meta = {"checklistRule": checklist_rule_installed(), "setup": setup_status()}
+            if sys_val := system_stats():
+                meta["sys"] = sys_val
+            if sender.send(agents, meta):
                 if failing:
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False

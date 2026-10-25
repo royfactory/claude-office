@@ -375,6 +375,14 @@ def test_language_setting(hub):
     assert _put(c, lambda cfg: cfg.update(language="fr")).status_code == 422
 
 
+def test_ingest_keeps_clean_system_stats(hub):
+    _, c = hub
+    meta = {"sys": {"cpu": 37.6, "gpu": None, "mem": 140, "disk": "x", "memTotal": 1024, "diskTotal": -5, "ts": 1, "junk": 1}}
+    assert c.post("/api/ingest", json={"host": "mac", "agents": [agent()], "meta": meta}, headers=AUTH).status_code == 200
+    h = c.get("/api/state").json()["hosts"][0]
+    assert h["sys"] == {"cpu": 37, "gpu": None, "mem": 100, "disk": None, "memTotal": 1024, "ts": 1}
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

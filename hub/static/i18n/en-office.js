@@ -201,4 +201,6 @@ I18N.add({
   // 연결
   "다시 연결 중": "Reconnecting",
   "연결 끊김 · {x} 전 데이터": "Disconnected · data from {x} ago",
+  // 컴퓨터 자원 게이지
+  "메모리": "Memory", "디스크": "Disk", "잴 수 없음": "not available on this computer", "전체 {x}": "{x} total",
 });

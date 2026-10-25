@@ -1214,6 +1214,23 @@ function renderLimits() {
     <span class="vals">${f ? seg(f) : ""}${f && w ? " · " : ""}${w ? (f ? `<span>${t("주")}</span> <b class="lv-${limLv(w.pct)}">${Math.round(w.pct)}%</b>` : `${t("주간")} ${seg(w)}`) : ""}</span>${list.length > 1 ? `<em>+${list.length - 1}</em>` : ""}</button>`);
   if (!$("limModal").hidden) renderLimitModal();
 }
+// 지금 보는 층의 컴퓨터(없으면 연결된 첫 컴퓨터)의 CPU·GPU·메모리·디스크. 수집기가 5초마다 잰다
+function sysHost() {
+  const f = floors().find(x => x.project === floorKey);
+  const hs = (state.hosts || []).filter(h => h.online && h.sys);
+  return hs.find(h => f && h.host === f.host) || hs[0] || null;
+}
+function renderSys() {
+  const h = state && sysHost();
+  $("sysbar").hidden = !h;
+  if (!h) { setHTML($("sysbar"), ""); return; }
+  const s = h.sys, gb = n => `${(n / 2 ** 30).toFixed(n >= 100 * 2 ** 30 ? 0 : 1)} GB`;
+  const item = (icon, name, v, total) => v == null
+    ? `<span class="sg na" title="${esc(h.host)} · ${esc(name)} — ${esc(t("잴 수 없음"))}"><i class="fa-solid fa-${icon}"></i><b>–</b><span class="lt"><i style="width:0"></i></span></span>`
+    : `<span class="sg" data-lv="${limLv(v)}" title="${esc(h.host)} · ${esc(name)} ${v}%${total ? " · " + esc(t("전체 {x}", { x: gb(total) })) : ""}"><i class="fa-solid fa-${icon}"></i><b class="lv-${limLv(v)}">${v}%</b><span class="lt"><i style="width:${v}%"></i></span></span>`;
+  setHTML($("sysbar"), item("microchip", "CPU", s.cpu) + item("display", "GPU", s.gpu)
+    + item("memory", t("메모리"), s.mem, s.memTotal) + item("hard-drive", t("디스크"), s.disk, s.diskTotal));
+}
 function renderLimitModal() {
   const now = Date.now() / 1000 - skew, list = limitGroups();
   const bar = (label, x) => x ? `<div class="lm-row" data-lv="${limLv(x.pct)}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, Math.round(x.pct))}%"></i></span>
@@ -1260,6 +1277,7 @@ function renderFloors(fl) {
     (down.length ? `<div class="under-sign"><i class="fa-solid fa-stairs"></i> ${t("지하 · 1시간 넘게 쉬는 층")}</div>` + down.map(story).join("") : ""));
   tickTimes($("floors"), now);
   renderLimits();
+  renderSys();
   fitBuilding();
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);

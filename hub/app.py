@@ -448,6 +448,11 @@ def _meta_of(body: dict) -> dict:
                 {"label": str(r.get("label", ""))[:160], **{k: bool(r.get(k)) for k in ("hooks", "approveHook", "statusline", "todoTools")}}
                 for r in rows[:10] if isinstance(r, dict)]
         out["setup"] = clean
+    sy = meta.get("sys")
+    if isinstance(sy, dict):   # 그 컴퓨터의 CPU·GPU·메모리·디스크 사용률(0~100, 잴 수 없으면 None)과 메모리·디스크 크기
+        num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)   # noqa: E731
+        out["sys"] = {k: (max(0, min(100, int(sy[k]))) if num(sy.get(k)) else None) for k in ("cpu", "gpu", "mem", "disk")}
+        out["sys"].update({k: int(sy[k]) for k in ("memTotal", "diskTotal", "ts") if num(sy.get(k)) and sy[k] >= 0})
     return out
 
 

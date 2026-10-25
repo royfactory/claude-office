@@ -148,6 +148,19 @@
      옆 무대의 「최근 소식」 줄과 높이(40px)·윗선·배경을 맞춰 화면 아래가 한 줄로 이어 보이게 한다 */
   .limits { flex: none; height: 40px; margin: auto -12px -14px; border-top: 1px solid var(--border-2); background: rgba(9,17,33,.94); }
   .limits[hidden] { display: none; }
+  /* 그 컴퓨터의 CPU·GPU·메모리·디스크: 사용 한도 줄 바로 위에 아이콘 게이지 네 칸 */
+  .sysbar { flex: none; height: 42px; margin: auto -12px 0; padding: 0 14px; border-top: 1px solid var(--border-2); background: rgba(9,17,33,.94);
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: center; font-size: 11.5px; }
+  .sysbar[hidden] { display: none; }
+  .sysbar:not([hidden]) + .limits { margin-top: 0; }
+  .sysbar:has(+ .limits[hidden]) { margin-bottom: -14px; }
+  /* 칸마다: 위에 아이콘·백분율, 아래에 막대 */
+  .sysbar .sg { display: grid; grid-template-columns: auto 1fr; row-gap: 4px; align-items: center; min-width: 0; }
+  .sysbar .sg > i { color: var(--text-dim); font-size: 11px; }
+  .sysbar .sg b { font-weight: 700; color: var(--text-hi); font-variant-numeric: tabular-nums; text-align: right; }
+  .sysbar .sg .lt { grid-column: 1 / -1; height: 5px; }
+  .sysbar .sg b.lv-mid { color: var(--warning); } .sysbar .sg b.lv-hi { color: var(--bad); }
+  .sysbar .sg.na { opacity: .45; }
   .lim-line { width: 100%; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 0; font-size: 12px;
               background: transparent; color: var(--text); white-space: nowrap; overflow: hidden; }
   .lim-line:hover { background: rgba(255,255,255,.03); }
@@ -545,6 +558,7 @@
       <div class="roof"><span class="antenna"></span><span class="sign">CLAUDE OFFICE</span></div>
       <div class="tower"><div id="floors"></div><div id="car"><i class="fa-solid fa-elevator"></i></div></div>
     </div>
+    <div class="sysbar" id="sysbar" hidden></div>
     <div class="limits" id="limits" hidden></div>
   </aside>
 
