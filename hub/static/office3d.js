@@ -25,11 +25,11 @@ function tickTimes(root, now) {
 }
 
 // ---------- 평면도 ----------
-// 3열(A·B·C) × 3줄(뒤·가운데·앞). 줄 사이는 가로 복도(z=-3, z=6), 열 사이는 세로 복도(x=-6.75, x=3.875).
+// 3열(A·B·C) × 3줄(뒤·가운데·앞). 줄 사이는 가로 복도(z=-3, z=6), 열 사이는 세로 복도(x≈-6.75, x≈3.9).
+// 방은 안이 보이게 뒷벽·왼벽만 세운다. 문은 뒷줄 방은 앞쪽(벽 없음), 가운데·앞줄 방은 뒷벽에 문틀을 뚫는다.
 const COL = { A: [-17, -7.75], B: [-5.75, 2.75], C: [5, 17] };
 const ROW = { back: [-12, -4], mid: [-2, 5], front: [7, 12] };
 const CORR = { back: -3, mid: -3, front: 6 };
-const VX = [-6.75, 3.875];
 // 방 아이콘(Font Awesome Free solid). 3D 간판은 캔버스에 그려서 글리프 코드를 직접 쓴다
 const ROOM_ICON = { library: "book", dev: "laptop-code", server: "server", search: "globe", meeting: "people-group", mydesk: "user", lounge: "mug-hot" };
 const ROOM_GLYPH = { library: "\uf02d", dev: "\uf5fc", server: "\uf233", search: "\uf0ac", meeting: "\ue533", mydesk: "\uf007", lounge: "\uf7b6" };
@@ -45,12 +45,106 @@ const LAYOUT = {
   server:  { col: "C", row: "mid",  floor: 0xdfe3ea },
   search:  { col: "B", row: "front", floor: 0xd5eee3 },
 };
-const ELEV = { x0: -17, x1: -13, z0: 7, z1: 12, door: [-15, 7], corr: 6, inside: [-15, 9.6] };
+// 엘리베이터: 문은 오른쪽(x1) 벽 가운데, 뒤·왼쪽은 벽, 앞·오른쪽은 유리(안에 탄 '나'가 보이게). door 는 문 바로 밖
+const ELEV = { x0: -17, x1: -13, z0: 7, z1: 12, doorZ: 9.5, door: [-12.3, 9.5], inside: [-15, 9.5] };
 const R = {};
 for (const [id, l] of Object.entries(LAYOUT)) {
   const [x0, x1] = COL[l.col], [z0, z1] = ROW[l.row];
   const doorZ = l.row === "front" ? z0 : (l.row === "mid" ? z0 : z1);
   R[id] = { id, x0, x1, z0, z1, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, door: [(x0 + x1) / 2, doorZ], corr: CORR[l.row], seats: [], color: l.floor };
+}
+
+// ---------- 길찾기 ----------
+// 벽과 큰 가구는 OBST(사각형 x0,z0,x1,z1)에 모으고, 사람은 0.25 칸 격자에서 A* 로 그 사이를 돌아 걷는다.
+// 사람 몸 반지름만큼 넓혀 막고, 찾은 길은 시선이 닿는 데까지 이어 붙여 직선으로 편다(벽·책상을 뚫고 걷지 않게)
+const OBST = [];
+function solid(x0, z0, x1, z1) { OBST.push([Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1)]); }
+const inSolid = ([x, z]) => OBST.some(o => x > o[0] && x < o[2] && z > o[1] && z < o[3]);
+const NAV = { x0: -18.4, z0: -13.1, step: 0.25, w: 147, h: 106, block: null };
+const BODY_R = 0.32;
+function buildNav() {
+  const { x0, z0, step, w, h } = NAV, b = new Uint8Array(w * h);
+  for (const [a, c, d, e] of OBST) {
+    const i0 = Math.max(0, Math.floor((a - BODY_R - x0) / step)), i1 = Math.min(w - 1, Math.ceil((d + BODY_R - x0) / step));
+    const j0 = Math.max(0, Math.floor((c - BODY_R - z0) / step)), j1 = Math.min(h - 1, Math.ceil((e + BODY_R - z0) / step));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const px = x0 + (i + 0.5) * step, pz = z0 + (j + 0.5) * step;
+      if (px > a - BODY_R && px < d + BODY_R && pz > c - BODY_R && pz < e + BODY_R) b[j * w + i] = 1;
+    }
+  }
+  NAV.block = b;
+}
+const navCell = ([x, z]) => {
+  const i = Math.min(NAV.w - 1, Math.max(0, Math.floor((x - NAV.x0) / NAV.step)));
+  const j = Math.min(NAV.h - 1, Math.max(0, Math.floor((z - NAV.z0) / NAV.step)));
+  return j * NAV.w + i;
+};
+const navPt = c => [NAV.x0 + (c % NAV.w + 0.5) * NAV.step, NAV.z0 + (Math.floor(c / NAV.w) + 0.5) * NAV.step];
+function nearestFree(c) {
+  if (!NAV.block[c]) return c;
+  const ci = c % NAV.w, cj = Math.floor(c / NAV.w);
+  for (let r = 1; r < 16; r++) {
+    let best = -1, bd = Infinity;
+    for (let j = cj - r; j <= cj + r; j++) for (let i = ci - r; i <= ci + r; i++) {
+      if (i < 0 || j < 0 || i >= NAV.w || j >= NAV.h || NAV.block[j * NAV.w + i]) continue;
+      const d = (i - ci) ** 2 + (j - cj) ** 2;
+      if (d < bd) { bd = d; best = j * NAV.w + i; }
+    }
+    if (best >= 0) return best;
+  }
+  return -1;
+}
+function clearLine(p, q) {   // p→q 사이에 막힌 칸이 없는지(칸 반 크기 간격으로 훑는다)
+  const n = Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / (NAV.step / 2));
+  for (let k = 1; k < n; k++) if (NAV.block[navCell([p[0] + (q[0] - p[0]) * k / n, p[1] + (q[1] - p[1]) * k / n])]) return false;
+  return true;
+}
+// from 에서 to 까지 걸어갈 점들(from 은 빼고 to 로 끝난다). 길이 없으면 곧장 간다
+function route(from, to) {
+  const { w, h, block } = NAV;
+  const s = nearestFree(navCell(from)), g = nearestFree(navCell(to));
+  if (s < 0 || g < 0) return [to.slice()];
+  const gs = new Float32Array(w * h).fill(Infinity), came = new Int32Array(w * h).fill(-1), done = new Uint8Array(w * h);
+  const heap = [];   // [f, 칸] 최소 힙
+  const push = (f, c) => { heap.push([f, c]); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  const gi = g % w, gj = Math.floor(g / w);
+  const hEst = c => { const dx = Math.abs(c % w - gi), dz = Math.abs(Math.floor(c / w) - gj); return Math.max(dx, dz) + 0.4142 * Math.min(dx, dz); };
+  gs[s] = 0; push(hEst(s), s);
+  while (heap.length) {
+    const [, c] = pop();
+    if (done[c]) continue;
+    done[c] = 1;
+    if (c === g) break;
+    const ci = c % w, cj = Math.floor(c / w);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue;
+      const i = ci + di, j = cj + dj;
+      if (i < 0 || j < 0 || i >= w || j >= h) continue;
+      const n = j * w + i;
+      if (block[n] || done[n]) continue;
+      if (di && dj && (block[cj * w + i] || block[j * w + ci])) continue;   // 모서리를 비스듬히 자르지 않는다
+      const ng = gs[c] + (di && dj ? 1.4142 : 1);
+      if (ng < gs[n]) { gs[n] = ng; came[n] = c; push(ng + hEst(n), n); }
+    }
+  }
+  if (!done[g]) return [to.slice()];
+  const cells = [];
+  for (let c = g; c !== -1; c = came[c]) cells.push(c);
+  cells.reverse();
+  const pts = cells.map(navPt);
+  pts[pts.length - 1] = g === navCell(to) ? to.slice() : pts[pts.length - 1];
+  if (g !== navCell(to)) pts.push(to.slice());   // 자리가 가구 옆 막힌 칸이면 마지막 한 걸음만 그리로
+  const out = [];
+  let anchor = from, k = 0;
+  while (k < pts.length - 1) {
+    let far = k;
+    for (let m = pts.length - 1; m > k; m--) if (clearLine(anchor, pts[m])) { far = m; break; }
+    if (far === k) far = k + 1;
+    out.push(pts[far]); anchor = pts[far]; k = far;
+  }
+  if (!out.length) out.push(to.slice());
+  return out;
 }
 
 // ---------- 장면 ----------
@@ -107,6 +201,7 @@ function box(w, h, d, c, x, y, z, o = {}) {
   m.castShadow = o.cast !== false;
   m.receiveShadow = true;
   if (o.ry) m.rotation.y = o.ry;
+  if (o.block) solid(x - w / 2, z - d / 2, x + w / 2, z + d / 2);   // 사람이 뚫고 지나가지 않을 것
   (o.parent || officeRoot).add(m);
   return m;
 }
@@ -140,7 +235,7 @@ function chair(x, z, c = 0x3b5bdb, face = 0) { // face: 의자 등받이가 놓�
   officeRoot.add(g);
 }
 function desk(x, z) {
-  box(1.7, 0.07, 0.85, 0xf8fafc, x, 0.72, z);
+  box(1.7, 0.07, 0.85, 0xf8fafc, x, 0.72, z, { block: true });
   box(0.07, 0.72, 0.8, 0xcbd5e1, x - 0.8, 0, z);
   box(0.07, 0.72, 0.8, 0xcbd5e1, x + 0.8, 0, z);
   box(0.75, 0.45, 0.05, 0x1e293b, x, 0.95, z - 0.25);
@@ -205,8 +300,8 @@ function buildOffice() {
   box(37.6, 0.25, 27.6, 0xd6d0c4, 0, -0.55, 0.25, { cast: false });     // 바닥 테두리
   for (const r of Object.values(R)) {
     themed.push([box(r.x1 - r.x0, 0.05, r.z1 - r.z0, r.color, r.cx, 0, r.cz, { cast: false }), r.color, 0.22]);
-    themed.push([box(r.x1 - r.x0, 1.5, 0.16, 0xf1f5f9, r.cx, 0, r.z0), 0xf1f5f9, 0.42]);   // 뒷벽(층마다 벽 색이 다르다)
-    themed.push([box(0.16, 1.5, r.z1 - r.z0, 0xe2e8f0, r.x0, 0, r.cz), 0xe2e8f0, 0.42]);   // 왼벽
+    backWall(r);   // 뒷벽(층마다 벽 색이 다르다). 문이 뒷벽에 있으면 그 자리를 비우고 문틀을 세운다
+    themed.push([box(0.16, 1.5, r.z1 - r.z0, 0xe2e8f0, r.x0, 0, r.cz, { block: true }), 0xe2e8f0, 0.42]);   // 왼벽
     // 간판은 늘 카메라를 보는 반투명 판(스프라이트)으로, 방 안쪽 뒤편 가운데에 띄운다
     const sign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, opacity: 0.92 }));
     sign.scale.set(4.8, 0.8, 1); sign.center.set(0.5, 0.5);
@@ -215,16 +310,25 @@ function buildOffice() {
   }
   buildLibrary(R.library); buildMeeting(R.meeting); buildDev(R.dev); buildLounge(R.lounge);
   buildMyDesk(R.mydesk); buildServer(R.server); buildSearch(R.search); buildElevator(); buildCafe(); buildCabin();
+  for (const r of Object.values(R)) r.seats = r.seats.filter(p => !inSolid(p));   // 가구 위에 놓인 자리는 뺀다
+  buildNav();
   [[-18, -12.8], [18, -12.8], [-4.4, 6.2], [4, 13], [-11, 13], [18, 6]].forEach(([x, z]) => plant(x, z, 0.9));
   // 층 표시: 엘리베이터 앞 복도 바닥에 크게 칠한 층 번호와, 엘리베이터 위 전광판
   floorDecal = new THREE.Mesh(new THREE.PlaneGeometry(8, 2), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
-  floorDecal.rotation.x = -Math.PI / 2; floorDecal.position.set(-8.4, 0.07, 6.05);
+  floorDecal.rotation.x = -Math.PI / 2; floorDecal.position.set(-9.4, 0.07, 9.5); floorDecal.scale.set(0.82, 0.82, 1);   // 엘리베이터 문 앞
   officeRoot.add(floorDecal);
   elevSign = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }));
-  elevSign.position.set(-15, 3.9, 7.2); elevSign.renderOrder = 11;
+  elevSign.position.set(-12.7, 3.9, ELEV.doorZ); elevSign.renderOrder = 11;
   officeRoot.add(elevSign);
 }
 let floorDecal, elevSign;
+const DOOR_W = 1.8;
+function backWall(r) {
+  const z = r.z0, gap = r.door[1] === r.z0 ? r.door[0] : null;
+  const segs = gap === null ? [[r.x0, r.x1]] : [[r.x0, gap - DOOR_W / 2], [gap + DOOR_W / 2, r.x1]];
+  for (const [a, b] of segs) themed.push([box(b - a, 1.5, 0.16, 0xf1f5f9, (a + b) / 2, 0, z, { block: true }), 0xf1f5f9, 0.42]);
+  if (gap !== null) for (const sd of [-1, 1]) box(0.16, 1.62, 0.26, 0x94a3b8, gap + sd * DOOR_W / 2, 0, z);   // 문틀 기둥
+}
 
 // ---------- 층마다 다른 분위기 ----------
 // 색조는 층 배지와 같은 색(층 번호 × 47°). 채광은 높이를 따른다: 아래층은 서늘하고 어둑하게,
@@ -285,23 +389,23 @@ function setSignOn(sprite, text, hue) {
 }
 function buildLibrary(r) {
   const books = [0xef4444, 0x3b82f6, 0x10b981, 0xf59e0b, 0x8b5cf6, 0x0ea5e9];
-  for (let i = 0; i < 4; i++) {
-    const x = r.x0 + 1.6 + i * 2.25, z = r.z0 + 0.45;
-    box(2.0, 2.3, 0.55, 0x9a6b43, x, 0, z);
+  for (let i = 0; i < 3; i++) {
+    const x = r.x0 + 1.8 + i * 2.9, z = r.z0 + 0.45;
+    box(2.0, 2.3, 0.55, 0x9a6b43, x, 0, z, { block: true });
     for (let s = 0; s < 3; s++) for (let b = 0; b < 7; b++)
       box(0.2, 0.42, 0.42, books[(i + s + b) % books.length], x - 0.75 + b * 0.25, 0.25 + s * 0.72, z + 0.08, { cast: false });
     r.seats.push([x, z + 1.35]);
   }
-  box(3.2, 0.08, 1.3, 0xc8a27a, r.cx + 0.5, 0.74, r.cz + 1.4);
+  box(3.2, 0.08, 1.3, 0xc8a27a, r.cx + 0.5, 0.74, r.cz + 1.4, { block: true });
   box(0.12, 0.74, 0.12, 0x8b6b4a, r.cx + 0.5, 0, r.cz + 1.4);
   for (const dx of [-1, 0, 1]) { chair(r.cx + 0.5 + dx * 1.0, r.cz + 2.4, 0xb7791f, Math.PI); r.seats.push([r.cx + 0.5 + dx * 1.0, r.cz + 2.35]); }
   plant(r.x1 - 0.8, r.z1 - 0.8, 0.8);
 }
 function buildMeeting(r) {
-  box(5.2, 0.08, 1.9, 0xffffff, r.cx, 0.74, r.cz + 0.6);
-  box(4.8, 0.74, 0.12, 0xcbd5e1, r.cx, 0, r.cz + 0.6, { cast: false });
-  for (let i = 0; i < 4; i++) {
-    const x = r.cx - 1.9 + i * 1.27;
+  box(4.2, 0.08, 1.9, 0xffffff, r.cx, 0.74, r.cz + 0.6, { block: true });
+  box(3.8, 0.74, 0.12, 0xcbd5e1, r.cx, 0, r.cz + 0.6, { cast: false });
+  for (let i = 0; i < 3; i++) {
+    const x = r.cx - 1.35 + i * 1.35;
     chair(x, r.cz - 0.75, 0x334155, 0); r.seats.push([x, r.cz - 0.75]);
     chair(x, r.cz + 1.95, 0x334155, Math.PI); r.seats.push([x, r.cz + 1.95]);
   }
@@ -309,8 +413,8 @@ function buildMeeting(r) {
   [0xef4444, 0x22c55e, 0x3b82f6].forEach((c, i) => box(0.5, 0.35, 0.02, c, r.cx + 1.3 + i * 0.7, 1.1, r.z0 + 0.17, { cast: false }));
 }
 function buildDev(r) {
-  for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
-    const x = r.x0 + 2.2 + col * 3.9, z = r.z0 + 1.6 + row * 2.4;
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 3; col++) {
+    const x = r.x0 + 2.2 + col * 3.9, z = r.z0 + 2.0 + row * 3.2;
     desk(x, z); chair(x, z + 0.75, 0x3b5bdb, Math.PI);
     r.seats.push([x, z + 0.8]);
   }
@@ -318,10 +422,10 @@ function buildDev(r) {
 }
 function buildLounge(r) {
   themed.push([box(6.5, 0.02, 4.5, 0xe9d5b9, r.cx, 0.05, r.cz + 0.5, { cast: false }), 0xe9d5b9, 0.45]);
-  box(4.4, 0.45, 1.0, 0x7c4a2d, r.cx, 0, r.z0 + 1.2);
+  box(4.4, 0.45, 1.0, 0x7c4a2d, r.cx, 0, r.z0 + 1.2, { block: true });
   box(4.4, 0.75, 0.3, 0x6b3f26, r.cx, 0.2, r.z0 + 0.75);
-  box(1.0, 0.45, 2.6, 0x7c4a2d, r.x0 + 1.4, 0, r.cz + 0.3);
-  box(1.6, 0.4, 0.9, 0xd6b894, r.cx + 0.3, 0, r.cz + 0.6);
+  box(1.0, 0.45, 2.6, 0x7c4a2d, r.x0 + 1.4, 0, r.cz + 0.3, { block: true });
+  box(1.6, 0.4, 0.9, 0xd6b894, r.cx + 0.3, 0, r.cz + 0.6, { block: true });
   box(1.4, 0.9, 0.08, 0x111827, r.x1 - 1.2, 0.7, r.z0 + 0.12);
   plant(r.x1 - 0.8, r.z1 - 0.8, 0.9);
   for (let row = 0; row < 3; row++) for (let i = 0; i < 4; i++)
@@ -329,7 +433,7 @@ function buildLounge(r) {
 }
 function buildMyDesk(r) {
   themed.push([box(9.0, 0.02, 6.0, 0xbcd4f2, r.cx, 0.05, r.cz, { cast: false }), 0xbcd4f2, 0.6]);
-  box(4.4, 1.0, 0.9, 0xffffff, r.cx, 0, r.cz - 0.3);
+  box(4.4, 1.0, 0.9, 0xffffff, r.cx, 0, r.cz - 0.3, { block: true });
   box(4.4, 0.06, 1.1, 0xe2e8f0, r.cx, 1.0, r.cz - 0.3);
   box(2.0, 0.3, 0.02, 0xd97757, r.cx, 0.55, r.cz + 0.16, { cast: false });
   box(0.7, 0.45, 0.05, 0x1e293b, r.cx - 1.2, 1.06, r.cz - 0.55);
@@ -339,41 +443,54 @@ function buildMyDesk(r) {
 }
 const leds = [];
 function buildServer(r) {
-  for (let row = 0; row < 2; row++) for (let i = 0; i < 5; i++) {
-    const x = r.x0 + 2.0 + i * 2.1, z = r.z0 + 0.9 + row * 3.2;
-    box(1.0, 2.4, 0.9, 0x1f2937, x, 0, z);
+  for (let row = 0; row < 2; row++) for (let i = 0; i < 3; i++) {
+    const x = r.x0 + 2.4 + i * 3.6, z = r.z0 + 1.0 + row * 3.4;
+    box(1.0, 2.4, 0.9, 0x1f2937, x, 0, z, { block: true });
     for (let k = 0; k < 6; k++) {
       const led = box(0.08, 0.05, 0.02, 0x22c55e, x - 0.3 + (k % 3) * 0.12, 0.5 + Math.floor(k / 3) * 0.9, z + 0.46,
         { cast: false, mat: new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: k % 4 ? 0x22c55e : 0xf59e0b, emissiveIntensity: 1 }) });
       leds.push(led);
     }
-    if (i % 2 === 0) r.seats.push([x, z + 1.1]);
+    r.seats.push([x, z + 1.1]);
   }
 }
 let globe;
 function buildSearch(r) {
-  for (let i = 0; i < 3; i++) {
-    const x = r.x0 + 1.6 + i * 1.6;
-    box(0.5, 1.7, 0.4, 0x7c3aed, x, 0, r.z0 + 1.2);
+  for (let i = 0; i < 2; i++) {
+    const x = r.x0 + 1.8 + i * 1.9;
+    box(0.5, 1.7, 0.4, 0x7c3aed, x, 0, r.z0 + 1.2, { block: true });
     box(0.42, 0.55, 0.03, 0xc4b5fd, x, 1.0, r.z0 + 1.42, { cast: false, mat: mat(0xc4b5fd, { emissive: 0x7c3aed, emissiveIntensity: 0.4 }) });
     r.seats.push([x, r.z0 + 2.2]);
   }
-  cyl(0.08, 1.0, 0x64748b, r.x1 - 1.6, 0, r.cz);
+  cyl(0.08, 1.0, 0x64748b, r.x1 - 1.6, 0, r.cz); solid(r.x1 - 1.9, r.cz - 0.3, r.x1 - 1.3, r.cz + 0.3);
   globe = ball(0.55, 0x38bdf8, r.x1 - 1.6, 1.5, r.cz);
-  box(1.6, 0.06, 0.9, 0xffffff, r.cx + 1.6, 0.72, r.z1 - 1.2);
+  box(1.6, 0.06, 0.9, 0xffffff, r.cx + 1.6, 0.72, r.z1 - 1.2, { block: true });
   r.seats.push([r.cx + 1.6, r.z1 - 0.5], [r.x1 - 1.6, r.cz + 1.1]);
 }
 const doors = [];
+// 뒤(z0)·왼쪽(x0)은 막힌 벽, 앞(z1, 카메라 쪽)·오른쪽(x1)은 유리. 문은 오른쪽 가운데에서 앞뒤(z)로 열린다
+const GLASS = new THREE.MeshStandardMaterial({ color: 0xcfe8ff, transparent: true, opacity: 0.26, roughness: 0.08, metalness: 0.2, depthWrite: false });
+const GLASS_DOOR = new THREE.MeshStandardMaterial({ color: 0xd8e2ee, transparent: true, opacity: 0.55, roughness: 0.2, metalness: 0.5, depthWrite: false });
+const EL_DOOR_W = 2.0;
 function buildElevator() {
-  const { x0, x1, z0, z1 } = ELEV, cx = (x0 + x1) / 2;
-  box(x1 - x0, 0.05, z1 - z0, 0xcbd5e1, cx, 0, (z0 + z1) / 2, { cast: false });
-  box(x1 - x0, 3.2, 0.2, 0x94a3b8, cx, 0, z1 - 0.1);
-  box(0.2, 3.2, z1 - z0, 0xa3b0c2, x0 + 0.1, 0, (z0 + z1) / 2);
-  box(x1 - x0, 0.25, 0.3, 0x64748b, cx, 2.9, z0 + 0.15);
-  box(0.25, 2.9, 0.3, 0x64748b, x0 + 0.12, 0, z0 + 0.15);
-  box(0.25, 2.9, 0.3, 0x64748b, x1 - 0.12, 0, z0 + 0.15);
-  for (const s of [-1, 1]) doors.push({ m: box(1.75, 2.8, 0.08, 0xd1d5db, cx + s * 0.9, 0, z0 + 0.2), base: cx + s * 0.9, dir: s });
-  box(0.3, 0.3, 0.05, 0xfbbf24, x1 + 0.4, 1.5, z0 + 0.05, { mat: mat(0xfbbf24, { emissive: 0xf59e0b, emissiveIntensity: 0.6 }) });
+  const { x0, x1, z0, z1, doorZ } = ELEV, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, H = 3.0;
+  box(x1 - x0, 0.05, z1 - z0, 0xcbd5e1, cx, 0, cz, { cast: false });
+  box(x1 - x0, 3.2, 0.2, 0x94a3b8, cx, 0, z0 + 0.1, { block: true });          // 뒷벽(예전 문 자리)
+  box(0.2, 3.2, z1 - z0, 0xa3b0c2, x0 + 0.1, 0, cz, { block: true });          // 왼벽
+  box(x1 - x0, H, 0.08, 0, cx, 0, z1 - 0.04, { mat: GLASS, cast: false, block: true });   // 앞 유리
+  const g0 = doorZ - EL_DOOR_W / 2, g1 = doorZ + EL_DOOR_W / 2;                // 오른쪽 유리(문 자리만 비움)
+  box(0.08, H, g0 - z0, 0, x1 - 0.04, 0, (z0 + g0) / 2, { mat: GLASS, cast: false, block: true });
+  box(0.08, H, z1 - g1, 0, x1 - 0.04, 0, (g1 + z1) / 2, { mat: GLASS, cast: false, block: true });
+  // 유리 테두리와 문틀
+  box(x1 - x0, 0.2, 0.2, 0x64748b, cx, H, z1 - 0.1);
+  box(0.2, 0.2, z1 - z0, 0x64748b, x1 - 0.1, H, cz);
+  box(0.2, H + 0.2, 0.2, 0x64748b, x1 - 0.1, 0, z1 - 0.1);
+  for (const z of [g0, g1]) box(0.3, H, 0.22, 0x64748b, x1 - 0.1, 0, z);
+  for (const sd of [-1, 1]) {
+    const base = doorZ + sd * EL_DOOR_W / 4;
+    doors.push({ m: box(0.08, H - 0.15, EL_DOOR_W / 2, 0, x1 - 0.02, 0, base, { mat: GLASS_DOOR, cast: false }), base, dir: sd, axis: "z", travel: EL_DOOR_W / 2 - 0.05 });
+  }
+  box(0.05, 0.3, 0.3, 0xfbbf24, x1 + 0.08, 1.5, g0 - 0.5, { mat: mat(0xfbbf24, { emissive: 0xf59e0b, emissiveIntensity: 0.6 }) });   // 호출 버튼
 }
 let doorOpenUntil = 0;
 
@@ -401,9 +518,9 @@ function buildCabin() {
 }
 function buildCafe() {
   themed.push([box(11.5, 0.05, 4.8, 0xf3dfc6, 11, 0, 9.6, { cast: false }), 0xf3dfc6, 0.35]);
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
-    const x = 7 + i * 3.6, z = 8.4 + j * 2.4;
-    cyl(0.55, 0.05, 0xffffff, x, 0.72, z); cyl(0.06, 0.72, 0x9ca3af, x, 0, z);
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+    const x = 8.2 + i * 5.4, z = 8.4 + j * 2.4;
+    cyl(0.55, 0.05, 0xffffff, x, 0.72, z); cyl(0.06, 0.72, 0x9ca3af, x, 0, z); solid(x - 0.5, z - 0.5, x + 0.5, z + 0.5);
     chair(x - 0.85, z, 0xf97316, Math.PI / 2); chair(x + 0.85, z, 0xf97316, -Math.PI / 2);
   }
 }
@@ -595,19 +712,6 @@ function takeSeat(key, roomId) {
   seatOf.set(key, { room: roomId, i });
   return seatPos(roomId, i);
 }
-function doorOf(roomId) { return roomId === "elevator" ? { door: ELEV.door, corr: ELEV.corr } : R[roomId]; }
-function route(from, to, dest) {
-  if (from === to) return [dest];
-  const a = doorOf(from), b = doorOf(to);
-  const pts = [a.door, [a.door[0], a.corr]];
-  if (a.corr !== b.corr) {
-    const vx = VX.reduce((p, v) => Math.abs(v - a.door[0]) < Math.abs(p - a.door[0]) ? v : p);
-    pts.push([vx, a.corr], [vx, b.corr]);
-  }
-  pts.push([b.door[0], b.corr], b.door, dest);
-  if (from === "elevator") pts.unshift(ELEV.inside);
-  return pts;
-}
 
 // ---------- 상태 ----------
 let state = null, cfg = null, floorKey = null, selected = null, skew = 0, dirtyLooks = false;
@@ -686,7 +790,7 @@ function travelTo(project) {
   if (transit || !me.actor) { gotoFloor(project); return; }
   const from = (floors().find(x => x.project === floorKey) || {}).n;
   transit = { target: project, n: f.n, from, phase: "walk", t: performance.now() };
-  me.actor.path = route("mydesk", "elevator", ELEV.inside);
+  me.actor.path = route(me.actor.pos, ELEV.inside);
   mePill(`${floorLabel(f.n)}로 가는 중`);
 }
 function mePill(text) {
@@ -696,7 +800,7 @@ function mePill(text) {
 function stepTransit(t) {
   const m = me.actor, tr = transit;
   if (tr.phase === "walk") {
-    if (m.path.length <= 2) doorOpenUntil = t + 800;          // 문 앞에 오면 연다
+    if (Math.hypot(m.pos[0] - ELEV.door[0], m.pos[1] - ELEV.door[1]) < 3) doorOpenUntil = t + 800;   // 문 앞에 오면 연다
     if (!m.path.length) { tr.phase = "close"; tr.t = t; doorOpenUntil = 0; }
   } else if (tr.phase === "close" && t - tr.t > 800) {
     // 층은 그대로 두고 '나'와 엘리베이터 바닥판만 위로(또는 아래로) 사라졌다가, 새 층에서 반대쪽에서 나타난다
@@ -767,7 +871,7 @@ function stepTransit(t) {
       setTimeout(() => $("ride").classList.remove("on"), 900);
     }
   } else if (tr.phase === "arrive" && t - tr.t > 600) {
-    tr.phase = "out"; m.path = route("elevator", "mydesk", me.pos);
+    tr.phase = "out"; m.path = route(m.pos, me.pos);
   } else if (tr.phase === "out" && !m.path.length) {
     transit = null; mePill(""); rotateAt = Date.now();
   }
@@ -924,11 +1028,11 @@ function apply(instant) {
       actors.set(it.key, ac);
       const seat = takeSeat(it.key, it.room);
       if (instant) { ac.pos = seat.slice(); ac.path = []; }
-      else { ac.pos = ELEV.inside.slice(); ac.path = route("elevator", it.room, seat); arrivals = true; setOpacity(ac, 1); }
+      else { ac.pos = ELEV.inside.slice(); ac.path = route(ac.pos, seat); arrivals = true; setOpacity(ac, 1); }
       ac.room = it.room;
     } else if (ac.room !== it.room) {
       const seat = takeSeat(it.key, it.room);
-      ac.path = route(ac.room, it.room, seat);
+      ac.path = route(ac.pos, seat);
       ac.room = it.room;
     }
     ac.item = it;
@@ -937,7 +1041,7 @@ function apply(instant) {
   for (const [key, ac] of actors) {
     if (seen.has(key) || ac.leaving) continue;
     ac.leaving = true; seatOf.delete(key);
-    ac.path = route(ac.room, "elevator", ELEV.inside);
+    ac.path = route(ac.pos, ELEV.inside);
     ac.lab.classList.add("gone");
   }
   if (arrivals) doorOpenUntil = performance.now() + 3000;
@@ -1988,7 +2092,7 @@ function busyScene(t) {
   for (const ac of actors.values()) if (ac.path.length || ac.fade !== undefined) return true;
   if (me.actor && me.actor.path.length) return true;
   const open = t < doorOpenUntil;
-  return doors.some(d => Math.abs(d.base + (open ? d.dir * 1.6 : 0) - d.m.position.x) > 0.003);
+  return doors.some(d => Math.abs(d.base + (open ? d.dir * d.travel : 0) - d.m.position[d.axis]) > 0.003);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { lastT = performance.now(); kick(); } });
 function frame(t) {
@@ -2003,6 +2107,7 @@ function frame(t) {
       const [tx, tz] = ac.path[0];
       const dx = tx - ac.pos[0], dz = tz - ac.pos[1], d = Math.hypot(dx, dz), step = (ac === me.actor && transit ? 9 : 5.5) * dt;
       if (d <= step) { ac.pos = [tx, tz]; ac.path.shift(); } else { ac.pos[0] += dx / d * step; ac.pos[1] += dz / d * step; moving = true; dir = [dx, dz]; }
+      if (ac.leaving && Math.hypot(ac.pos[0] - ELEV.door[0], ac.pos[1] - ELEV.door[1]) < 3) doorOpenUntil = Math.max(doorOpenUntil, t + 800);
       if (ac.leaving && !ac.path.length) { ac.fade = 1; doorOpenUntil = t + 1500; }
     }
     if (ac.fade !== undefined) {
@@ -2020,8 +2125,8 @@ function frame(t) {
   placed.length = 0;
   const open = t < doorOpenUntil;
   for (const d of doors) {
-    const goal = d.base + (open ? d.dir * 1.6 : 0);
-    d.m.position.x += (goal - d.m.position.x) * Math.min(1, dt * 5);
+    const goal = d.base + (open ? d.dir * d.travel : 0);
+    d.m.position[d.axis] += (goal - d.m.position[d.axis]) * Math.min(1, dt * 5);
   }
   leds.forEach((l, i) => { l.material.emissiveIntensity = 0.4 + 0.6 * (Math.sin(t / 180 + i * 1.7) > 0.2 ? 1 : 0); });
   if (globe) globe.rotation.y += dt * 0.6;
@@ -2158,3 +2263,5 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("online", () => { if (lostAt) { retryMs = 1000; connect(); } });
 connect();
+// 점검용: 주소에 ?debug 가 있으면 길찾기를 밖에서 부를 수 있게 둔다(벽·가구 통과 시험)
+if (new URLSearchParams(location.search).has("debug")) window.officeDebug = { route, R, ELEV, OBST, me };
