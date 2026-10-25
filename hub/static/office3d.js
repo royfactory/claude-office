@@ -1128,22 +1128,24 @@ document.addEventListener("click", e => {
   if (e.target === $("limModal") || e.target.closest("#limModal .x")) setLimitModal(false);
 });
 
-const MAX_WINDOWS = 8;
+const MAX_WINDOWS = 8, ROW_WINDOWS = 3;   // 기본 밀도에서 창문 수, 한 줄 밀도에서 창문 수
 function renderFloors(fl) {
   const now = Date.now() / 1000 - skew;
   const chars = assignCharacters(cfg, state.agents);
   // 창문 하나 = 세션 하나. 근무 중이면 불이 켜지고 그 세션의 캐릭터가 창가에 선다
   const story = f => {
     const ws = f.agents.slice().sort((a, b) => (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0));
-    const wins = ws.slice(0, MAX_WINDOWS).map(a => {
+    // 밀도(fitBuilding)마다 보일 것만 CSS 가 고른다: .x = 한 줄 밀도에서 숨는 창, .m-full·.m-row = 밀도별 "+n"
+    const wins = ws.slice(0, MAX_WINDOWS).map((a, i) => {
       const ch = chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
       const face = l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt="">` : esc(l.emoji || "🙂");
-      return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}" title="${esc(a.title || a.name)} · ${STATE_WORD[st]}">${face}</span>`;
-    }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more">+${ws.length - MAX_WINDOWS}</span>` : "");
+      return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}${i >= ROW_WINDOWS ? " x" : ""}" title="${esc(a.title || a.name)} · ${STATE_WORD[st]}">${face}</span>`;
+    }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more m-full">+${ws.length - MAX_WINDOWS}</span>` : "")
+      + (ws.length > ROW_WINDOWS ? `<span class="win more m-row">+${ws.length - ROW_WINDOWS}</span>` : "");
     return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}${f.under ? " under" : ""}" data-p="${esc(f.project)}">
       <span class="no" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span>
       <span class="info"><b>${esc(f.project)}</b><small>${f.busy ? `<em>${f.busy}명 근무 중</em> · ` : ""}세션 ${f.agents.length}개${f.busy ? "" : " · " + agoSpan(f.last, " 전")}</small>
-      <span class="wins">${wins}</span></span></div>`;
+      <span class="wins">${wins}</span><span class="cnt" title="근무 중 / 세션"><em>${f.busy}</em>/${f.agents.length}</span></span></div>`;
   };
   // 위에서부터: 지상 층(높은 층 먼저) → 로비(컴퓨터들) → 지하 층(B1 부터 깊은 쪽으로)
   const up = fl.filter(f => f.n > 0).reverse(), down = fl.filter(f => f.n < 0);
@@ -1152,11 +1154,26 @@ function renderFloors(fl) {
     (down.length ? `<div class="under-sign"><i class="fa-solid fa-stairs"></i> 지하 · 1시간 넘게 쉬는 층</div>` + down.map(story).join("") : ""));
   tickTimes($("floors"), now);
   renderLimits();
+  fitBuilding();
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
   const f = fl.find(x => x.project === floorKey);
   setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · 세션 ${f.agents.length}개</small>` : "");
 }
+// 왼쪽 빌딩을 스크롤 없이 보이게: 넉넉한 밀도부터 들어갈 때까지 줄인다.
+// full = 이름·상태·창문 세 줄, row = 한 줄에 창문 3개까지, tight = 한 줄에 근무/세션 숫자만(지붕·로비도 줄인다).
+// tight 로도 넘치면 tight 그대로 스크롤한다. 같은 작업 안에서 바꿔 재므로 화면이 깜박이지 않는다
+const FITS = ["full", "row", "tight"];
+function fitBuilding() {
+  const bldg = $("floors").closest(".bldg"), tower = bldg.querySelector(".tower"), was = bldg.dataset.fit;
+  for (const f of FITS) {
+    bldg.dataset.fit = f;
+    if (tower.scrollHeight <= tower.clientHeight + 1) break;
+  }
+  if (bldg.dataset.fit !== was && floorKey && !(transit && transit.phase === "ride")) placeCar(floorKey);
+}
+// 창 크기가 바뀌면 다시 맞춘다. 빌딩 틀(.bldg)을 본다 — 안쪽(.tower)은 밀도에 따라 스스로 커지고 줄어서 고리가 생긴다
+new ResizeObserver(() => { if (state) fitBuilding(); }).observe(document.querySelector(".bldg"));
 $("floors").addEventListener("click", e => {
   const f = e.target.closest("[data-p]");
   if (!f) return;
