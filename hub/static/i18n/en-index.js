@@ -1,0 +1,59 @@
+// 영어 사전: 사무실 화면(index.html)의 정적 문구. 키는 HTML 에 쓰인 한국어 그대로(앞뒤 공백 제외)
+I18N.add({
+  "Claude 사무실": "Claude Office",
+  // 왼쪽 위 순회
+  "근무 중인 층을 아래층부터 돌아가며 보기": "Tour busy floors, starting from the bottom",
+  "재생": "Play",
+  "층을 넘기는 간격": "Time per floor",
+  "10초": "10s", "20초": "20s", "30초": "30s", "1분": "1 min",
+  "근무 중인 층 순회": "Tour busy floors",
+  // 3D 화면 위 버튼·안내
+  "나를 기다리는 세션": "Sessions waiting for you",
+  "연결 끊김": "Disconnected",
+  "단축키 (?)": "Keyboard shortcuts (?)",
+  "연결 중": "Connecting",
+  "캐릭터 관리": "Characters",
+  "빌딩 패널 접기": "Collapse building panel",
+  "오른쪽 패널 접기": "Collapse right panel",
+  "확대": "Zoom in", "축소": "Zoom out", "원위치": "Reset view",
+  "드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다":
+    "Drag to pan · scroll to zoom · double-click to reset · hover over idle people to see their names",
+  "단축키": "Keyboard shortcuts",
+  "닫기": "Close",
+  "수집기에서 아직 소식이 없습니다.": "No data from any collector yet.",
+  "메인 맥에서 수집기가 돌고 있는지 확인하세요.": "Check that the collector is running on your computer.",
+  "이 브라우저에서는 3D를 그릴 수 없습니다(WebGL 꺼짐).": "This browser cannot draw 3D (WebGL is off).",
+  // 최근 소식 서랍
+  "최근 소식": "Recent activity",
+  "위아래로 끌어 높이 조절(아주 낮추면 접힘)": "Drag up or down to resize (drag all the way down to collapse)",
+  "소식": "Feed",
+  "타임라인": "Timeline",
+  "전체": "All",
+  "완료": "Done",
+  "시작": "Started",
+  "승인": "Approval",
+  "새 세션·종료": "New · ended",
+  "검색: 세션·프로젝트·말": "Search: session, project, message",
+  "소식 검색": "Search activity",
+  "이 층": "This floor",
+  "모든 층 · 최근 활동": "All floors · recent",
+  "보이는 시간": "Time range",
+  "10분": "10 min", "30분": "30 min",
+  // 사용 한도 상세
+  "사용 한도": "Usage limits",
+  "Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 컴퓨터와 주간 초기화 시각으로 묶고, 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).":
+    "Subscription usage (Pro · Max) as Claude Code reports it to the status line. Accounts are grouped by computer and weekly reset time; each session reports the value from its last response, so the largest value in a group is shown. Only terminal (CLI) sessions from config folders with the status line installed appear (the status line does not run in IDE extensions such as VS Code; see step 6 in the Guide tab).",
+  // 오른쪽 패널
+  "오른쪽 패널": "Right panel",
+  "사람들": "People",
+  "세션": "Session",
+  "로그": "Log",
+  "안내": "Guide",
+  "사무실 사람들": "People in the office",
+  "3D 화면이나 「사람들」 탭에서 캐릭터를 누르면 그 세션의 상세와 메시지 칸이 여기 나옵니다.":
+    "Click a character in the 3D view or the People tab to see that session's details and message box here.",
+  "도움말": "Help",
+  "Claude 에게 보낼 말 (⌘/Ctrl + Enter 로 보내기)": "Message to Claude (⌘/Ctrl + Enter to send)",
+  "보내기": "Send",
+  "어디서 무엇을 하나": "Who does what where",
+});

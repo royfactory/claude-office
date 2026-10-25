@@ -106,7 +106,7 @@
 
   <section class="card">
     <h2>배정 규칙</h2>
-    <p class="help">위에서부터 처음 맞는 규칙이 이깁니다. 값 끝에 <code>*</code>를 붙이면 앞부분이 같은 것을 모두 고릅니다(예: <code>myproject-*</code>). 대소문자는 가리지 않습니다. 세션 이름은 Claude가 다시 시작될 때마다 바뀔 수 있으니 오래 쓸 규칙은 프로젝트로 거세요.</p>
+    <p class="help" id="helpRules"></p>
     <table><thead><tr><th style="width:150px">무엇으로</th><th>값</th><th style="width:180px">캐릭터</th><th></th></tr></thead><tbody id="rules"></tbody></table>
     <div class="row" style="margin-top:10px">
       <button id="addRule"><i class="fa-solid fa-plus"></i> 규칙 추가</button>
@@ -118,13 +118,14 @@
   <section class="card">
     <h2>화면 설정</h2>
     <p class="help">말풍선을 켜면 Claude가 마지막으로 한 말의 앞 80자가 머리 위에 뜹니다. 끄면 수집기가 30초 안에 그 글을 보내지 않게 됩니다(허브에도 남지 않음). 사용자 메시지·명령 원문·파일 내용은 켜도 보내지 않습니다.</p>
-    <p class="help">메시지 보내기를 켜면 사무실 화면에서 세션을 고르고 그 세션의 Claude 에게 말을 보낼 수 있습니다. 세 가지가 다 있어야 동작합니다: 허브의 <code>OFFICE_TOKEN</code>, 이 설정, 그 세션이 있는 컴퓨터 수집기의 <code>CLAUDE_OFFICE_MESSAGES=on</code>. 받는 Claude 는 '다른 세션이 보낸 메시지'로 받고, 권한 확인을 건너뛰는 세션은 그 터미널에서 승인해야 전달됩니다.</p>
+    <p class="help" id="helpMsg"></p>
     <div class="row" style="gap:18px">
       <label class="row" style="font-size:13px"><input type="checkbox" id="speech"> 말풍선에 Claude가 한 말 보이기</label>
       <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN 과 그 컴퓨터 수집기의 CLAUDE_OFFICE_MESSAGES=on 도 있어야 동작"><input type="checkbox" id="messaging"> 대시보드에서 세션으로 메시지 보내기</label>
       <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN, 그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on, 승인 훅(install_hooks.py --approve --apply)도 있어야 동작"><input type="checkbox" id="approvals"> 대시보드에서 권한 요청 허용·거절</label>
       <label class="row" style="font-size:13px">내 자리에 앉은 '나' 이름 <input id="meName" maxlength="12" style="width:110px"></label>
       <label class="row" style="font-size:13px">'나' 캐릭터 <select id="meChar"></select></label>
+      <label class="row" style="font-size:13px">언어 <select id="language"><option value="auto">자동(브라우저 언어)</option><option value="ko">한국어</option><option value="en">English</option></select></label>
     </div>
   </section>
 
@@ -138,7 +139,7 @@
     </div>
     <div>
       <h2>도구 → 방</h2>
-      <p class="help">도구 이름이 맞으면 그 방으로 걸어갑니다. <code>mcp__*</code>처럼 <code>*</code>로 앞부분을 맞출 수 있습니다. 쉬는 세션은 늘 라운지로 갑니다.</p>
+      <p class="help" id="helpTools"></p>
       <table><thead><tr><th>도구</th><th style="width:130px">방</th><th></th></tr></thead><tbody id="tools"></tbody></table>
       <div class="row" style="margin-top:10px"><button id="addTool"><i class="fa-solid fa-plus"></i> 도구 추가</button></div>
     </div>
@@ -162,6 +163,9 @@
   </div>
 </dialog>
 
+<script src="/static/i18n.js"></script>
+<script src="/static/i18n/en-common.js"></script>
+<script src="/static/i18n/en-admin.js"></script>
 <script src="/static/shared.js"></script>
 <script>
 "use strict";
@@ -173,6 +177,13 @@ const STATES = [["working", "작업 중"], ["thinking", "생각 중"], ["stalled
 const WALK = [["front", "앞 ↙"], ["back", "뒤 ↗"]];
 const WALK_MAX = 4;
 const MATCH = [["project", "프로젝트 폴더"], ["session", "세션 이름"], ["agentType", "서브에이전트 종류"], ["host", "맥(수집기)"]];
+// <code> 가 섞인 안내 문단(정적 HTML 의 글자 마디 단위 번역으로는 못 바꿔서 통째로 t() 한다)
+const HELP = {
+  helpRules: "위에서부터 처음 맞는 규칙이 이깁니다. 값 끝에 <code>*</code>를 붙이면 앞부분이 같은 것을 모두 고릅니다(예: <code>myproject-*</code>). 대소문자는 가리지 않습니다. 세션 이름은 Claude가 다시 시작될 때마다 바뀔 수 있으니 오래 쓸 규칙은 프로젝트로 거세요.",
+  helpMsg: "메시지 보내기를 켜면 사무실 화면에서 세션을 고르고 그 세션의 Claude 에게 말을 보낼 수 있습니다. 세 가지가 다 있어야 동작합니다: 허브의 <code>OFFICE_TOKEN</code>, 이 설정, 그 세션이 있는 컴퓨터 수집기의 <code>CLAUDE_OFFICE_MESSAGES=on</code>. 받는 Claude 는 '다른 세션이 보낸 메시지'로 받고, 권한 확인을 건너뛰는 세션은 그 터미널에서 승인해야 전달됩니다.",
+  helpTools: "도구 이름이 맞으면 그 방으로 걸어갑니다. <code>mcp__*</code>처럼 <code>*</code>로 앞부분을 맞출 수 있습니다. 쉬는 세션은 늘 라운지로 갑니다.",
+};
+for (const [id, html] of Object.entries(HELP)) $(id).innerHTML = t(html);
 let cfg = null, saved = "", assets = [], agents = [];
 
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -186,8 +197,8 @@ async function api(method, url, body, raw, retried) {
   if (token) headers["X-Office-Token"] = token;
   const r = await fetch(url, { method, headers, body: raw ? body : (body ? JSON.stringify(body) : undefined) });
   if (r.status === 401 && !retried) {
-    const t = prompt("이 허브는 쓰기에 토큰이 필요합니다.\n허브를 띄운 컴퓨터의 claude-office 폴더 .env 파일에서 OFFICE_TOKEN= 뒤의 값입니다. 한 번 넣으면 이 브라우저가 기억합니다.");
-    if (t) { token = t.trim(); try { localStorage.setItem("office.token", token); } catch (_) {} return api(method, url, body, raw, true); }
+    const tk = prompt(t("이 허브는 쓰기에 토큰이 필요합니다.\n허브를 띄운 컴퓨터의 claude-office 폴더 .env 파일에서 OFFICE_TOKEN= 뒤의 값입니다. 한 번 넣으면 이 브라우저가 기억합니다."));
+    if (tk) { token = tk.trim(); try { localStorage.setItem("office.token", token); } catch (_) {} return api(method, url, body, raw, true); }
   }
   const txt = await r.text();
   let j = null; try { j = JSON.parse(txt); } catch (_) {}
@@ -201,15 +212,15 @@ async function api(method, url, body, raw, retried) {
 }
 
 function say(text, cls) { const m = $("msg"); m.textContent = text; m.className = "msg " + (cls || ""); }
-function markDirty() { if (dirty()) say("저장하지 않은 변경이 있습니다", "dirty"); else say(""); }
+function markDirty() { if (dirty()) say(t("저장하지 않은 변경이 있습니다"), "dirty"); else say(""); }
 
 function charOptions(sel, withNone) {
-  return (withNone ? `<option value="">(자동 배정에서 고르기)</option>` : "") +
-    cfg.characters.map(c => `<option value="${esc(c.id)}"${c.id === sel ? " selected" : ""}>${esc(c.emoji || "🖼️")} ${esc(c.name)}</option>`).join("");
+  return (withNone ? `<option value="">${t("(자동 배정에서 고르기)")}</option>` : "") +
+    cfg.characters.map(c => `<option value="${esc(c.id)}"${c.id === sel ? " selected" : ""}>${esc(c.emoji || "🖼️")} ${esc(Office.label(c.name))}</option>`).join("");
 }
 function roomOptions(sel, withLounge) {
   return cfg.rooms.filter(r => withLounge || r.id !== "lounge")
-    .map(r => `<option value="${r.id}"${r.id === sel ? " selected" : ""}>${esc(r.name)}</option>`).join("");
+    .map(r => `<option value="${r.id}"${r.id === sel ? " selected" : ""}>${esc(Office.label(r.name))}</option>`).join("");
 }
 
 function renderChars() {
@@ -218,39 +229,39 @@ function renderChars() {
       <div class="head">
         <div class="av${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, "")}</div>
         <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px">
-          <input data-f="name" value="${esc(c.name)}" maxlength="24" aria-label="이름">
+          <input data-f="name" value="${esc(Office.label(c.name))}" maxlength="24" aria-label="${t("이름")}">
           <span class="id">id: ${esc(c.id)}</span>
         </div>
       </div>
-      <label>이모지 <input data-f="emoji" value="${esc(c.emoji)}" maxlength="16" placeholder="예: 🦊"></label>
-      <label>이미지 <span class="imgbtn"><button data-act="img">${c.image ? "바꾸기" : "고르기"}</button>${c.image ? `<button data-act="noimg">빼기</button>` : ""}</span></label>
-      <label>테두리색 <span class="row"><input type="color" data-f="color" value="${c.color}"><span class="id">${c.color}</span></span></label>
+      <label>${t("이모지")} <input data-f="emoji" value="${esc(c.emoji)}" maxlength="16" placeholder="${t("예: 🦊")}"></label>
+      <label>${t("이미지")} <span class="imgbtn"><button data-act="img">${c.image ? t("바꾸기") : t("고르기")}</button>${c.image ? `<button data-act="noimg">${t("빼기")}</button>` : ""}</span></label>
+      <label>${t("테두리색")} <span class="row"><input type="color" data-f="color" value="${c.color}"><span class="id">${c.color}</span></span></label>
       <details${Object.values(c.states || {}).some(s => s.emoji || s.image) ? " open" : ""}>
-        <summary>상태별 모습</summary>
+        <summary>${t("상태별 모습")}</summary>
         ${STATES.map(([k, label]) => {
           const s = (c.states || {})[k] || {};
-          return `<div class="st" data-s="${k}"><span>${label}</span>
+          return `<div class="st" data-s="${k}"><span>${t(label)}</span>
             <div class="av sm${c.pixel ? " pixel" : ""}" style="--c:${c.color}">${avatarHTML(c, k)}</div>
-            <input data-sf="emoji" value="${esc(s.emoji || "")}" maxlength="16" placeholder="이모지">
-            <button data-act="simg" title="${s.image ? "이미지 바꾸기" : "이미지 고르기"}"${s.image ? ' class="has"' : ""}><i class="fa-solid fa-image"></i>${s.image ? ' <i class="fa-solid fa-check"></i>' : ""}</button></div>`;
+            <input data-sf="emoji" value="${esc(s.emoji || "")}" maxlength="16" placeholder="${t("이모지")}">
+            <button data-act="simg" title="${s.image ? t("이미지 바꾸기") : t("이미지 고르기")}"${s.image ? ' class="has"' : ""}><i class="fa-solid fa-image"></i>${s.image ? ' <i class="fa-solid fa-check"></i>' : ""}</button></div>`;
         }).join("")}
       </details>
       <details${Object.values(c.walk || {}).some(f => f.length) ? " open" : ""}>
-        <summary>걷기 모습</summary>
+        <summary>${t("걷기 모습")}</summary>
         ${WALK.map(([k, label]) => {
           const fr = (c.walk || {})[k] || [];
-          return `<div class="wk" data-w="${k}"><span>${label}</span><span class="fr">
-            ${fr.map((n, j) => `<button class="wf${c.pixel ? " pixel" : ""}" data-act="wdel" data-wi="${j}" title="${j + 1}번째 장 빼기"><img src="/assets/${encodeURIComponent(n)}" alt=""></button>`).join("")}
-            ${fr.length < WALK_MAX ? `<button class="add" data-act="wadd" title="이미지 더하기"><i class="fa-solid fa-plus"></i></button>` : ""}</span></div>`;
+          return `<div class="wk" data-w="${k}"><span>${t(label)}</span><span class="fr">
+            ${fr.map((n, j) => `<button class="wf${c.pixel ? " pixel" : ""}" data-act="wdel" data-wi="${j}" title="${t("{n}번째 장 빼기", { n: j + 1 })}"><img src="/assets/${encodeURIComponent(n)}" alt=""></button>`).join("")}
+            ${fr.length < WALK_MAX ? `<button class="add" data-act="wadd" title="${t("이미지 더하기")}"><i class="fa-solid fa-plus"></i></button>` : ""}</span></div>`;
         }).join("")}
-        <div class="wk"><span class="hint">걸음마다 순서대로 넘깁니다(보통 내딛기·지나가기 2장). 앞은 왼쪽 아래(↙), 뒤는 오른쪽 위(↗)를 보고 걷는 그림을 넣으면 반대쪽은 좌우를 뒤집어 씁니다. 비우면 걸을 때도 기본 모습입니다.</span></div>
+        <div class="wk"><span class="hint">${t("걸음마다 순서대로 넘깁니다(보통 내딛기·지나가기 2장). 앞은 왼쪽 아래(↙), 뒤는 오른쪽 위(↗)를 보고 걷는 그림을 넣으면 반대쪽은 좌우를 뒤집어 씁니다. 비우면 걸을 때도 기본 모습입니다.")}</span></div>
       </details>
       <div class="foot">
         <span class="row" style="gap:12px">
-          <label style="display:flex; gap:4px"><input type="checkbox" data-f="inPool"${c.inPool ? " checked" : ""}>자동 배정</label>
-          <label style="display:flex; gap:4px" title="픽셀아트를 확대해도 뭉개지지 않게"><input type="checkbox" data-f="pixel"${c.pixel ? " checked" : ""}>픽셀</label>
+          <label style="display:flex; gap:4px"><input type="checkbox" data-f="inPool"${c.inPool ? " checked" : ""}>${t("자동 배정")}</label>
+          <label style="display:flex; gap:4px" title="${t("픽셀아트를 확대해도 뭉개지지 않게")}"><input type="checkbox" data-f="pixel"${c.pixel ? " checked" : ""}>${t("픽셀")}</label>
         </span>
-        <button class="danger" data-act="del">삭제</button>
+        <button class="danger" data-act="del">${t("삭제")}</button>
       </div>
     </div>`).join("");
 }
@@ -258,27 +269,28 @@ function renderChars() {
 function renderRules() {
   $("rules").innerHTML = cfg.assignments.map((a, i) => `
     <tr data-r="${i}">
-      <td><select data-f="match">${MATCH.map(([k, l]) => `<option value="${k}"${a.match === k ? " selected" : ""}>${l}</option>`).join("")}</select></td>
+      <td><select data-f="match">${MATCH.map(([k, l]) => `<option value="${k}"${a.match === k ? " selected" : ""}>${t(l)}</option>`).join("")}</select></td>
       <td><input data-f="value" value="${esc(a.value)}" list="dl-${a.match}" maxlength="80"></td>
       <td><select data-f="character">${charOptions(a.character)}</select></td>
-      <td class="btns"><button data-act="up" title="위로"><i class="fa-solid fa-arrow-up"></i></button> <button data-act="down" title="아래로"><i class="fa-solid fa-arrow-down"></i></button> <button class="danger" data-act="del" title="삭제"><i class="fa-solid fa-xmark"></i></button></td>
-    </tr>`).join("") || `<tr><td colspan="4" style="color:var(--text-dim2)">규칙이 없습니다. 모든 세션이 자동 배정됩니다.</td></tr>`;
+      <td class="btns"><button data-act="up" title="${t("위로")}"><i class="fa-solid fa-arrow-up"></i></button> <button data-act="down" title="${t("아래로")}"><i class="fa-solid fa-arrow-down"></i></button> <button class="danger" data-act="del" title="${t("삭제")}"><i class="fa-solid fa-xmark"></i></button></td>
+    </tr>`).join("") || `<tr><td colspan="4" style="color:var(--text-dim2)">${t("규칙이 없습니다. 모든 세션이 자동 배정됩니다.")}</td></tr>`;
   $("subChar").innerHTML = charOptions(cfg.subagentCharacter, true);
-  $("meChar").innerHTML = `<option value="">🧑‍💻 (기본)</option>` + charOptions(cfg.meCharacter, false);
+  $("meChar").innerHTML = `<option value="">🧑‍💻 ${t("(기본)")}</option>` + charOptions(cfg.meCharacter, false);
   $("speech").checked = cfg.speech !== false;
   $("messaging").checked = !!cfg.messaging;
   $("approvals").checked = !!cfg.approvals;
-  $("meName").value = cfg.meName || "나";
+  $("meName").value = Office.label(cfg.meName || "나");
+  $("language").value = cfg.language || "auto";
 }
 
 function renderRooms() {
   $("rooms").innerHTML = cfg.rooms.map((r, i) => `
-    <div class="r" data-room="${i}"><span class="ricon" title="방 아이콘(고정)"><i class="fa-solid fa-${ROOM_ICON[r.id] || "door-open"}"></i></span><input data-f="name" value="${esc(r.name)}" maxlength="12" aria-label="이름"><input data-f="desc" value="${esc(r.desc || "")}" maxlength="40" placeholder="설명(오른쪽 안내에 보임)" style="grid-column:1/-1"></div>`).join("");
+    <div class="r" data-room="${i}"><span class="ricon" title="${t("방 아이콘(고정)")}"><i class="fa-solid fa-${ROOM_ICON[r.id] || "door-open"}"></i></span><input data-f="name" value="${esc(Office.label(r.name))}" maxlength="12" aria-label="${t("이름")}"><input data-f="desc" value="${esc(Office.label(r.desc || ""))}" maxlength="40" placeholder="${t("설명(오른쪽 안내에 보임)")}" style="grid-column:1/-1"></div>`).join("");
   $("defaultRoom").innerHTML = roomOptions(cfg.defaultRoom);
-  $("tools").innerHTML = cfg.toolRooms.map((t, i) => `
-    <tr data-t="${i}"><td><input data-f="pattern" value="${esc(t.pattern)}" maxlength="64" list="dl-tools"></td>
-      <td><select data-f="room">${roomOptions(t.room)}</select></td>
-      <td class="btns"><button class="danger" data-act="del" title="삭제"><i class="fa-solid fa-xmark"></i></button></td></tr>`).join("");
+  $("tools").innerHTML = cfg.toolRooms.map((tr, i) => `
+    <tr data-t="${i}"><td><input data-f="pattern" value="${esc(tr.pattern)}" maxlength="64" list="dl-tools"></td>
+      <td><select data-f="room">${roomOptions(tr.room)}</select></td>
+      <td class="btns"><button class="danger" data-act="del" title="${t("삭제")}"><i class="fa-solid fa-xmark"></i></button></td></tr>`).join("");
 }
 
 function renderLib() {
@@ -290,8 +302,8 @@ function renderLib() {
   $("lib").innerHTML = assets.map(a => `
     <div class="it"><div class="img"><img src="${a.url}" alt=""></div>
       <div>${Math.round(a.bytes / 1024)}KB</div>
-      ${used.has(a.name) ? `<div style="color:var(--good)">사용 중</div>` : `<button class="danger" data-del="${esc(a.name)}" style="font-size:11px;padding:2px 6px;margin-top:4px">지우기</button>`}
-    </div>`).join("") || `<div style="grid-column:1/-1; color:var(--text-dim2); font-size:13px">아직 올린 이미지가 없습니다.</div>`;
+      ${used.has(a.name) ? `<div style="color:var(--good)">${t("사용 중")}</div>` : `<button class="danger" data-del="${esc(a.name)}" style="font-size:11px;padding:2px 6px;margin-top:4px">${t("지우기")}</button>`}
+    </div>`).join("") || `<div style="grid-column:1/-1; color:var(--text-dim2); font-size:13px">${t("아직 올린 이미지가 없습니다.")}</div>`;
 }
 
 function renderDatalists() {
@@ -308,15 +320,15 @@ function renderDatalists() {
 }
 
 function renderPreview() {
-  if (!agents.length) { $("preview").innerHTML = `<span style="color:var(--text-dim2); font-size:13px">지금 보이는 세션이 없습니다.</span>`; return; }
+  if (!agents.length) { $("preview").innerHTML = `<span style="color:var(--text-dim2); font-size:13px">${t("지금 보이는 세션이 없습니다.")}</span>`; return; }
   const m = assignCharacters(cfg, agents);
   const pill = (key, name, sub) => {
     const c = m.get(key);
     return `<span class="pv"><span class="av sm${c && c.pixel ? " pixel" : ""}" style="--c:${c ? c.color : "#243858"}">${c ? avatarHTML(c, "") : ""}</span><span class="n">${esc(name)}</span><span class="p">${esc(sub)}</span></span>`;
   };
   $("preview").innerHTML = agents.map(a =>
-    pill(a.id, a.name, `${a.project} · ${m.get(a.id) ? m.get(a.id).name : ""}`) +
-    (a.subagents || []).map(s => pill(a.id + "/" + s.id, "↳ " + s.type, m.get(a.id + "/" + s.id) ? m.get(a.id + "/" + s.id).name : "")).join("")
+    pill(a.id, a.name, `${a.project} · ${m.get(a.id) ? Office.label(m.get(a.id).name) : ""}`) +
+    (a.subagents || []).map(s => pill(a.id + "/" + s.id, "↳ " + s.type, m.get(a.id + "/" + s.id) ? Office.label(m.get(a.id + "/" + s.id).name) : "")).join("")
   ).join("");
 }
 
@@ -355,6 +367,7 @@ document.addEventListener("input", e => {
   else if (t.id === "approvals") cfg.approvals = val;
   else if (t.id === "meName") cfg.meName = val;
   else if (t.id === "defaultRoom") cfg.defaultRoom = val;
+  else if (t.id === "language") cfg.language = val;
   light();
 });
 
@@ -365,9 +378,9 @@ document.addEventListener("click", async e => {
   if (ch && act) {
     const i = +ch.dataset.c, c = cfg.characters[i];
     if (act === "del") {
-      if (cfg.characters.length === 1) return say("캐릭터는 하나 이상 있어야 합니다", "err");
+      if (cfg.characters.length === 1) return say(t("캐릭터는 하나 이상 있어야 합니다"), "err");
       const n = cfg.assignments.filter(a => a.character === c.id).length;
-      if (!confirm(`'${c.name}' 캐릭터를 지울까요?${n ? `\n이 캐릭터를 쓰는 배정 규칙 ${n}개도 함께 지워집니다.` : ""}`)) return;
+      if (!confirm(t("'{name}' 캐릭터를 지울까요?", { name: Office.label(c.name) }) + (n ? "\n" + t("이 캐릭터를 쓰는 배정 규칙 {n}개도 함께 지워집니다.", { n }) : ""))) return;
       cfg.characters.splice(i, 1);
       cfg.assignments = cfg.assignments.filter(a => a.character !== c.id);
       if (cfg.subagentCharacter === c.id) cfg.subagentCharacter = "";
@@ -397,19 +410,19 @@ document.addEventListener("click", async e => {
   if (tool && act === "del") { cfg.toolRooms.splice(+tool.dataset.t, 1); renderRooms(); light(); return; }
   if (b.dataset.del) {
     try { await api("DELETE", "/api/assets/" + encodeURIComponent(b.dataset.del)); await loadAssets(); renderLib(); }
-    catch (err) { say("지우지 못함: " + err.message, "err"); }
+    catch (err) { say(t("지우지 못함: ") + t(err.message), "err"); }
   }
 });
 
 $("addChar").onclick = () => {
-  cfg.characters.push({ id: "c" + Date.now().toString(36), name: "새 캐릭터", emoji: "🙂", image: "", color: "#38bdf8", inPool: true, pixel: false, states: {}, walk: {} });
+  cfg.characters.push({ id: "c" + Date.now().toString(36), name: t("새 캐릭터"), emoji: "🙂", image: "", color: "#38bdf8", inPool: true, pixel: false, states: {}, walk: {} });
   renderAll();
   $("chars").lastElementChild.scrollIntoView({ behavior: "smooth", block: "center" });
   $("chars").lastElementChild.querySelector("[data-f=name]").select();
 };
 $("addRule").onclick = () => {
   const proj = agents[0] ? agents[0].project : "";
-  cfg.assignments.push({ match: "project", value: proj || "프로젝트이름", character: cfg.characters[0].id });
+  cfg.assignments.push({ match: "project", value: proj || t("프로젝트이름"), character: cfg.characters[0].id });
   renderRules(); light();
 };
 $("addTool").onclick = () => { cfg.toolRooms.push({ pattern: "", room: "dev" }); renderRooms(); light(); };
@@ -417,14 +430,15 @@ $("addTool").onclick = () => { cfg.toolRooms.push({ pattern: "", room: "dev" });
 $("save").onclick = async () => {
   try {
     cfg = await api("PUT", "/api/config", cfg); saved = JSON.stringify(cfg);
-    renderAll(); say("저장했습니다. 사무실 화면에 바로 반영됩니다.", "ok");
-  } catch (err) { say("저장하지 못함: " + err.message, "err"); }
+    renderAll(); say(t("저장했습니다. 사무실 화면에 바로 반영됩니다."), "ok");
+    I18N.sync(cfg.language);   // 언어를 바꿨으면 새 언어로 다시 연다
+  } catch (err) { say(t("저장하지 못함: ") + t(err.message), "err"); }
 };
-$("revert").onclick = () => { cfg = JSON.parse(saved); renderAll(); say("마지막으로 저장한 상태로 되돌렸습니다.", "ok"); };
+$("revert").onclick = () => { cfg = JSON.parse(saved); renderAll(); say(t("마지막으로 저장한 상태로 되돌렸습니다."), "ok"); };
 $("reset").onclick = async () => {
-  if (!confirm("캐릭터·규칙·방 이름을 모두 기본값으로 되돌릴까요? 올린 이미지는 보관함에 남습니다.")) return;
-  try { cfg = await api("POST", "/api/config/reset"); saved = JSON.stringify(cfg); renderAll(); say("기본값으로 되돌렸습니다.", "ok"); }
-  catch (err) { say(err.message, "err"); }
+  if (!confirm(t("캐릭터·규칙·방 이름을 모두 기본값으로 되돌릴까요? 올린 이미지는 보관함에 남습니다."))) return;
+  try { cfg = await api("POST", "/api/config/reset"); saved = JSON.stringify(cfg); renderAll(); say(t("기본값으로 되돌렸습니다."), "ok"); I18N.sync(cfg.language); }
+  catch (err) { say(t(err.message), "err"); }
 };
 addEventListener("beforeunload", e => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -434,10 +448,10 @@ async function upload(files) {
   let ok = 0, last = null;
   for (const f of files) {
     try { const r = await api("POST", "/api/assets", f, true); ok++; last = r.name; }
-    catch (err) { say(`${f.name}: ${err.message}`, "err"); }
+    catch (err) { say(`${f.name}: ${t(err.message)}`, "err"); }
   }
   await loadAssets(); renderLib();
-  if (ok) say(`이미지 ${ok}장을 올렸습니다.`, "ok");
+  if (ok) say(t("이미지 {n}장을 올렸습니다.", { n: ok }), "ok");
   return last;
 }
 $("pickFiles").onclick = () => $("files").click();
@@ -453,7 +467,7 @@ function pick() {
     const dlg = $("picker");
     const draw = () => {
       $("pickLib").innerHTML = assets.map(a => `<div class="it pick" data-n="${esc(a.name)}"><div class="img"><img src="${a.url}" alt=""></div></div>`).join("")
-        || `<div style="color:var(--text-dim2); font-size:13px">보관함이 비어 있습니다. 새로 올려 주세요.</div>`;
+        || `<div style="color:var(--text-dim2); font-size:13px">${t("보관함이 비어 있습니다. 새로 올려 주세요.")}</div>`;
     };
     draw();
     const done = v => { dlg.close(); cleanup(); resolve(v); };
@@ -475,8 +489,9 @@ function pick() {
   try {
     const [c, s] = await Promise.all([api("GET", "/api/config"), api("GET", "/api/state"), loadAssets()]);
     cfg = c; saved = JSON.stringify(cfg); agents = s.agents;
+    if (I18N.sync(cfg.language)) return;   // 허브 설정 언어가 이 브라우저가 기억한 것과 다르면 새로 고침
     renderAll();
-  } catch (err) { say("불러오지 못함: " + err.message, "err"); return; }
+  } catch (err) { say(t("불러오지 못함: ") + t(err.message), "err"); return; }
   // 세션 목록만 실시간으로 받는다(편집 중인 설정은 덮어쓰지 않는다)
   const es = new EventSource("/api/stream");
   es.onmessage = e => {

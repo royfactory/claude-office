@@ -19,8 +19,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **Optional extras.** Approve or deny permission prompts from the dashboard, send a message into a session, and show the 5-hour/weekly usage limits.
 - **3D characters built in.** 14 characters (13 animals plus "me") with standing and walking frames. Swap any of them for your own images or emoji.
 
-> [!NOTE]
-> The dashboard UI is currently in Korean. Everything else (setup, hooks, configuration) works the same everywhere.
+- **English and Korean.** The dashboard follows your browser language by default; pick a fixed language in `/admin` → Display settings.
 
 ## Quick start (one computer)
 
@@ -55,6 +54,8 @@ Newer models (e.g. Opus 5.5) do not get Claude Code's todo tools by default; `--
 Sessions are assigned characters automatically (no two alike on one floor); sub-agents arrive by elevator as the chick, and "me" sits at the front desk and rides the elevator when the dashboard tours busy floors. In **`/admin`** you can rename characters, use emoji or upload images, set per-state looks (working, thinking, stuck, idle), add walking frames, and write assignment rules by project, session name, sub-agent type, or computer.
 
 ![Close-up of characters walking between rooms](docs/media/walk.gif)
+
+![Admin page: emoji, image, looks by state and walking frames per character](docs/media/admin.jpg)
 
 Walking frames: the camera is a fixed isometric view, so characters only walk along four diagonals. Add 2–4 frames for walking toward the camera (facing lower-left) and away from it (facing upper-right); the other two directions are mirrored. Keep every frame the same canvas size with the feet on the bottom edge. The built-in characters were made with a local image model (FLUX.1 schnell and FLUX.2 klein edit with pose skeletons).
 
@@ -146,6 +147,6 @@ All of these are off unless you turn them on. Details are in the [Korean README]
 **A session does not show up:** check `collector.py --dump`. If it is missing, add that session's `CLAUDE_CONFIG_DIR` to `CLAUDE_OFFICE_ROOTS`. Using Claude Code inside WSL? Run the collector in WSL too.
 **A computer shows as disconnected:** `HTTP Error 401` in the collector log means `OFFICE_TOKEN` differs from the hub; connection refused means check `CLAUDE_OFFICE_HUB`, `OFFICE_BIND`, and the firewall.
 
-## Credits
+## License
 
-Bundles [three.js](https://threejs.org/) (MIT, [license](hub/static/vendor/LICENSE-three.js.txt)) and Font Awesome Free 7.3.1 (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT, [license](hub/static/vendor/fontawesome/LICENSE.txt)). Not affiliated with Anthropic.
+[MIT](LICENSE). Bundles [three.js](https://threejs.org/) (MIT, [license](hub/static/vendor/LICENSE-three.js.txt)) and Font Awesome Free 7.3.1 (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT, [license](hub/static/vendor/fontawesome/LICENSE.txt)). Not affiliated with Anthropic.

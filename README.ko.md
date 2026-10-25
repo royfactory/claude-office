@@ -6,15 +6,16 @@
 
 Claude Code 세션 하나하나를 캐릭터로 띄워, 지금 쓰는 도구에 따라 3D 사무실(쿼터뷰) 안을 걸어 다니게 하는 실시간 대시보드입니다.
 
-![claude-office 시연: 세션들이 방을 오가고, 서브에이전트가 오고, 한 세션이 승인을 기다린다](docs/media/demo.gif)
+![claude-office 시연: 세션들이 방을 오가고, 서브에이전트가 오고, 한 세션이 승인을 기다린다](docs/media/demo-ko.gif)
 
-<sub>가짜 데이터로 찍은 화면입니다. [MP4](docs/media/demo.mp4)</sub>
+<sub>가짜 데이터로 찍은 화면입니다. [MP4](docs/media/demo-ko.mp4)</sub>
 
 세션을 여러 개 동시에 돌리면(worktree, 서브에이전트, 여러 컴퓨터) 어느 세션이 나를 기다리는지 놓치기 쉽습니다. 승인을 기다리는 세션, 방금 끝난 세션, 막힌 세션, 컨텍스트가 얼마나 찼는지, 사용 한도가 얼마나 남았는지를 한 화면에서 봅니다.
 
 - 프로젝트 하나가 빌딩의 한 층이고, 세션과 서브에이전트가 그 층에서 일합니다.
 - 파일을 읽으면 자료실, 명령을 돌리면 서버실, 코드를 고치면 개발실로 걸어가고, 쉬면 라운지로 갑니다. 서브에이전트는 엘리베이터로 출퇴근합니다.
 - 머리 위에 Claude가 마지막으로 한 말, 지금 하는 일, 세션 제목이 뜹니다.
+- 화면은 한국어와 영어를 지원합니다. 기본은 보는 브라우저의 언어를 따르고, 관리 화면 「화면 설정」에서 언어를 고정할 수 있습니다.
 - 3D 캐릭터 14종(동물 13 + '나')이 서 있기·걷기 그림과 함께 기본으로 들어 있습니다. 관리 화면에서 이모지나 다른 이미지로 바꿀 수 있고, 걷기 이미지는 걷는 방향(앞·뒤)에 맞춰 걸음마다 번갈아 보입니다. 사람들은 벽과 가구를 피해 문으로 다닙니다.
 - 모든 층에서 승인을 기다리거나 일을 마친 세션을 위쪽 칩으로 모아 보여 주고, 원하면 소리로 알립니다. 명찰 아래 막대는 컨텍스트 창 사용량입니다.
 
@@ -239,7 +240,7 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 | 내 자리 | AskUserQuestion · Agent(서브에이전트 호출) |
 | 라운지 | 쉬는 중 |
 
-![방 사이를 걷는 캐릭터 확대](docs/media/walk.gif)
+![방 사이를 걷는 캐릭터 확대](docs/media/walk-ko.gif)
 
 **관리** (`/admin`): 캐릭터(이모지·이미지·상태별 모습·걷기 모습), 배정 규칙(프로젝트·세션 이름·서브에이전트 종류·컴퓨터별), 방 이름, 도구 → 방 매핑, 말풍선 켜기/끄기, '나'의 이름과 캐릭터.
 
@@ -249,7 +250,7 @@ Windows 수집기는 작업 스케줄러 작업 `claude-office-collector` 로 �
 발끝을 아래 가장자리에 맞춰 두어야 키가 흔들리지 않습니다. 기본 캐릭터는 로컬 이미지 모델(FLUX.1 schnell, 걷기는 FLUX.2 klein 편집 + 포즈 뼈대)로 만들었고,
 관리 화면의 「기본값으로」를 누르면 처음 상태로 돌아갑니다(이미 저장한 설정이 있으면 새 기본 캐릭터는 이걸 눌러야 나옵니다).
 
-![관리 화면: 캐릭터마다 이모지·이미지·상태별 모습·걷기 모습](docs/media/admin.jpg)
+![관리 화면: 캐릭터마다 이모지·이미지·상태별 모습·걷기 모습](docs/media/admin-ko.jpg)
 
 ## 세션에 메시지 보내기
 
@@ -349,5 +350,5 @@ Claude Code 는 구독 계정의 **사용 한도(5시간·주간)**를 [상태 �
 
 ## 라이선스·출처
 
-Anthropic 과 관련 없는 개인 프로젝트입니다. three.js(MIT)를 `hub/static/vendor/` 에 포함합니다 — [LICENSE-three.js.txt](hub/static/vendor/LICENSE-three.js.txt).
+[MIT](LICENSE). Anthropic 과 관련 없는 개인 프로젝트입니다. three.js(MIT)를 `hub/static/vendor/` 에 포함합니다 — [LICENSE-three.js.txt](hub/static/vendor/LICENSE-three.js.txt).
 Font Awesome Free 7.3.1(solid 아이콘·웹폰트, 아이콘 CC BY 4.0 · 폰트 SIL OFL 1.1 · 코드 MIT)을 `hub/static/vendor/fontawesome/` 에 포함합니다 — [LICENSE.txt](hub/static/vendor/fontawesome/LICENSE.txt).

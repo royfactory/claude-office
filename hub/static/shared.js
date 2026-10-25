@@ -77,11 +77,16 @@
 
   function ago(sec) {
     if (sec == null || !isFinite(sec) || sec < 0) return "";
-    if (sec < 60) return `${Math.floor(sec)}초`;
-    if (sec < 3600) return `${Math.floor(sec / 60)}분`;
-    if (sec < 86400) return `${Math.floor(sec / 3600)}시간`;
-    return `${Math.floor(sec / 86400)}일`;
+    const en = g.I18N && g.I18N.lang === "en";
+    if (sec < 60) return `${Math.floor(sec)}${en ? "s" : "초"}`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}${en ? "m" : "분"}`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}${en ? "h" : "시간"}`;
+    return `${Math.floor(sec / 86400)}${en ? "d" : "일"}`;
   }
 
-  g.Office = { globMatch, roomForTool, assignCharacters, lookFor, avatarHTML, esc, ago };
+  // 방·캐릭터·'나' 이름: 기본값(한국어) 그대로면 화면 언어로 보여 준다. 사용자가 바꾼 이름은 그대로
+  const label = s => (g.I18N ? g.I18N.t(s) : s);
+
+  g.Office = { globMatch, roomForTool, assignCharacters, lookFor, avatarHTML, esc, ago, label };
+  if (g.I18N) g.I18N.apply(document);   // 페이지 끝에서 읽히므로 정적 HTML 이 다 있다
 })(window);

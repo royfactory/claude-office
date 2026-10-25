@@ -368,6 +368,13 @@ def test_default_characters_use_bundled_images(hub):
     assert _put(c, lambda cfg: cfg.update(meName="로이")).status_code == 200   # 기본 이미지로 설정 검사를 통과한다
 
 
+def test_language_setting(hub):
+    _, c = hub
+    assert c.get("/api/config").json()["language"] == "auto"
+    assert _put(c, lambda cfg: cfg.update(language="en")).json()["language"] == "en"
+    assert _put(c, lambda cfg: cfg.update(language="fr")).status_code == 422
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

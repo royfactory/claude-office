@@ -141,6 +141,7 @@ DEFAULT_CONFIG: dict = {
     "approvals": False,  # 대시보드에서 권한 요청 허용·거절. OFFICE_TOKEN + 그 컴퓨터의 승인 훅이 있어야 동작
     "meName": "나",
     "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
+    "language": "auto",    # 화면 언어: auto(브라우저 언어) · ko · en
 }
 
 
@@ -213,6 +214,7 @@ class Config(BaseModel):
     approvals: bool = False
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
+    language: Literal["auto", "ko", "en"] = "auto"   # 화면 언어. auto 는 보는 브라우저의 언어(한국어면 한국어, 아니면 영어)
 
     def check(self) -> None:
         ids = [c.id for c in self.characters]
