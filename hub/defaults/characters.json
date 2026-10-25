@@ -1,0 +1,184 @@
+{
+ "fox": {
+  "image": "240d52653849d8fa.webp",
+  "walk": {
+   "front": [
+    "561d61eecd9035e6.webp",
+    "e8424a9e9745606c.webp"
+   ],
+   "back": [
+    "f96d2ecd81e3d0f3.webp",
+    "22dcd6e715227b34.webp"
+   ]
+  }
+ },
+ "cat": {
+  "image": "130d9e99bd341508.webp",
+  "walk": {
+   "front": [
+    "39baed8e005e10eb.webp",
+    "552fcf148f9307ea.webp"
+   ],
+   "back": [
+    "bf4a482b1265af7e.webp",
+    "54dd27fc6ad56181.webp"
+   ]
+  }
+ },
+ "bear": {
+  "image": "13ee7b1f84ed32bb.webp",
+  "walk": {
+   "front": [
+    "848845e1cfb0ebf5.webp",
+    "9876fbe489db6dab.webp"
+   ],
+   "back": [
+    "9ea88956fe1b7203.webp",
+    "da5b5fb882d8f3da.webp"
+   ]
+  }
+ },
+ "panda": {
+  "image": "b48de5a8f24f9bbf.webp",
+  "walk": {
+   "front": [
+    "968fb4f0770c929b.webp",
+    "d4b6a23f5cbce3f2.webp"
+   ],
+   "back": [
+    "ce3c0d93d36a94ce.webp",
+    "3ecf122051770e50.webp"
+   ]
+  }
+ },
+ "penguin": {
+  "image": "d96c967e4494f46f.webp",
+  "walk": {
+   "front": [
+    "952dc5a46125168e.webp",
+    "2e3493627529bfdc.webp"
+   ],
+   "back": [
+    "130dbbfaaa63e493.webp",
+    "7640edc8da2671d0.webp"
+   ]
+  }
+ },
+ "owl": {
+  "image": "831e5d68dab6cb41.webp",
+  "walk": {
+   "front": [
+    "a67e4e8d3b2b1498.webp",
+    "2e134967854d559d.webp"
+   ],
+   "back": [
+    "429589c8f1198dff.webp",
+    "f0a4982369eac83e.webp"
+   ]
+  }
+ },
+ "frog": {
+  "image": "d31af254a580779b.webp",
+  "walk": {
+   "front": [
+    "0c3d192f60f5f494.webp",
+    "8307c5f9bc6879d1.webp"
+   ],
+   "back": [
+    "bc7770d58a6d682d.webp",
+    "4b06a878caa5bda4.webp"
+   ]
+  }
+ },
+ "tiger": {
+  "image": "4a6c8cb84bf27161.webp",
+  "walk": {
+   "front": [
+    "4741dc23dd37fcd8.webp",
+    "50f8a13ff350ac14.webp"
+   ],
+   "back": [
+    "e9cee27187f40cee.webp",
+    "f6d9e47cd9b00d70.webp"
+   ]
+  }
+ },
+ "rabbit": {
+  "image": "21b555f71f72a3f9.webp",
+  "walk": {
+   "front": [
+    "b09bbf4f235d3d48.webp",
+    "e34e25c4dc84d86a.webp"
+   ],
+   "back": [
+    "d2c17d4555aef5bd.webp",
+    "85073911409ea8f2.webp"
+   ]
+  }
+ },
+ "robot": {
+  "image": "9a3bca280f580855.webp",
+  "walk": {
+   "front": [
+    "971bf3d77114e65a.webp",
+    "3d744acbaa6966aa.webp"
+   ],
+   "back": [
+    "47955219867bc49b.webp",
+    "6d9d60d69f865d0a.webp"
+   ]
+  }
+ },
+ "koala": {
+  "image": "0d887cf4ead34c79.webp",
+  "walk": {
+   "front": [
+    "4bc003c77860a1b7.webp",
+    "b933e737e765a712.webp"
+   ],
+   "back": [
+    "735d757c008ed50c.webp",
+    "8cd8a6c360782ec0.webp"
+   ]
+  }
+ },
+ "monkey": {
+  "image": "69bbdd06800855bb.webp",
+  "walk": {
+   "front": [
+    "0ef90976867aeabb.webp",
+    "a4aa9683c9fe9fa7.webp"
+   ],
+   "back": [
+    "0d843007c9532f05.webp",
+    "5a341bb5ec2032ef.webp"
+   ]
+  }
+ },
+ "chick": {
+  "image": "6edebafbe58df649.webp",
+  "walk": {
+   "front": [
+    "5399ad495d272f76.webp",
+    "5afd5d8c612bdd58.webp"
+   ],
+   "back": [
+    "1161131ac25a0222.webp",
+    "d8b8fca9ed7001cb.webp"
+   ]
+  }
+ },
+ "me": {
+  "image": "425c5c1266000dd9.webp",
+  "walk": {
+   "front": [
+    "802dd7b3774b8a2a.webp",
+    "5d402dfa97a9a17b.webp"
+   ],
+   "back": [
+    "231cd99e364c24bf.webp",
+    "fa040dce5fa03017.webp"
+   ]
+  }
+ }
+}

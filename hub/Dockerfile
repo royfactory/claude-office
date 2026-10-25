@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY static ./static
+COPY defaults ./defaults
 RUN useradd -u 501 -m office && mkdir -p /data && chown office /data
 USER office
 EXPOSE 3006

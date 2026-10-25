@@ -355,6 +355,19 @@ def test_walk_images_count_as_used_and_must_exist(hub):
     assert _put(c, lambda cfg: cfg["characters"][2].update(walk={"front": [name] * 5})).status_code == 422
 
 
+def test_default_characters_use_bundled_images(hub):
+    mod, c = hub
+    cfg = c.get("/api/config").json()
+    chars = {ch["id"]: ch for ch in cfg["characters"]}
+    assert cfg["meCharacter"] == "me" and chars["me"]["inPool"] is False
+    names = [n for ch in cfg["characters"] for n in [ch["image"], *(f for fr in ch["walk"].values() for f in fr)]]
+    assert len(names) == 14 * 5 and all(names)
+    r = c.get(f"/assets/{names[0]}")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/webp"
+    assert c.get("/api/assets").json() == []                     # 기본 이미지는 올린 이미지 목록에 없다
+    assert _put(c, lambda cfg: cfg.update(meName="로이")).status_code == 200   # 기본 이미지로 설정 검사를 통과한다
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

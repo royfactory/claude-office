@@ -71,6 +71,13 @@ TOKEN = os.environ.get("OFFICE_TOKEN", "").strip()
 ASSETS = DATA / "assets"
 CONFIG_PATH = DATA / "config.json"
 STATIC = Path(__file__).parent / "static"
+# 저장소에 함께 들어 있는 기본 캐릭터 이미지(3D 캐릭터 서 있기·걷기, WebP). 읽기만 하고 data/assets 로 옮기지 않는다.
+# /assets/<이름> 은 data/assets 에 없으면 여기서 찾는다. 이름 규칙(16자리 해시)은 올린 이미지와 같다
+DEFAULTS = Path(__file__).parent / "defaults"
+try:
+    DEFAULT_LOOKS: dict = json.loads((DEFAULTS / "characters.json").read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    DEFAULT_LOOKS = {}
 HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없는 수집기의 세션은 화면에서 뺀다
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE = 4000
@@ -80,9 +87,15 @@ GRACEFUL_SEC = 3    # 종료 때 열린 연결(SSE·롱폴링)을 기다리는 �
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
+def _char(cid: str, name: str, emoji: str, color: str, in_pool: bool) -> dict:
+    look = DEFAULT_LOOKS.get(cid, {})
+    return {"id": cid, "name": name, "emoji": emoji, "image": look.get("image", ""), "color": color,
+            "inPool": in_pool, "states": {}, "walk": look.get("walk", {})}
+
+
 DEFAULT_CONFIG: dict = {
     "characters": [
-        {"id": c, "name": n, "emoji": e, "color": col, "inPool": True, "states": {}}
+        _char(c, n, e, col, True)
         for c, n, e, col in [
             ("fox", "여우", "🦊", "#d95926"),
             ("cat", "고양이", "🐱", "#fbbf24"),
@@ -98,7 +111,7 @@ DEFAULT_CONFIG: dict = {
             ("monkey", "원숭이", "🐵", "#b45309"),
         ]
     ]
-    + [{"id": "chick", "name": "병아리", "emoji": "🐥", "color": "#fde047", "inPool": False, "states": {}}],
+    + [_char("chick", "병아리", "🐥", "#fde047", False), _char("me", "나", "🧑‍💻", "#d97757", False)],
     "subagentCharacter": "chick",
     "assignments": [],
     "rooms": [
@@ -127,7 +140,7 @@ DEFAULT_CONFIG: dict = {
     "messaging": False,  # 대시보드에서 세션으로 메시지 보내기. OFFICE_TOKEN 이 있어야 켜진다
     "approvals": False,  # 대시보드에서 권한 요청 허용·거절. OFFICE_TOKEN + 그 컴퓨터의 승인 훅이 있어야 동작
     "meName": "나",
-    "meCharacter": "",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
+    "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
 }
 
 
@@ -216,8 +229,18 @@ class Config(BaseModel):
             raise ValueError("방 7개(" + "·".join(ROOM_IDS) + ")가 모두 있어야 한다")
         for c in self.characters:
             for img in c.images():
-                if img and not (ASSETS / img).is_file():
+                if img and not asset_path(img):
                     raise ValueError(f"이미지 {img} 가 없다")
+
+
+def asset_path(name: str) -> Path | None:
+    """올린 이미지(data/assets) 먼저, 없으면 함께 들어 있는 기본 이미지. 이름 규칙에 안 맞으면 None."""
+    if not re.fullmatch(r"[0-9a-f]{16}\.(png|jpg|gif|webp)", name):
+        return None
+    for d in (ASSETS, DEFAULTS):
+        if (d / name).is_file():
+            return d / name
+    return None
 
 
 def default_config() -> dict:
@@ -889,9 +912,10 @@ async def delete_asset(name: str) -> dict:
 
 @app.get("/assets/{name}")
 async def get_asset(name: str):
-    if not re.fullmatch(r"[0-9a-f]{16}\.(png|jpg|gif|webp)", name) or not (ASSETS / name).is_file():
+    path = asset_path(name)
+    if not path:
         return JSONResponse({"detail": "없음"}, status_code=404)
-    return FileResponse(ASSETS / name, media_type=_TYPES[name.rsplit(".", 1)[1]],
+    return FileResponse(path, media_type=_TYPES[name.rsplit(".", 1)[1]],
                         headers={"X-Content-Type-Options": "nosniff",
                                  "Cache-Control": "public, max-age=31536000, immutable"})
 
