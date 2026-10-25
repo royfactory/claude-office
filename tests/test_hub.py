@@ -383,6 +383,14 @@ def test_ingest_keeps_clean_system_stats(hub):
     assert h["sys"] == {"cpu": 37, "gpu": None, "mem": 100, "disk": None, "memTotal": 1024, "ts": 1}
 
 
+def test_favicon(hub):
+    _, c = hub
+    r = c.get("/favicon.ico")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert c.get("/static/favicon.svg").status_code == 200
+    assert 'href="/static/favicon.svg"' in c.get("/").text and 'href="/static/favicon.svg"' in c.get("/admin").text
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

@@ -412,6 +412,12 @@ async def admin_slash() -> RedirectResponse:
     return RedirectResponse("/admin")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    # 링크 태그를 안 읽는 도구(북마크·RSS 리더 등)가 찾는 자리. PNG 를 그대로 준다(브라우저는 형식을 가리지 않는다)
+    return FileResponse(STATIC / "favicon-32.png", media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True, "hosts": len(hub.hosts), "version": hub.version, "auth": bool(TOKEN)}
