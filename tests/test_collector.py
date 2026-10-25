@@ -1236,5 +1236,4 @@ def test_sample_system_shape(collector):
         assert v[k] is None or (isinstance(v[k], int) and 0 <= v[k] <= 100), (k, v[k])
     assert v["mem"] is not None and v["memTotal"] > 0
     assert v["disk"] is not None and v["diskTotal"] > 0
-    collector.sample_system()   # 두 번째 표본에서는 차로 재는 CPU(Windows·리눅스)도 나온다
-    assert collector.sample_system()["cpu"] is not None
+    assert v["cpu"] is not None   # 차로 재는 CPU(Windows·리눅스)도 첫 표본부터 나온다

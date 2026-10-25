@@ -787,6 +787,18 @@ def _cpu():
         out = _run(["top", "-l", "2", "-n", "0", "-s", "1"], timeout=8)   # 바쁠 때는 2초를 넘기기도 한다
         m = re.findall(r"CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys", out)
         return float(m[-1][0]) + float(m[-1][1]) if m else None
+    # 처음이거나 앞 표본과 시간이 거의 안 벌어졌으면(타이머 눈금 10~16ms) 잠깐 뒤 한 번 더 잰다
+    pair = _cpu_times()
+    r = _cpu_delta(*pair) if pair else None
+    if r is None and pair:
+        time.sleep(0.5)
+        pair = _cpu_times()
+        r = _cpu_delta(*pair) if pair else None
+    return r
+
+
+def _cpu_times():
+    """(바쁜 시간, 전체 시간) 누적값. Windows GetSystemTimes, 리눅스 /proc/stat."""
     if WINDOWS:
         import ctypes
         from ctypes import wintypes
@@ -795,14 +807,14 @@ def _cpu():
             return None
         v = lambda ft: (ft.dwHighDateTime << 32) | ft.dwLowDateTime   # noqa: E731
         total = v(kern) + v(user)   # 커널 시간에 유휴 시간이 들어 있다
-        return _cpu_delta(total - v(idle), total)
+        return total - v(idle), total
     try:
         with open("/proc/stat") as f:
             nums = [int(x) for x in f.readline().split()[1:]]
     except (OSError, ValueError):
         return None
     idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
-    return _cpu_delta(sum(nums) - idle, sum(nums))
+    return sum(nums) - idle, sum(nums)
 
 
 def _mem():
