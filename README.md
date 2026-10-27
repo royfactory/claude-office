@@ -58,6 +58,8 @@ Sessions are assigned characters automatically (no two alike on one floor); sub-
 
 ![Admin page: emoji, image, looks by state and walking frames per character](docs/media/admin.jpg)
 
+Updating from an older version: characters that still have no image get the built-in pictures once, on the first start after the update (`git pull`, then restart the hub — on Windows run `start.bat` again). Images you picked are kept.
+
 Walking frames: the camera is a fixed isometric view, so characters only walk along four diagonals. Add 2–4 frames for walking toward the camera (facing lower-left) and away from it (facing upper-right); the other two directions are mirrored. Keep every frame the same canvas size with the feet on the bottom edge. The built-in characters were made with a local image model (FLUX.1 schnell and FLUX.2 klein edit with pose skeletons).
 
 ## How it works

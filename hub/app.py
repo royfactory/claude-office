@@ -87,6 +87,9 @@ GRACEFUL_SEC = 3    # 종료 때 열린 연결(SSE·롱폴링)을 기다리는 �
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
+LOOK_VERSION = 1   # hub/defaults 의 기본 캐릭터 그림 묶음. 바꾸면 예전 설정에 한 번 다시 채운다
+
+
 def _char(cid: str, name: str, emoji: str, color: str, in_pool: bool) -> dict:
     look = DEFAULT_LOOKS.get(cid, {})
     return {"id": cid, "name": name, "emoji": emoji, "image": look.get("image", ""), "color": color,
@@ -142,6 +145,7 @@ DEFAULT_CONFIG: dict = {
     "meName": "나",
     "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
     "language": "auto",    # 화면 언어: auto(브라우저 언어) · ko · en
+    "lookVersion": 1,      # 기본 캐릭터 그림 묶음 번호(LOOK_VERSION). 새 설정은 이미 받은 상태
 }
 
 
@@ -215,6 +219,7 @@ class Config(BaseModel):
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
     language: Literal["auto", "ko", "en"] = "auto"   # 화면 언어. auto 는 보는 브라우저의 언어(한국어면 한국어, 아니면 영어)
+    lookVersion: int = LOOK_VERSION   # 기본 캐릭터 그림을 몇 번째 묶음까지 받았나(load_config 의 한 번 채우기용)
 
     def check(self) -> None:
         ids = [c.id for c in self.characters]
@@ -261,7 +266,28 @@ def load_config() -> dict:
             for k in ("rooms", "toolRooms", "defaultRoom"):
                 saved.pop(k, None)
         cfg.update(saved)
+        if saved.get("lookVersion", 0) < LOOK_VERSION and fill_default_looks(cfg):
+            save_config(cfg)
     return cfg
+
+
+def fill_default_looks(cfg: dict) -> bool:
+    """기본 캐릭터 그림이 나오기 전에 저장된 설정에 한 번만 그림을 채운다. 바꾼 게 있으면 True.
+
+    기본 id(fox·cat…)인데 그림도 걷기 그림도 없는 캐릭터에만 채운다(사용자가 고른 이미지는 그대로).
+    '나' 캐릭터(me)가 없으면 더하고, '나'를 아직 고르지 않았으면 그걸로 정한다.
+    lookVersion 을 올려 두므로 그 뒤에 이미지를 빼도 다시 채우지 않는다."""
+    cfg["lookVersion"] = LOOK_VERSION
+    chars = cfg.get("characters", [])
+    for c in chars:
+        look = DEFAULT_LOOKS.get(c.get("id"))
+        if look and not c.get("image") and not any(c.get("walk", {}).values()):
+            c["image"], c["walk"] = look.get("image", ""), look.get("walk", {})
+    if "me" in DEFAULT_LOOKS and not any(c.get("id") == "me" for c in chars):
+        chars.append(_char("me", "나", "🧑‍💻", "#d97757", False))
+        if not cfg.get("meCharacter"):
+            cfg["meCharacter"] = "me"
+    return True
 
 
 def save_config(cfg: dict) -> None:

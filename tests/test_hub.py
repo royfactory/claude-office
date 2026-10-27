@@ -391,6 +391,32 @@ def test_favicon(hub):
     assert 'href="/static/favicon.svg"' in c.get("/").text and 'href="/static/favicon.svg"' in c.get("/admin").text
 
 
+def test_old_config_gets_default_looks_once(make_hub, tmp_path):
+    """기본 캐릭터 그림이 생기기 전에 저장된 설정(이모지만)에 한 번만 그림을 채운다."""
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    old = {"characters": [
+        {"id": "fox", "name": "여우", "emoji": "🦊", "color": "#d95926", "inPool": True, "states": {}},
+        {"id": "cat", "name": "고양이", "emoji": "🐱", "color": "#fbbf24", "inPool": True, "states": {}, "image": "0123456789abcdef.png"},
+        {"id": "mine", "name": "내 캐릭터", "emoji": "🙂", "color": "#94a3b8", "inPool": True, "states": {}}],
+        "meCharacter": "", "meName": "로이"}
+    (data / "config.json").write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    mod, c = make_hub()
+    cfg = c.get("/api/config").json()
+    chars = {ch["id"]: ch for ch in cfg["characters"]}
+    assert chars["fox"]["image"] and len(chars["fox"]["walk"]["front"]) == 2      # 그림 없던 기본 캐릭터는 채움
+    assert chars["cat"]["image"] == "0123456789abcdef.png"                       # 사용자가 고른 이미지는 그대로
+    assert not chars["mine"].get("image")                                         # 기본이 아닌 캐릭터는 그대로
+    assert "me" in chars and cfg["meCharacter"] == "me" and cfg["meName"] == "로이"
+    saved = json.loads((data / "config.json").read_text(encoding="utf-8"))
+    assert saved["lookVersion"] == mod.LOOK_VERSION
+    # 그 뒤 사용자가 여우 그림을 빼면 다시 띄워도 채우지 않는다
+    saved["characters"][0].update(image="", walk={})
+    (data / "config.json").write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+    _, c2 = make_hub()
+    assert not {ch["id"]: ch for ch in c2.get("/api/config").json()["characters"]}["fox"]["image"]
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404
