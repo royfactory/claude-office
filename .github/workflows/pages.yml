@@ -1,4 +1,4 @@
-# 시연 화면(가짜 데이터)을 GitHub Pages 에 올린다 — https://royfactory.github.io/claude-office/
+# 시연 화면(가짜 데이터)을 GitHub Pages 에 올린다 — https://royfactory.net/claude-office/
 # 화면 코드(hub/static)·기본 캐릭터·빌드 스크립트가 바뀌어 main 에 들어오면 다시 만든다.
 name: Demo (Pages)
 

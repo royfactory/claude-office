@@ -126,7 +126,7 @@
   .story .cnt em { font-style: normal; } .story.busy .cnt { color: #e7d7a8; } .story.busy .cnt em { color: #bef264; font-weight: 700; }
   .bldg:is([data-fit=row], [data-fit=tight]) .story { align-items: center; border-bottom-width: 2px; }
   .bldg:is([data-fit=row], [data-fit=tight]) .story .info { flex-direction: row; align-items: center; gap: 6px; }
-  .bldg:is([data-fit=row], [data-fit=tight]) .story .info .nm { flex: 1; min-width: 0; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info .nm { flex: 1; min-width: min-content; }   /* 이름(최소 4.5em)+git 숫자는 지키고 창문이 줄어든다 */
   .bldg:is([data-fit=row], [data-fit=tight]) .story .info small { display: none; }
   .bldg[data-fit=row] .story { padding: 5px 8px; }
   .bldg[data-fit=row] .story .no { width: 30px; height: 19px; font-size: 10px; }

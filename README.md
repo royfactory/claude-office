@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/royfactory/claude-office/actions/workflows/ci.yml/badge.svg)](https://github.com/royfactory/claude-office/actions/workflows/ci.yml)
 
-**English** · [한국어](README.ko.md) · **[▶ Live demo](https://royfactory.github.io/claude-office/)** (sample data, no install)
+**English** · [한국어](README.ko.md) · **[▶ Live demo](https://royfactory.net/claude-office/)** (sample data, no install)
 
 A live 3D office for your Claude Code sessions. Every session becomes a character that walks to a room for the tool it is using — files in the library, shell in the server room, edits in the dev room — and heads to the lounge when it is done. One project is one floor of the building.
 
