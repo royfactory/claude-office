@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/royfactory/claude-office/actions/workflows/ci.yml/badge.svg)](https://github.com/royfactory/claude-office/actions/workflows/ci.yml)
 
-[English](README.md) · **한국어**
+[English](README.md) · **한국어** · **[▶ 시연 보기](https://royfactory.github.io/claude-office/)** (가짜 데이터, 설치 없이)
 
 Claude Code 세션 하나하나를 캐릭터로 띄워, 지금 쓰는 도구에 따라 3D 사무실(쿼터뷰) 안을 걸어 다니게 하는 실시간 대시보드입니다.
 

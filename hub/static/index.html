@@ -130,7 +130,8 @@
   .bldg:is([data-fit=row], [data-fit=tight]) .story .info small { display: none; }
   .bldg[data-fit=row] .story { padding: 5px 8px; }
   .bldg[data-fit=row] .story .no { width: 30px; height: 19px; font-size: 10px; }
-  .bldg[data-fit=row] .wins { margin-top: 0; flex: none; flex-wrap: nowrap; gap: 2px; }
+  .bldg[data-fit=row] .wins { margin-top: 0; flex: 0 1 auto; min-width: 0; overflow: hidden; flex-wrap: nowrap; gap: 2px; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info .nm b { min-width: 4.5em; }   /* git 숫자가 붙어도 이름이 먼저(창문이 잘린다) */
   .bldg[data-fit=row] .win { width: 16px; height: 15px; font-size: 9px; }
   .bldg[data-fit=row] .win.x, .bldg[data-fit=row] .win.m-full { display: none; }
   .bldg[data-fit=row] .win.m-row { display: grid; width: auto; }
