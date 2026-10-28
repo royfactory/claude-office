@@ -1237,3 +1237,25 @@ def test_sample_system_shape(collector):
     assert v["mem"] is not None and v["memTotal"] > 0
     assert v["disk"] is not None and v["diskTotal"] > 0
     assert v["cpu"] is not None   # 차로 재는 CPU(Windows·리눅스)도 첫 표본부터 나온다
+
+
+def test_git_state_counts_changes(collector, tmp_path):
+    """임시 저장소: 커밋 뒤 파일 하나를 고치고 하나를 더하면 dirty 2, upstream 이 없으면 ahead·behind 는 None."""
+    import shutil
+    import subprocess
+    if not shutil.which("git"):
+        pytest.skip("git 없음")
+    repo = tmp_path / "proj"
+    sub = repo / "src"
+    sub.mkdir(parents=True)
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, env=env)   # noqa: E731
+    run("init", "-q")
+    (repo / "a.txt").write_text("1")
+    run("add", ".")
+    run("commit", "-q", "-m", "x")
+    (repo / "a.txt").write_text("2")
+    (sub / "b.txt").write_text("new")
+    v = collector.git_state(str(sub))                     # 하위 폴더에서 연 세션도 저장소 뿌리에서 잰다
+    assert v == {"dirty": 2, "ahead": None, "behind": None}
+    assert collector.git_state(str(tmp_path)) is None     # git 이 아닌 폴더

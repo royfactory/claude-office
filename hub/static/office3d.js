@@ -947,7 +947,21 @@ function floors() {
   const under = f => !f.busy && now - f.last > BASEMENT_SEC;
   const up = all.filter(f => !under(f)).sort((x, y) => x.first - y.first).map((f, i) => ({ ...f, n: i + 1 }));
   const down = all.filter(under).sort((x, y) => y.last - x.last).map((f, i) => ({ ...f, n: -(i + 1), under: true }));
-  return up.concat(down);
+  return up.concat(down).map(f => ({ ...f, git: floorGit(f) }));
+}
+// 층의 git 상태: 작업 폴더(저장소 뿌리·worktree)마다 한 번씩 더한다. 수집기가 30초마다 잰 값
+function floorGit(f) {
+  const seen = new Map();
+  for (const a of f.agents) if (a.git && !seen.has(a.worktree || "")) seen.set(a.worktree || "", a.git);
+  if (!seen.size) return null;
+  let dirty = 0, ahead = 0;
+  for (const g of seen.values()) { dirty += g.dirty || 0; ahead += g.ahead || 0; }
+  return { dirty, ahead };
+}
+function gitBadge(g) {
+  if (!g || (!g.dirty && !g.ahead)) return "";
+  return `<span class="gitb">${g.dirty ? `<span title="${esc(t("커밋 안 한 변경 {n}개", { n: g.dirty }))}"><i class="fa-solid fa-pen"></i>${g.dirty}</span>` : ""}` +
+    `${g.ahead ? `<span title="${esc(t("푸시 안 한 커밋 {n}개", { n: g.ahead }))}"><i class="fa-solid fa-arrow-up"></i>${g.ahead}</span>` : ""}</span>`;
 }
 function chooseFloor(fl) {
   const hashP = decodeURIComponent((location.hash.match(/p=([^&]+)/) || [])[1] || "");
@@ -1267,7 +1281,7 @@ function renderFloors(fl) {
       + (ws.length > ROW_WINDOWS ? `<span class="win more m-row">+${ws.length - ROW_WINDOWS}</span>` : "");
     return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}${f.under ? " under" : ""}" data-p="${esc(f.project)}">
       <span class="no" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span>
-      <span class="info"><b>${esc(f.project)}</b><small>${f.busy ? `<em>${t("{n}명 근무 중", { n: f.busy })}</em> · ` : ""}${t("세션 {n}개", { n: f.agents.length })}${f.busy ? "" : " · " + agoSpan(f.last, t(" 전"))}</small>
+      <span class="info"><span class="nm"><b>${esc(f.project)}</b>${gitBadge(f.git)}</span><small>${f.busy ? `<em>${t("{n}명 근무 중", { n: f.busy })}</em> · ` : ""}${t("세션 {n}개", { n: f.agents.length })}${f.busy ? "" : " · " + agoSpan(f.last, t(" 전"))}</small>
       <span class="wins">${wins}</span><span class="cnt" title="${t("근무 중 / 세션")}"><em>${f.busy}</em>/${f.agents.length}</span></span></div>`;
   };
   // 위에서부터: 지상 층(높은 층 먼저) → 로비(컴퓨터들) → 지하 층(B1 부터 깊은 쪽으로)
@@ -1282,7 +1296,7 @@ function renderFloors(fl) {
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
   const f = fl.find(x => x.project === floorKey);
-  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b><small>${esc(f.host || "")} · ${t("세션 {n}개", { n: f.agents.length })}</small>` : "");
+  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b>${gitBadge(f.git)}<small>${esc(f.host || "")} · ${t("세션 {n}개", { n: f.agents.length })}</small>` : "");
 }
 // 왼쪽 빌딩을 스크롤 없이 보이게: 넉넉한 밀도부터 들어갈 때까지 줄인다.
 // full = 이름·상태·창문 세 줄, row = 한 줄에 창문 3개까지, tight = 한 줄에 근무/세션 숫자만(지붕·로비도 줄인다).
@@ -1395,7 +1409,11 @@ function setupSteps(h) {
   return [
     { t: t("수집기 연결·최신 버전"), must: true, items: [
       { ok: !!h.online, label: t("허브와 연결됨"), fix: win ? t("그 컴퓨터에서 start.bat") : t("그 컴퓨터에서 sh collector/install.sh") },
-      { ok: !!su, label: t("설정 점검을 지원하는 수집기"), fix: reinstall }] },
+      { ok: !!su, label: t("설정 점검을 지원하는 수집기"), fix: reinstall },
+      // 맥: launchd 로 뜬 수집기는 데스크톱·문서 폴더 안 저장소를 못 읽어 층의 git 숫자가 비어 있다
+      ...(su && su.os === "mac" && su.gitDenied != null ? [{ ok: su.gitDenied === 0, label: t("git 상태 읽기(macOS 권한)") + (su.gitDenied ? ` · ${t("막힌 저장소 {n}곳", { n: su.gitDenied })}` : ""),
+        fix: t("시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 + 를 누르고 ⌘⇧G 로 아래 경로를 열어 더한 뒤, sh collector/install.sh 로 수집기를 다시 띄운다(데스크톱·문서 폴더 안 저장소의 git 상태를 읽으려면 필요)"),
+        copy: su.pythonApp || su.python }] : [])] },
     { t: t("할 일 체크리스트 규칙"), must: true, items: [
       { ok: h.checklistRule === true, label: t("Claude 전역 지침(CLAUDE.md)에 규칙"), fix: t("claude-office 폴더에서 실행 — CLAUDE.md 끝에 규칙을 덧붙인다(이미 있으면 그대로, 백업을 남김). 할 일 도구 켜기도 함께"), copy: inRepo(rowCmd(rows.find(r => r.label === "~/.claude") || { label: "~/.claude" }, ["--rule", "--todo-tools"])) },
       { ok: frac(su && su.todoTools, su && su.roots), label: t("할 일 도구를 켠 설정 폴더 {a}/{b}곳 (새 모델은 기본으로 꺼져 있음)", { a: su ? (su.todoTools ?? "?") : "?", b: su ? su.roots : "?" }), fix: t("claude-office 저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터"), copy: cmd("todoTools", "--rule", "--todo-tools") }],
@@ -1505,6 +1523,7 @@ function sessionMeta(a) {
   if (a.model) bits.push(`<span title="${t("모델")}"><i class="fa-solid fa-microchip"></i>${esc(a.model)}</span>`);
   if (a.worktree) bits.push(`<span title="${t("git worktree — 이 저장소(층)의 다른 작업 폴더")}"><i class="fa-solid fa-code-fork"></i>${esc(a.worktree)}</span>`);
   if (a.branch) bits.push(`<span title="${t("git 브랜치")}"><i class="fa-solid fa-code-branch"></i>${esc(a.branch)}</span>`);
+  if (a.git && (a.git.dirty || a.git.ahead)) bits.push(gitBadge(a.git));
   const ln = a.lines || [0, 0];
   if (ln[0] || ln[1]) bits.push(`<span title="${t("이 세션이 Edit·Write 로 더하고 뺀 줄")}"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
   const lm = a.limits || {};

@@ -204,6 +204,7 @@ WAIT_SEC = 25           # 메시지 롱폴링(/api/outbox/wait) 한 번에 기�
 
 
 _project_cache = {}
+_root_cache = {}   # 세션 폴더 → 그 git 작업 폴더(저장소 뿌리나 worktree 폴더). git 이 아니면 ""
 
 
 def project_of(cwd):
@@ -217,6 +218,7 @@ def project_of(cwd):
     if cwd in _project_cache:
         return _project_cache[cwd]
     out = (os.path.basename(cwd), "")
+    root = ""
     home = os.path.abspath(os.path.expanduser("~"))
     d = cwd
     for _ in range(12):
@@ -225,9 +227,10 @@ def project_of(cwd):
         g = os.path.join(d, ".git")
         try:
             if os.path.isdir(g):
-                out = (os.path.basename(d), "")
+                out, root = (os.path.basename(d), ""), d
                 break
             if os.path.isfile(g):
+                root = d
                 with open(g, encoding="utf-8", errors="replace") as f:
                     line = f.read(4096).strip()
                 gitdir = line[7:].strip() if line.startswith("gitdir:") else ""
@@ -249,7 +252,9 @@ def project_of(cwd):
         d = up
     if len(_project_cache) > 500:
         _project_cache.clear()
+        _root_cache.clear()
     _project_cache[cwd] = out
+    _root_cache[cwd] = root
     return out
 
 
@@ -723,6 +728,7 @@ class Collector:
                 "say": self.said(tr),
                 "mode": tr.mode,
                 "branch": tr.branch,
+                "git": git_state(cwd),
                 **usage,
                 "limits": dict(sl["limits"], ts=sl["ts"]) if sl and sl.get("limits") else None,
                 "timeline": tr.timeline(now),
@@ -742,6 +748,49 @@ class Collector:
 
 # 이 컴퓨터의 Claude 전역 지침에 '할 일 체크리스트' 규칙이 있는지. 없으면 화면이 넣을 문장을 안내한다
 _rule_cache = {"at": 0.0, "ok": False}
+
+
+# ---------- git 상태(층마다 커밋 안 한 변경·푸시 안 한 커밋) ----------
+GIT_SEC = 30
+_git_cache = {}   # 작업 폴더 → (잰 시각, 값)
+# macOS 가 막아 못 읽은 작업 폴더(launchd 로 뜬 수집기는 데스크톱·문서 폴더를 '전체 디스크 접근 권한' 없이는 못 연다)
+_git_denied = set()
+
+
+def git_state(cwd):
+    """세션 폴더의 git 작업 폴더에서 {dirty: 바뀐 파일 수, ahead: 푸시 안 한 커밋, behind: 받지 않은 커밋}. git 이 아니면 None.
+
+    작업 폴더마다 GIT_SEC 에 한 번만 잰다. 내용·파일 이름은 보내지 않고 수만. GIT_OPTIONAL_LOCKS=0 으로 index.lock 을 잡지 않는다
+    (그 저장소에서 일하는 Claude 의 git 명령과 부딪치지 않게). upstream 이 없으면 ahead·behind 는 None."""
+    project_of(cwd)
+    root = _root_cache.get((cwd or "").rstrip("/\\"), "")
+    if not root:
+        return None
+    now = time.time()
+    hit = _git_cache.get(root)
+    if hit and now - hit[0] < GIT_SEC:
+        return hit[1]
+    import subprocess
+    val = None
+    try:
+        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v2", "--branch"], capture_output=True, text=True, timeout=5,
+                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
+                           creationflags=0x08000000 if WINDOWS else 0)
+        if "Operation not permitted" in (r.stderr or ""):
+            _git_denied.add(root)
+        else:
+            _git_denied.discard(root)
+        if r.returncode == 0:
+            lines = r.stdout.splitlines()
+            ab = next((ln.split()[2:4] for ln in lines if ln.startswith("# branch.ab ")), None)
+            val = {"dirty": sum(1 for ln in lines if ln and not ln.startswith("#")),
+                   "ahead": int(ab[0].lstrip("+")) if ab else None, "behind": int(ab[1].lstrip("-")) if ab else None}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        val = None
+    if len(_git_cache) > 200:
+        _git_cache.clear()
+    _git_cache[root] = (now, val)
+    return val
 
 
 # ---------- 이 컴퓨터의 자원(CPU·GPU·메모리·디스크) ----------
@@ -937,7 +986,7 @@ _setup_cache = {"at": 0.0, "val": None}
 
 def setup_status():
     if _setup_cache["val"] is not None and time.time() - _setup_cache["at"] < 60:
-        return _setup_cache["val"]
+        return {**_setup_cache["val"], "gitDenied": len(_git_denied)}
     roots = claude_roots()
     hooks = approve = status = todo = 0
     home = os.path.expanduser("~")
@@ -982,8 +1031,12 @@ def setup_status():
     val = {"repo": repo[:200], "python": py.replace("\\", "/")[:200], "os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
            "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rootsDetail": detail[:10],
            "messagesEnv": MESSAGES, "approveEnv": APPROVE}
+    # 맥의 명령줄 도구 파이썬은 실제로 …/Python3.framework/…/Resources/Python.app 이 권한을 받는다(전체 디스크 접근 권한에 더할 것)
+    app = os.path.join(sys.base_prefix, "Resources", "Python.app") if sys.platform == "darwin" else ""
+    if app and os.path.isdir(app):
+        val["pythonApp"] = app[:200]
     _setup_cache.update(at=time.time(), val=val)
-    return val
+    return {**val, "gitDenied": len(_git_denied)}
 
 
 def post(hub, payload, timeout=5):

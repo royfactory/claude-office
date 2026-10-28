@@ -102,6 +102,12 @@
   .story:not(.busy) .no { filter: saturate(.25) brightness(.55); }
   .story .info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .story .info b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .story .info .nm { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  /* git: 커밋 안 한 변경(연필)·푸시 안 한 커밋(위 화살표) 수 */
+  .gitb { flex: none; display: inline-flex; gap: 5px; font-size: 10px; font-weight: 700; color: #fbbf24; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .gitb i { font-size: 8.5px; margin-right: 2px; opacity: .85; }
+  .story:not(.busy) .gitb { color: #b45309; } .story.under .gitb { opacity: .6; }
+  #floorBadge .gitb { margin-left: 6px; font-size: 11px; }
   .story .info small { font-size: 10.5px; } .story .info em { font-style: normal; }
   .wins { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
   .win { width: 20px; height: 18px; border-radius: 2px; display: grid; place-items: center; font-family: var(--emoji); font-size: 11px;
@@ -120,7 +126,7 @@
   .story .cnt em { font-style: normal; } .story.busy .cnt { color: #e7d7a8; } .story.busy .cnt em { color: #bef264; font-weight: 700; }
   .bldg:is([data-fit=row], [data-fit=tight]) .story { align-items: center; border-bottom-width: 2px; }
   .bldg:is([data-fit=row], [data-fit=tight]) .story .info { flex-direction: row; align-items: center; gap: 6px; }
-  .bldg:is([data-fit=row], [data-fit=tight]) .story .info b { flex: 1; min-width: 0; }
+  .bldg:is([data-fit=row], [data-fit=tight]) .story .info .nm { flex: 1; min-width: 0; }
   .bldg:is([data-fit=row], [data-fit=tight]) .story .info small { display: none; }
   .bldg[data-fit=row] .story { padding: 5px 8px; }
   .bldg[data-fit=row] .story .no { width: 30px; height: 19px; font-size: 10px; }

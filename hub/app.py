@@ -548,7 +548,7 @@ def _host_of(body: dict) -> str:
     return host
 
 
-SETUP_INTS = ("roots", "hooks", "approveHook", "statusline", "todoTools")
+SETUP_INTS = ("roots", "hooks", "approveHook", "statusline", "todoTools", "gitDenied")
 SETUP_BOOLS = ("messagesEnv", "approveEnv")
 
 
@@ -563,7 +563,7 @@ def _meta_of(body: dict) -> dict:
         clean.update({k: bool(su[k]) for k in SETUP_BOOLS if k in su})
         if su.get("os") in ("mac", "windows", "linux"):
             clean["os"] = su["os"]
-        for k in ("repo", "python"):
+        for k in ("repo", "python", "pythonApp"):
             if isinstance(su.get(k), str) and su[k]:
                 clean[k] = su[k][:200]
         rows = su.get("rootsDetail")

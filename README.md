@@ -17,6 +17,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **What needs you.** A chip at the top gathers every session waiting for approval, stuck, or newly finished, across all floors — with sound and tab-title counts if you want them.
 - **Computer load.** CPU, GPU, memory and disk gauges for the computer on the floor you are viewing, right above the usage-limit bar.
 - **Daily and weekly summary.** Active time, tool calls, lines changed, output tokens and sessions per project, for today or the last 7 days (Recent activity → Summary). Stored on the hub in `data/stats.json`.
+- **Git status per floor.** Uncommitted changes and unpushed commits for each project's checkouts (counts only). On macOS the collector needs Full Disk Access to read repos inside Desktop or Documents; the Guide tab's setup checklist shows how.
 - **Session details.** Speech bubbles with Claude's last words, the current tool and target, todo checklists, a context-window gauge, a tool timeline, and a recent-activity feed.
 - **Optional extras.** Approve or deny permission prompts from the dashboard, send a message into a session, and show the 5-hour/weekly usage limits.
 - **3D characters built in.** 14 characters (13 animals plus "me") with standing and walking frames. Swap any of them for your own images or emoji.
@@ -104,7 +105,7 @@ The collector reads session logs and sends only:
 - session name and title, project **folder name** (not the path), state, tool-call count
 - the current tool and a short target: file name (no path), the Bash `description`, the first 32 characters of a search, the host of a URL, a sub-agent's description
 - **the first 80 characters of Claude's last message** (speech bubble)
-- model, git branch, token counts, compactions, lines added/removed by Edit/Write (counts, not content)
+- model, git branch, number of uncommitted files and unpushed commits, token counts, compactions, lines added/removed by Edit/Write (counts, not content)
 - every 5 seconds: CPU, GPU, memory and disk usage percentages of that computer, plus total memory and disk size
 - for the timeline: tools used in the last 30 minutes with start/end time, target and failure, and the **times** you sent a message (not the text)
 
