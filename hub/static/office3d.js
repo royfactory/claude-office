@@ -1701,7 +1701,7 @@ const feed = [];                 // {ts, type: done|start|new|end|approval, id, 
 const feedKind = new Map();      // 세션 id -> 지난번 근무 여부
 const feedAppr = new Map();      // 세션 id -> 지난번 승인 대기 여부
 let feedOpen = false, feedFilter = "all", feedSeenTs = 0, feedQuery = "", feedView = "news", tlScope = "floor", tlWin = 600;
-try { feedView = localStorage.getItem("office.feedView") === "tl" ? "tl" : "news"; tlScope = localStorage.getItem("office.tlScope") === "busy" ? "busy" : "floor"; tlWin = +localStorage.getItem("office.tlWin") === 1800 ? 1800 : 600; } catch (_) {}
+try { const fv = localStorage.getItem("office.feedView"); feedView = fv === "tl" || fv === "sum" ? fv : "news"; tlScope = localStorage.getItem("office.tlScope") === "busy" ? "busy" : "floor"; tlWin = +localStorage.getItem("office.tlWin") === 1800 ? 1800 : 600; } catch (_) {}
 try { feedOpen = localStorage.getItem("office.feed") === "1"; feedSeenTs = +localStorage.getItem("office.feedSeen") || 0; } catch (_) {}
 const feedCompacts = new Map();  // 세션 id -> 지난번 압축 횟수
 const FEED_ICON = { done: "circle-check", start: "circle-play", new: "plus", end: "power-off", approval: "hand", compact: "compress" };
@@ -1759,6 +1759,7 @@ function renderFeed() {
   tickTimes($("feedLatest"), now);
   if (!feedOpen) return;
   renderTimeline();
+  renderSummary();
   if (feedView !== "news") return;
   const q = feedQuery.trim().toLowerCase();
   const list = sorted.filter(e => (feedFilter === "all" || (feedFilter === "life" ? e.type === "new" || e.type === "end" : e.type === feedFilter)) &&
@@ -1857,11 +1858,73 @@ function durText(sec) {
 }
 function setFeedView(v) {
   feedView = v;
-  $("stage").classList.toggle("tl-view", v === "tl");
+  for (const k of ["news", "tl", "sum"]) $("stage").classList.toggle("view-" + k, v === k);
   $("feedView").querySelectorAll("[data-v]").forEach(x => x.classList.toggle("on", x.dataset.v === v));
   try { localStorage.setItem("office.feedView", v); } catch (_) {}
   renderFeed();
 }
+// ---------- 요약: 허브가 날짜·프로젝트별로 쌓은 활동(/api/stats) ----------
+let sumScope = "today", sumData = null, sumAt = 0, sumLoading = false;
+try { sumScope = localStorage.getItem("office.sumScope") === "week" ? "week" : "today"; } catch (_) {}
+function fmtActive(sec) {
+  const m = Math.round((sec || 0) / 60);
+  if (m < 1) return sec > 0 ? t("1분 미만") : "0";
+  const h = Math.floor(m / 60);
+  return h ? t("{h}시간 {m}분", { h, m: m % 60 }) : t("{m}분", { m });
+}
+function sumRows(days) {   // 여러 날을 프로젝트별로 더한다
+  const by = new Map();
+  for (const d of days) for (const [p, v] of Object.entries(d.projects)) {
+    const r = by.get(p) || { project: p, active: 0, tools: 0, add: 0, del: 0, out: 0, sessions: 0 };
+    for (const k of ["active", "tools", "add", "del", "out", "sessions"]) r[k] += v[k] || 0;
+    by.set(p, r);
+  }
+  return [...by.values()].sort((a, b) => b.active - a.active || b.tools - a.tools);
+}
+function renderSummary() {
+  if (!feedOpen || feedView !== "sum") return;
+  if (!sumLoading && Date.now() - sumAt > 60000) {
+    sumLoading = true;
+    sumAt = Date.now();   // 실패해도 1분 동안은 다시 묻지 않는다(끝없이 다시 부르지 않게)
+    fetch("/api/stats?days=7", { cache: "no-store" }).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(j => { sumData = j; })
+      .catch(() => { if (!sumData) sumData = { today: "", days: [], error: true }; })
+      .finally(() => { sumLoading = false; renderSummary(); });
+  }
+  $("sumScope").querySelectorAll("[data-s]").forEach(b => b.classList.toggle("on", b.dataset.s === sumScope));
+  if (!sumData) { setHTML($("summary"), `<div class="empty">${t("불러오는 중…")}</div>`); return; }
+  if (sumData.error) { setHTML($("summary"), `<div class="empty">${t("요약을 불러오지 못했습니다(허브가 예전 버전이면 다시 띄우세요).")}</div>`); return; }
+  const days = sumData.days, scoped = sumScope === "week" ? days : days.slice(-1);
+  const rows = sumRows(scoped);
+  const all = rows.reduce((a, r) => { for (const k of ["active", "tools", "add", "del", "out", "sessions"]) a[k] += r[k]; return a; },
+    { active: 0, tools: 0, add: 0, del: 0, out: 0, sessions: 0 });
+  const tiles = [[t("활동 시간"), fmtActive(all.active)], [t("도구 호출"), all.tools.toLocaleString()],
+    [t("바꾼 줄"), `<span class="add">+${all.add.toLocaleString()}</span> <span class="del">−${all.del.toLocaleString()}</span>`],
+    [t("출력 토큰"), fmtTok(all.out)], [t("세션"), String(all.sessions)]]
+    .map(([k, v]) => `<div class="tile"><small>${esc(k)}</small><b>${v}</b></div>`).join("");
+  const maxDay = Math.max(1, ...days.map(d => Object.values(d.projects).reduce((a, v) => a + (v.active || 0), 0)));
+  const loc = I18N.lang === "en" ? "en-US" : "ko-KR";
+  const wd = d => new Date(d + "T12:00:00").toLocaleDateString(loc, { weekday: "short" });
+  const bars = days.map(d => {
+    const a = Object.values(d.projects).reduce((s, v) => s + (v.active || 0), 0), today = d.date === sumData.today;
+    return `<div class="b${today ? " today" : ""}" title="${esc(d.date)} · ${esc(fmtActive(a))}"><i style="height:${a ? Math.max(2, Math.round(a / maxDay * 100)) : 0}%"></i></div>`;
+  }).join("");
+  const labels = days.map(d => `<span class="${d.date === sumData.today ? "today" : ""}">${esc(wd(d.date))}</span>`).join("");
+  const maxP = Math.max(1, ...rows.map(r => r.active));
+  const known = new Set(state ? floors().map(f => f.project) : []);
+  const table = rows.length ? `<table><thead><tr><th>${t("프로젝트")}</th><th>${t("활동 시간")}</th><th>${t("도구")}</th><th>${t("바꾼 줄")}</th><th>${t("출력")}</th><th>${t("세션")}</th></tr></thead><tbody>` +
+    rows.map(r => `<tr${known.has(r.project) ? ` data-p="${esc(r.project)}"` : ""}><td title="${esc(r.project)}">${esc(r.project)}</td>
+      <td><span class="share" style="width:${Math.round(r.active / maxP * 48)}px"></span>${esc(fmtActive(r.active))}</td><td>${r.tools ? r.tools.toLocaleString() : "–"}</td>
+      <td>${r.add || r.del ? `<span class="add">+${r.add.toLocaleString()}</span> <span class="del">−${r.del.toLocaleString()}</span>` : "–"}</td><td>${r.out ? fmtTok(r.out) : "–"}</td><td>${r.sessions}</td></tr>`).join("") +
+    `</tbody></table>` : `<div class="empty">${t("아직 기록이 없습니다. 허브가 세션을 본 때부터 셉니다.")}</div>`;
+  setHTML($("summary"), `<div class="tiles">${tiles}</div><div class="proj">${table}</div>
+    <div class="week"><h5>${t("하루 활동 시간 · 최근 7일")}</h5><div class="bars">${bars}</div><div class="days">${labels}</div></div>`);
+}
+$("sumScope").addEventListener("click", e => {
+  const b = e.target.closest("[data-s]"); if (!b) return;
+  sumScope = b.dataset.s; try { localStorage.setItem("office.sumScope", sumScope); } catch (_) {}
+  renderSummary();
+});
+$("summary").addEventListener("click", e => { const r = e.target.closest("tr[data-p]"); if (r) gotoFloor(r.dataset.p); });
 function renderTimeline() {
   if (!feedOpen || feedView !== "tl" || !state || !cfg) return;
   const now = Date.now() / 1000 - skew, from = now - tlWin;

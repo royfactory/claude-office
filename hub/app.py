@@ -355,6 +355,87 @@ class Hub:
 hub = Hub()
 
 
+# ---------- 하루·주간 요약 ----------
+# 수집기가 보낸 세션마다 앞 값과의 차(도구 호출·바꾼 줄·출력 토큰)와, 쉬지 않은 시간을 날짜(이 컴퓨터 시간대)·프로젝트별로 쌓는다.
+# 세션을 처음 볼 때는 차가 없으니 0 부터 센다(허브를 다시 띄워도 앞 값을 파일에 남겨 이어 센다).
+STATS_PATH = DATA / "stats.json"
+STATS_KEEP_DAYS = 120
+STATS_GAP_SEC = 30         # 두 소식 사이가 이보다 길면(수집기 끊김) 그 사이는 활동으로 치지 않는다
+ACTIVE_KINDS = {"working", "shell", "thinking", "approval", "waiting"}
+
+
+class Stats:
+    def __init__(self) -> None:
+        try:
+            raw = json.loads(STATS_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        self.days: dict = raw.get("days", {}) if isinstance(raw.get("days"), dict) else {}
+        self.prev: dict = raw.get("prev", {}) if isinstance(raw.get("prev"), dict) else {}
+        self.dirty = False
+
+    @staticmethod
+    def _num(v) -> int:
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else 0
+
+    def observe(self, host: str, agents: list, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        day = self.days.setdefault(time.strftime("%Y-%m-%d", time.localtime(now)), {})
+        rows = []
+        for a in agents:
+            if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+                continue
+            proj = str(a.get("project") or a.get("name") or "?")[:80]
+            rows.append((f"{host}/{a['id']}", proj, a))
+            for sub in a.get("subagents") or []:   # 서브에이전트는 따로 센다(도구 호출이 그쪽 기록에 있다)
+                if isinstance(sub, dict) and isinstance(sub.get("id"), str):
+                    rows.append((f"{host}/{a['id']}/{sub['id']}", proj, {**sub, "kind": "working" if sub.get("tool") else "thinking"}))
+        for key, proj, a in rows:
+            ln = a.get("lines") if isinstance(a.get("lines"), list) else []
+            cur = {"t": self._num(a.get("tools")), "a": self._num(ln[0] if ln else 0), "d": self._num(ln[1] if len(ln) > 1 else 0),
+                   "o": self._num(a.get("outTokens")), "ts": now}
+            p = self.prev.get(key)
+            row = day.setdefault(proj, {"active": 0, "tools": 0, "add": 0, "del": 0, "out": 0, "sessions": []})
+            if p:
+                gap = now - p.get("ts", now)
+                if a.get("kind") in ACTIVE_KINDS and 0 < gap <= STATS_GAP_SEC:
+                    row["active"] = round(row["active"] + gap, 1)
+                for k, field in (("t", "tools"), ("a", "add"), ("d", "del"), ("o", "out")):
+                    if cur[k] > p.get(k, 0):
+                        row[field] += cur[k] - p.get(k, 0)
+            sid = hashlib.sha1(key.encode()).hexdigest()[:8]
+            if "/" not in key.split("/", 1)[1] and sid not in row["sessions"]:   # 세션 수는 본 세션만(서브에이전트 빼고)
+                row["sessions"].append(sid)
+            self.prev[key] = cur
+        self.dirty = True
+
+    def flush(self, now: float | None = None) -> None:
+        if not self.dirty:
+            return
+        now = time.time() if now is None else now
+        cut = time.strftime("%Y-%m-%d", time.localtime(now - STATS_KEEP_DAYS * 86400))
+        self.days = {d: v for d, v in self.days.items() if d >= cut}
+        self.prev = {k: v for k, v in self.prev.items() if now - v.get("ts", 0) < 86400}   # 하루 넘게 안 본 세션은 잊는다
+        DATA.mkdir(parents=True, exist_ok=True)
+        tmp = STATS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"days": self.days, "prev": self.prev}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(STATS_PATH)
+        self.dirty = False
+
+    def summary(self, days: int, now: float | None = None) -> dict:
+        now = time.time() if now is None else now
+        out = []
+        for i in range(days - 1, -1, -1):
+            d = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+            projs = {p: {k: (len(v["sessions"]) if k == "sessions" else v[k]) for k in ("active", "tools", "add", "del", "out", "sessions")}
+                     for p, v in self.days.get(d, {}).items()}
+            out.append({"date": d, "projects": projs})
+        return {"today": out[-1]["date"], "days": out}
+
+
+stats = Stats()
+
+
 def require_write(request: Request) -> None:
     """OFFICE_TOKEN 이 있으면 쓰기 요청에 같은 토큰을 요구한다(Authorization: Bearer 또는 X-Office-Token)."""
     if not TOKEN:
@@ -366,11 +447,18 @@ def require_write(request: Request) -> None:
 
 
 async def _expire_loop() -> None:
-    # 수집기가 끊기면 그 세션들이 화면에서 빠지도록 주기적으로 알린다.
+    # 수집기가 끊기면 그 세션들이 화면에서 빠지도록 주기적으로 알린다. 요약 기록도 1분마다 파일에 쓴다
     online: dict[str, bool] = {}
+    flushed = time.time()
     while True:
         await asyncio.sleep(5)
         now = time.time()
+        if now - flushed >= 60:
+            flushed = now
+            try:
+                stats.flush(now)
+            except OSError:
+                pass
         cur = {h: hub.online(v, now) for h, v in hub.hosts.items()}
         expired = False
         for m in hub.outbox:   # 수집기가 1분 안에 가져가지 않으면(꺼짐·메시지 받기 꺼짐) 만료
@@ -416,6 +504,10 @@ async def lifespan(_app: FastAPI):
     _hook_exit_signals(asyncio.get_running_loop())   # uvicorn 은 serve 를 마치면 자기 처리기 이전 것으로 되돌린다
     yield
     await hub.close()
+    try:
+        stats.flush()
+    except OSError:
+        pass
     task.cancel()
 
 
@@ -503,6 +595,7 @@ async def ingest(request: Request) -> dict:
     meta = _meta_of(body)
     prev = hub.hosts.get(host)
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq"))}
+    stats.observe(host, agents)
     if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
         await hub.bump()
     return {"ok": True}
@@ -532,6 +625,7 @@ async def ingest_patch(request: Request) -> dict:
     meta = _meta_of(body)
     changed = bool(set_ or dels) or [a.get("id") for a in h["agents"]] != [a.get("id") for a in agents] or h.get("meta") != meta
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq}
+    stats.observe(host, agents)
     if changed:
         await hub.bump()
     return {"ok": True}
@@ -856,6 +950,11 @@ async def approval_decide(aid: str, d: Decision) -> dict:
         hub.decided.notify_all()
     await hub.bump()
     return {"ok": True, "status": x["status"]}
+
+
+@app.get("/api/stats")
+async def get_stats(days: int = 7) -> dict:
+    return stats.summary(max(1, min(days, 90)))
 
 
 @app.get("/api/config")

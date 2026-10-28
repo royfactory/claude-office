@@ -1,5 +1,6 @@
 // 영어 사전: 사무실 화면(index.html)의 정적 문구. 키는 HTML 에 쓰인 한국어 그대로(앞뒤 공백 제외)
 I18N.add({
+  "요약": "Summary", "오늘": "Today", "7일": "7 days", "허브가 세션을 본 때부터 셉니다": "Counted since the hub first saw each session",
   "Claude 사무실": "Claude Office",
   // 왼쪽 위 순회
   "근무 중인 층을 아래층부터 돌아가며 보기": "Tour busy floors, starting from the bottom",

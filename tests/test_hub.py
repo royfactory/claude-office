@@ -417,6 +417,23 @@ def test_old_config_gets_default_looks_once(make_hub, tmp_path):
     assert not {ch["id"]: ch for ch in c2.get("/api/config").json()["characters"]}["fox"]["image"]
 
 
+def test_stats_accumulate_deltas_and_active_time(hub):
+    mod, c = hub
+    st = mod.stats
+    a = lambda **kw: {"id": "s1", "project": "web", "kind": "working", "tools": 10, "lines": [5, 1], "outTokens": 1000, **kw}   # noqa: E731
+    st.observe("mac", [a()], now=1000.0)                                    # 처음 본 세션: 차 없음
+    st.observe("mac", [a(tools=13, lines=[9, 2], outTokens=1600)], now=1010.0)
+    st.observe("mac", [a(tools=14, kind="idle")], now=1020.0)               # 쉬는 동안은 활동 시간 아님
+    st.observe("mac", [a(tools=15)], now=1200.0)                            # 30초 넘게 끊겼다 이어짐: 사이는 안 셈
+    st.observe("mac", [a(tools=16, subagents=[{"id": "x", "tools": 4, "tool": "Read"}])], now=1205.0)
+    day = st.summary(1, now=1205.0)["days"][-1]["projects"]["web"]
+    assert day == {"active": 15.0, "tools": 6, "add": 4, "del": 1, "out": 600, "sessions": 1}
+    st.flush(now=1205.0)
+    assert mod.Stats().days == st.days                                      # 파일에서 다시 읽어 이어 센다
+    r = c.get("/api/stats?days=3").json()
+    assert len(r["days"]) == 3 and r["today"] == r["days"][-1]["date"]
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

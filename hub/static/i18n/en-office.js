@@ -201,6 +201,12 @@ I18N.add({
   // 연결
   "다시 연결 중": "Reconnecting",
   "연결 끊김 · {x} 전 데이터": "Disconnected · data from {x} ago",
+  // 요약
+  "1분 미만": "< 1m", "{h}시간 {m}분": "{h}h {m}m", "불러오는 중…": "Loading…", "활동 시간": "Active time",
+  "도구 호출": "Tool calls", "바꾼 줄": "Lines changed", "출력 토큰": "Output tokens", "세션": "Sessions",
+  "프로젝트": "Project", "도구": "Tools", "출력": "Output",
+  "아직 기록이 없습니다. 허브가 세션을 본 때부터 셉니다.": "Nothing recorded yet. Counting starts when the hub first sees a session.",
+  "하루 활동 시간 · 최근 7일": "Active time per day · last 7 days",
   // 컴퓨터 자원 게이지
   "메모리": "Memory", "디스크": "Disk", "잴 수 없음": "not available on this computer", "전체 {x}": "{x} total",
 });

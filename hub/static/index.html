@@ -353,7 +353,33 @@
   #feedSearch { margin-left: auto; width: 200px; padding: 4px 10px; font-size: 12px; border-radius: 999px; background: var(--bg-2); color: var(--text-hi);
                 border: 1px solid var(--border-2); }
   #tlWin { padding: 3px 6px; font-size: 12px; }
-  .stage:not(.tl-view) .tl-only, .stage.tl-view .news-only { display: none !important; }
+  .stage:not(.view-tl) .tl-only, .stage:not(.view-news) .news-only, .stage:not(.view-sum) .sum-only { display: none !important; }
+  /* 요약: 위에 숫자 칸, 가운데 하루씩 활동 시간 막대(7일), 아래 프로젝트 표 */
+  .sum-note { margin-left: auto; font-size: 11px; color: var(--text-dim2); }
+  #summary { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 10px 18px; align-content: start; padding-right: 4px; }
+  #summary .tiles { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  #summary .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+  #summary .tile small { display: block; font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #summary .tile b { display: block; font-size: 17px; color: var(--text-hi); font-variant-numeric: tabular-nums; margin-top: 1px; white-space: nowrap; }
+  #summary .tile b .add { color: var(--good); } #summary .tile b .del { color: var(--bad); }
+  #summary table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #summary th { text-align: right; font-weight: 600; color: var(--text-dim); padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  #summary td { text-align: right; padding: 4px 6px; color: var(--text); white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,.04); }
+  #summary th:first-child, #summary td:first-child { text-align: left; }
+  #summary td:first-child { max-width: 0; width: 34%; overflow: hidden; text-overflow: ellipsis; color: var(--text-hi); }
+  #summary tr[data-p] { cursor: pointer; } #summary tr[data-p]:hover td { background: var(--surface-2); }
+  #summary td .share { display: inline-block; vertical-align: middle; height: 6px; border-radius: 0 3px 3px 0; background: var(--brand); margin-right: 6px; }
+  #summary td .add { color: var(--good); } #summary td .del { color: var(--bad); }
+  #summary .week h5 { margin: 0 0 6px; font-size: 11.5px; font-weight: 600; color: var(--text-dim); }
+  #summary .bars { height: 92px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; align-items: end; border-bottom: 1px solid var(--border-2); }
+  #summary .bars .b { position: relative; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
+  #summary .bars .b i { display: block; width: 62%; min-height: 1px; background: var(--brand); border-radius: 4px 4px 0 0; }
+  #summary .bars .b:hover i { filter: brightness(1.25); }
+  #summary .bars .b.today i { box-shadow: 0 0 0 2px var(--bg-1, #0b1220), 0 0 0 3px var(--brand); }
+  #summary .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-top: 4px; font-size: 10.5px; color: var(--text-dim2); text-align: center; }
+  #summary .days .today { color: var(--text-hi); font-weight: 700; }
+  #summary .empty { grid-column: 1 / -1; color: var(--text-dim2); font-size: 12px; padding: 8px 0; }
+  @media (max-width: 900px) { #summary { grid-template-columns: 1fr; } #summary .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   /* 타임라인: 세션마다 한 줄, 도구를 쓴 구간을 그 방 색으로. 빨간 테두리 = 실패, 흰 세로선 = 내가 말을 건 때 */
   #timeline { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 3px; padding-right: 4px; }
   #feed { --rc-library: #60a5fa; --rc-dev: #34d399; --rc-server: #f59e0b; --rc-search: #a78bfa; --rc-meeting: #f472b6; --rc-mydesk: #94a3b8; --rc-lounge: #64748b; }
@@ -591,15 +617,18 @@
       </button>
       <div class="feed-body">
         <div class="feed-filter" id="feedFilter">
-          <span class="seg" id="feedView"><button data-v="news" class="on"><i class="fa-solid fa-list"></i> 소식</button><button data-v="tl"><i class="fa-solid fa-chart-gantt"></i> 타임라인</button></span>
+          <span class="seg" id="feedView"><button data-v="news" class="on"><i class="fa-solid fa-list"></i> 소식</button><button data-v="tl"><i class="fa-solid fa-chart-gantt"></i> 타임라인</button><button data-v="sum"><i class="fa-solid fa-chart-column"></i> 요약</button></span>
           <span class="grp news-only"><button data-f="all" class="on">전체</button><button data-f="done"><i class="fa-solid fa-circle-check"></i> 완료</button><button data-f="start"><i class="fa-solid fa-circle-play"></i> 시작</button><button data-f="approval"><i class="fa-solid fa-hand"></i> 승인</button><button data-f="life"><i class="fa-solid fa-power-off"></i> 새 세션·종료</button></span>
           <input class="news-only" id="feedSearch" type="search" placeholder="검색: 세션·프로젝트·말" aria-label="소식 검색">
           <span class="grp tl-only" id="tlScope"><button data-s="floor" class="on">이 층</button><button data-s="busy">모든 층 · 최근 활동</button>
             <select id="tlWin" title="보이는 시간"><option value="600">10분</option><option value="1800">30분</option></select></span>
           <span class="tl-legend tl-only" id="tlLegend"></span>
+          <span class="grp sum-only" id="sumScope"><button data-s="today" class="on">오늘</button><button data-s="week">7일</button></span>
+          <span class="sum-only sum-note">허브가 세션을 본 때부터 셉니다</span>
         </div>
         <ol id="feedList" class="news-only"></ol>
         <div id="timeline" class="tl-only"></div>
+        <div id="summary" class="sum-only"></div>
       </div>
     </section>
   </main>
