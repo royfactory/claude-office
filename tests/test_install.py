@@ -10,6 +10,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows 의 bash 는 WSL 입구라 Windows 경로를 못 읽는다")
 def test_install_sh_syntax():
     if not shutil.which("bash"):
         pytest.skip("bash 없음")
@@ -19,7 +20,13 @@ def test_install_sh_syntax():
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 에서 문법만 본다")
 def test_install_ps1_parses():
     cmd = f"$e=$null; [System.Management.Automation.Language.Parser]::ParseFile('{REPO / 'install.ps1'}', [ref]$null, [ref]$e) | Out-Null; if ($e) {{ $e; exit 1 }}"
-    subprocess.run(["powershell", "-NoProfile", "-Command", cmd], check=True)
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_install_ps1_is_ascii():
+    """Windows PowerShell 5.1 은 BOM 없는 스크립트를 ANSI 코드 페이지로 읽어, 한글이 있으면 깨진다."""
+    (REPO / "install.ps1").read_bytes().decode("ascii")
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="install.sh 는 macOS 용")
