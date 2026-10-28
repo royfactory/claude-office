@@ -26,7 +26,21 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 
 ## Quick start (one computer)
 
-Requirements: Python 3.9+ for the collector, and Docker **or** [uv](https://docs.astral.sh/uv/) for the hub. A browser with WebGL.
+**macOS** — one line (clones to `~/claude-office`, starts the hub and the collector with launchd, asks about the checklist rule):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/royfactory/claude-office/main/install.sh | bash
+```
+
+**Windows** — one line in PowerShell (needs [Python](https://www.python.org/downloads/windows/) 3.10+ with the py launcher; uses git if you have it, otherwise downloads a zip):
+
+```powershell
+irm https://raw.githubusercontent.com/royfactory/claude-office/main/install.ps1 | iex
+```
+
+Run the same line again to update. Hub on another machine? `curl … | CLAUDE_OFFICE_HUB=http://server:3006 OFFICE_TOKEN=… bash` installs only the collector.
+
+**By hand** — requirements: Python 3.9+ for the collector, and Docker **or** [uv](https://docs.astral.sh/uv/) for the hub. A browser with WebGL.
 
 **macOS / Linux**
 

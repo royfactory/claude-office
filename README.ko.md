@@ -30,6 +30,22 @@ Claude 를 쓰는 컴퓨터(들)                       허브 (한 대)         
 
 ## 빠른 시작 (한 컴퓨터)
 
+**macOS 한 줄** (`~/claude-office` 에 받고, 허브·수집기를 launchd 로 띄우고, 체크리스트 규칙을 넣을지 묻는다):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/royfactory/claude-office/main/install.sh | bash
+```
+
+**Windows 한 줄**(PowerShell, Python 3.10 이상·py 런처 필요, git 이 없으면 zip 으로 받음):
+
+```powershell
+irm https://raw.githubusercontent.com/royfactory/claude-office/main/install.ps1 | iex
+```
+
+같은 줄을 다시 실행하면 업데이트입니다. 허브가 다른 컴퓨터에 있으면 `curl … | CLAUDE_OFFICE_HUB=http://서버:3006 OFFICE_TOKEN=… bash` 로 수집기만 설치합니다.
+
+**직접 설치**
+
 ```bash
 git clone https://github.com/royfactory/claude-office.git
 cd claude-office
