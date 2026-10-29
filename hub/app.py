@@ -519,17 +519,29 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="claude-office", docs_url=None, redoc_url=None, lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+# 화면 코드는 쓸 때마다 서버에 새 판이 있는지 묻게 한다(no-cache = 바뀌지 않았으면 304 로 바로 끝남).
+# 캐시 지시가 없으면 브라우저가 잠깐 동안 묻지도 않고 예전 코드를 써서, 업데이트 뒤에도 화면이 그대로였다
+NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+class _Static(StaticFiles):
+    async def get_response(self, path, scope):
+        r = await super().get_response(path, scope)
+        r.headers.setdefault("Cache-Control", "no-cache")
+        return r
+
+
+app.mount("/static", _Static(directory=STATIC), name="static")
 
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers=NO_CACHE)
 
 
 @app.get("/admin")
 async def admin() -> FileResponse:
-    return FileResponse(STATIC / "admin.html")
+    return FileResponse(STATIC / "admin.html", headers=NO_CACHE)
 
 
 @app.get("/admin/")

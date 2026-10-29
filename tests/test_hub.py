@@ -385,6 +385,12 @@ def test_ingest_keeps_clean_system_stats(hub):
     assert h["sys"] == {"cpu": 37, "gpu": None, "mem": 100, "disk": None, "memTotal": 1024, "ts": 1}
 
 
+def test_pages_and_code_ask_for_fresh_copy(hub):
+    _, c = hub
+    for u in ("/", "/admin", "/static/office3d.js", "/static/i18n.js"):
+        assert c.get(u).headers["cache-control"] == "no-cache", u
+
+
 def test_favicon(hub):
     _, c = hub
     r = c.get("/favicon.ico")
