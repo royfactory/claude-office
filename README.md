@@ -20,7 +20,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **Git status per floor.** Uncommitted changes and unpushed commits for each project's checkouts (counts only). On macOS the collector needs Full Disk Access to read repos inside Desktop or Documents; the Guide tab's setup checklist shows how.
 - **Session details.** Speech bubbles with Claude's last words, the current tool and target, todo checklists, a context-window gauge, a tool timeline, and a recent-activity feed.
 - **Optional extras.** Approve or deny permission prompts from the dashboard, send a message into a session, and show the 5-hour/weekly usage limits.
-- **3D characters built in.** 14 characters (13 animals plus "me") with standing and walking frames. Swap any of them for your own images or emoji.
+- **3D characters built in.** 14 characters (13 animals plus "me") with standing and walking frames, and looks for thinking (hand on chin), stuck (sweating) and idle (coffee). Swap any of them for your own images or emoji.
 
 - **English and Korean.** The dashboard follows your browser language by default; pick a fixed language in `/admin` → Display settings.
 

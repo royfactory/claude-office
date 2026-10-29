@@ -362,6 +362,8 @@ def test_default_characters_use_bundled_images(hub):
     assert cfg["meCharacter"] == "me" and chars["me"]["inPool"] is False
     names = [n for ch in cfg["characters"] for n in [ch["image"], *(f for fr in ch["walk"].values() for f in fr)]]
     assert len(names) == 14 * 5 and all(names)
+    states = [s["image"] for ch in cfg["characters"] for s in ch["states"].values()]
+    assert len(states) == 14 * 3 and all(c.get("/assets/" + n).status_code == 200 for n in states)
     r = c.get(f"/assets/{names[0]}")
     assert r.status_code == 200 and r.headers["content-type"] == "image/webp"
     assert c.get("/api/assets").json() == []                     # 기본 이미지는 올린 이미지 목록에 없다
@@ -405,9 +407,11 @@ def test_old_config_gets_default_looks_once(make_hub, tmp_path):
     cfg = c.get("/api/config").json()
     chars = {ch["id"]: ch for ch in cfg["characters"]}
     assert chars["fox"]["image"] and len(chars["fox"]["walk"]["front"]) == 2      # 그림 없던 기본 캐릭터는 채움
+    assert set(chars["fox"]["states"]) == {"thinking", "stalled", "idle"}          # 상태별 모습도
     assert chars["cat"]["image"] == "0123456789abcdef.png"                       # 사용자가 고른 이미지는 그대로
     assert not chars["mine"].get("image")                                         # 기본이 아닌 캐릭터는 그대로
     assert "me" in chars and cfg["meCharacter"] == "me" and cfg["meName"] == "로이"
+    assert chars["cat"]["states"]["idle"]["image"]                                 # 상태별 모습이 비었던 캐릭터는 그것만 채움
     saved = json.loads((data / "config.json").read_text(encoding="utf-8"))
     assert saved["lookVersion"] == mod.LOOK_VERSION
     # 그 뒤 사용자가 여우 그림을 빼면 다시 띄워도 채우지 않는다

@@ -87,13 +87,17 @@ GRACEFUL_SEC = 3    # 종료 때 열린 연결(SSE·롱폴링)을 기다리는 �
 
 ROOM_IDS = ("library", "dev", "server", "search", "meeting", "mydesk", "lounge")
 
-LOOK_VERSION = 1   # hub/defaults 의 기본 캐릭터 그림 묶음. 바꾸면 예전 설정에 한 번 다시 채운다
+LOOK_VERSION = 2   # hub/defaults 의 기본 캐릭터 그림 묶음. 바꾸면 예전 설정에 한 번 다시 채운다(2: 상태별 모습 추가)
 
 
 def _char(cid: str, name: str, emoji: str, color: str, in_pool: bool) -> dict:
     look = DEFAULT_LOOKS.get(cid, {})
     return {"id": cid, "name": name, "emoji": emoji, "image": look.get("image", ""), "color": color,
-            "inPool": in_pool, "states": {}, "walk": look.get("walk", {})}
+            "inPool": in_pool, "states": _default_states(look), "walk": look.get("walk", {})}
+
+
+def _default_states(look: dict) -> dict:
+    return {st: {"emoji": "", "image": img} for st, img in (look.get("states") or {}).items() if img}
 
 
 DEFAULT_CONFIG: dict = {
@@ -145,7 +149,7 @@ DEFAULT_CONFIG: dict = {
     "meName": "나",
     "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
     "language": "auto",    # 화면 언어: auto(브라우저 언어) · ko · en
-    "lookVersion": 1,      # 기본 캐릭터 그림 묶음 번호(LOOK_VERSION). 새 설정은 이미 받은 상태
+    "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
 }
 
 
@@ -275,6 +279,7 @@ def fill_default_looks(cfg: dict) -> bool:
     """기본 캐릭터 그림이 나오기 전에 저장된 설정에 한 번만 그림을 채운다. 바꾼 게 있으면 True.
 
     기본 id(fox·cat…)인데 그림도 걷기 그림도 없는 캐릭터에만 채운다(사용자가 고른 이미지는 그대로).
+    상태별 모습(고민·막힘·휴식)은 그 캐릭터의 상태별 모습이 다 비어 있을 때만 채운다.
     '나' 캐릭터(me)가 없으면 더하고, '나'를 아직 고르지 않았으면 그걸로 정한다.
     lookVersion 을 올려 두므로 그 뒤에 이미지를 빼도 다시 채우지 않는다."""
     cfg["lookVersion"] = LOOK_VERSION
@@ -283,6 +288,8 @@ def fill_default_looks(cfg: dict) -> bool:
         look = DEFAULT_LOOKS.get(c.get("id"))
         if look and not c.get("image") and not any(c.get("walk", {}).values()):
             c["image"], c["walk"] = look.get("image", ""), look.get("walk", {})
+        if look and look.get("states") and not any(v.get("image") or v.get("emoji") for v in (c.get("states") or {}).values()):
+            c["states"] = _default_states(look)
     if "me" in DEFAULT_LOOKS and not any(c.get("id") == "me" for c in chars):
         chars.append(_char("me", "나", "🧑‍💻", "#d97757", False))
         if not cfg.get("meCharacter"):

@@ -10,6 +10,11 @@
     "f96d2ecd81e3d0f3.webp",
     "22dcd6e715227b34.webp"
    ]
+  },
+  "states": {
+   "thinking": "fb744d9d2b9e3505.webp",
+   "stalled": "f3c72577ce888eef.webp",
+   "idle": "aeda132adbb3e4a5.webp"
   }
  },
  "cat": {
@@ -23,6 +28,11 @@
     "bf4a482b1265af7e.webp",
     "54dd27fc6ad56181.webp"
    ]
+  },
+  "states": {
+   "thinking": "fa938d487ccd655e.webp",
+   "stalled": "86f6b0c18c80c4cf.webp",
+   "idle": "2e7ad479155e7991.webp"
   }
  },
  "bear": {
@@ -36,6 +46,11 @@
     "9ea88956fe1b7203.webp",
     "da5b5fb882d8f3da.webp"
    ]
+  },
+  "states": {
+   "thinking": "2ec9c1e7efbc67d2.webp",
+   "stalled": "c54e79f21f5806cb.webp",
+   "idle": "36e542013e837cd1.webp"
   }
  },
  "panda": {
@@ -49,6 +64,11 @@
     "ce3c0d93d36a94ce.webp",
     "3ecf122051770e50.webp"
    ]
+  },
+  "states": {
+   "thinking": "77ed5bb3ee82f521.webp",
+   "stalled": "34c7d4b60e2b75e9.webp",
+   "idle": "806526493dcf1719.webp"
   }
  },
  "penguin": {
@@ -62,6 +82,11 @@
     "130dbbfaaa63e493.webp",
     "7640edc8da2671d0.webp"
    ]
+  },
+  "states": {
+   "thinking": "1d4c79fa941d0978.webp",
+   "stalled": "0211cb9c5b6a6711.webp",
+   "idle": "53583009135271a7.webp"
   }
  },
  "owl": {
@@ -75,6 +100,11 @@
     "429589c8f1198dff.webp",
     "f0a4982369eac83e.webp"
    ]
+  },
+  "states": {
+   "thinking": "9ca92c00750a1b54.webp",
+   "stalled": "d65b6eced4408349.webp",
+   "idle": "82899b8277c23efd.webp"
   }
  },
  "frog": {
@@ -88,6 +118,11 @@
     "bc7770d58a6d682d.webp",
     "4b06a878caa5bda4.webp"
    ]
+  },
+  "states": {
+   "thinking": "bba4c2bf97d9ec0d.webp",
+   "stalled": "fb1d875452806c79.webp",
+   "idle": "5b5156000c8c76fe.webp"
   }
  },
  "tiger": {
@@ -101,6 +136,11 @@
     "e9cee27187f40cee.webp",
     "f6d9e47cd9b00d70.webp"
    ]
+  },
+  "states": {
+   "thinking": "fd421a5cf5845001.webp",
+   "stalled": "2ffa29b56abaa428.webp",
+   "idle": "401f94b8bc4daba7.webp"
   }
  },
  "rabbit": {
@@ -114,6 +154,11 @@
     "d2c17d4555aef5bd.webp",
     "85073911409ea8f2.webp"
    ]
+  },
+  "states": {
+   "thinking": "43abe6c6e4fd4c1a.webp",
+   "stalled": "7e2aad1e823641aa.webp",
+   "idle": "51846eb5b04a27b5.webp"
   }
  },
  "robot": {
@@ -127,6 +172,11 @@
     "47955219867bc49b.webp",
     "6d9d60d69f865d0a.webp"
    ]
+  },
+  "states": {
+   "thinking": "425320140738d162.webp",
+   "stalled": "222c80d1fd868fc3.webp",
+   "idle": "5222ba01438a5d78.webp"
   }
  },
  "koala": {
@@ -140,6 +190,11 @@
     "735d757c008ed50c.webp",
     "8cd8a6c360782ec0.webp"
    ]
+  },
+  "states": {
+   "thinking": "cc0e041b539cc878.webp",
+   "stalled": "7dc219204290da35.webp",
+   "idle": "29066a33e4d97c38.webp"
   }
  },
  "monkey": {
@@ -153,6 +208,11 @@
     "0d843007c9532f05.webp",
     "5a341bb5ec2032ef.webp"
    ]
+  },
+  "states": {
+   "thinking": "8c7755fcd95b2778.webp",
+   "stalled": "55dc125de328d90a.webp",
+   "idle": "f051fd5d7835a039.webp"
   }
  },
  "chick": {
@@ -166,6 +226,11 @@
     "1161131ac25a0222.webp",
     "d8b8fca9ed7001cb.webp"
    ]
+  },
+  "states": {
+   "thinking": "21b5f745efe8548b.webp",
+   "stalled": "c3d2673efdca475c.webp",
+   "idle": "e7a7dba290497c02.webp"
   }
  },
  "me": {
@@ -179,6 +244,11 @@
     "231cd99e364c24bf.webp",
     "fa040dce5fa03017.webp"
    ]
+  },
+  "states": {
+   "thinking": "7391f4f715695852.webp",
+   "stalled": "2b3caf661b1d7b9a.webp",
+   "idle": "fd40e8d3bdeca79e.webp"
   }
  }
 }
