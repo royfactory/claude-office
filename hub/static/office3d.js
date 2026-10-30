@@ -1458,8 +1458,11 @@ function limitGroups() {
   const pick = (cur, w) => !w ? cur : !cur || (w.resets || 0) > (cur.resets || 0) || ((w.resets || 0) === (cur.resets || 0) && w.pct > cur.pct) ? w : cur;
   for (const a of state.agents) {
     const l = a.limits; if (!l || (!l.five_hour && !l.seven_day)) continue;
-    const key = a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
-    const g = groups.get(key) || { host: a.host, l: { ts: 0 }, projects: new Set(), profiles: new Set(), n: 0 };
+    // 계정을 아는 수집기면 계정으로 묶는다(같은 계정은 여러 폴더·컴퓨터여도 한 칸, 지난주 값은 새 값에 밀린다).
+    // 모르면(예전 수집기) 예전처럼 컴퓨터 + 주간 초기화 시각으로
+    const key = a.account && a.account.id ? "acct:" + a.account.id : a.host + "|" + ((l.seven_day && l.seven_day.resets) || "");
+    const g = groups.get(key) || { host: a.host, account: a.account || null, l: { ts: 0 }, projects: new Set(), profiles: new Set(), hosts: new Set(), n: 0 };
+    g.hosts.add(a.host);
     if (a.profile) g.profiles.add(a.profile);
     g.l = { five_hour: pick(g.l.five_hour, l.five_hour), seven_day: pick(g.l.seven_day, l.seven_day), ts: Math.max(g.l.ts || 0, l.ts || 0) };
     g.projects.add(a.project); g.n++; groups.set(key, g);
@@ -1471,7 +1474,9 @@ function limitGroups() {
   return list.sort((x, y) => (!!y.l.five_hour - !!x.l.five_hour) || (y.l.ts || 0) - (x.l.ts || 0));
 }
 const limLv = p => p >= 85 ? "hi" : p >= 65 ? "mid" : "lo";
-const limName = g => `${g.host}${g.profiles.size ? " · " + [...g.profiles].join("·") : ""}`;
+const accountName = acc => !acc || !acc.id ? "" : ((cfg && cfg.accountNames && cfg.accountNames[acc.id]) || acc.label || acc.id.slice(0, 6));
+const limName = g => g.account && g.account.id ? `${accountName(g.account)} · ${[...g.hosts].join("·")}`
+  : `${g.host}${g.profiles.size ? " · " + [...g.profiles].join("·") : ""}`;
 // 빌딩 아래 한 줄: 사용 ▬ 21% 4h 29m · 주 40% (+1). 칸이 좁아 주간 초기화는 상세에서. 누르면 계정별 상세
 function renderLimits() {
   const now = Date.now() / 1000 - skew, list = limitGroups();
@@ -1542,7 +1547,7 @@ function renderFloors(fl) {
   };
   // 위에서부터: 지상 층(높은 층 먼저) → 로비(컴퓨터들) → 지하 층(B1 부터 깊은 쪽으로)
   const up = fl.filter(f => f.n > 0).reverse(), down = fl.filter(f => f.n < 0);
-  const lobby = `<div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts">${state.hosts.map(h => `<span class="chip"><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}</span>`).join(" ")}</span></div><div class="street"></div>`;
+  const lobby = `<div class="lobby"><span class="doors"></span><small>LOBBY</small><span id="lobbyHosts">${state.hosts.map(h => `<span class="chip${h.conflict ? " conflict" : ""}"${h.conflict ? ` title="${esc(t("같은 이름의 다른 컴퓨터가 보내려 했습니다. 한쪽 .env 의 CLAUDE_OFFICE_HOST 를 바꾸세요"))}"` : ""}><span class="dot ${h.online ? "on" : "off"}"></span>${esc(h.host)}${h.conflict ? " ⚠" : ""}</span>`).join(" ")}</span></div><div class="street"></div>`;
   setHTML($("floors"), (up.map(story).join("") || (down.length ? "" : `<div class="muted" style="padding:16px">${t("보이는 세션이 없습니다.")}</div>`)) + lobby +
     (down.length ? `<div class="under-sign"><i class="fa-solid fa-stairs"></i> ${t("지하 · 1시간 넘게 쉬는 층")}</div>` + down.map(story).join("") : ""));
   tickTimes($("floors"), now);
@@ -1776,6 +1781,7 @@ function detailCard(a, ch, now) {
 // 모델·브랜치·바꾼 줄·출력 토큰 + 컨텍스트 막대(수집기가 기록의 usage 로 계산해 보낸다)
 function sessionMeta(a) {
   const bits = [];
+  if (a.account && a.account.id) bits.push(`<span title="${esc(t("Claude 계정"))}"><i class="fa-solid fa-user"></i>${esc(accountName(a.account))}</span>`);
   if (a.model) bits.push(`<span title="${t("모델")}"><i class="fa-solid fa-microchip"></i>${esc(a.model)}</span>`);
   if (a.worktree) bits.push(`<span title="${t("git worktree — 이 저장소(층)의 다른 작업 폴더")}"><i class="fa-solid fa-code-fork"></i>${esc(a.worktree)}</span>`);
   if (a.branch) bits.push(`<span title="${t("git 브랜치")}"><i class="fa-solid fa-code-branch"></i>${esc(a.branch)}</span>`);

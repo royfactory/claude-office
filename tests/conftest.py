@@ -43,5 +43,6 @@ def collector(home, monkeypatch):
     (home / ".claude" / "sessions").mkdir(parents=True)
     monkeypatch.setattr(sys, "argv", ["collector.py"])
     mod = load_module("office_collector", COLLECTOR_PY)
+    monkeypatch.setattr(mod, "boot_time", lambda: 0.0)   # 시험 세션의 startedAt(2023)이 '부팅 전'으로 걸러지지 않게
     yield mod
     sys.modules.pop("office_collector", None)

@@ -212,6 +212,8 @@ I18N.add({
   "git 상태 읽기(macOS 권한)": "Read git status (macOS permission)", "막힌 저장소 {n}곳": "{n} blocked {n|repo|repos}",
   "시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 + 를 누르고 ⌘⇧G 로 아래 경로를 열어 더한 뒤, sh collector/install.sh 로 수집기를 다시 띄운다(데스크톱·문서 폴더 안 저장소의 git 상태를 읽으려면 필요)":
     "In System Settings → Privacy & Security → Full Disk Access, click +, press ⌘⇧G and open the path below, add it, then restart the collector with sh collector/install.sh (needed to read git status of repos inside Desktop or Documents)",
+  "같은 이름의 다른 컴퓨터가 보내려 했습니다. 한쪽 .env 의 CLAUDE_OFFICE_HOST 를 바꾸세요": "Another computer tried to report under the same name. Change CLAUDE_OFFICE_HOST in one .env",
+  "Claude 계정": "Claude account",
   // 컴퓨터 자원 게이지
   "메모리": "Memory", "디스크": "Disk", "잴 수 없음": "not available on this computer", "전체 {x}": "{x} total",
 });

@@ -75,6 +75,67 @@ def pid_alive(pid):
     return True
 
 
+_BOOT = {"at": None}
+_PROC_START = {}   # (pid, 세션이 적은 procStart) → (확인한 시각, 같은 프로세스인가)
+
+
+def boot_time():
+    """이 컴퓨터가 부팅한 시각(초). 모르면 0."""
+    if _BOOT["at"] is None:
+        at = 0.0
+        try:
+            if sys.platform == "darwin":
+                import subprocess
+                m = re.search(r"sec = (\d+)", subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=3).stdout)
+                at = float(m.group(1)) if m else 0.0
+            elif WINDOWS:
+                import ctypes
+                ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+                at = time.time() - ctypes.windll.kernel32.GetTickCount64() / 1000
+            else:
+                with open("/proc/stat") as f:
+                    at = float(next(ln.split()[1] for ln in f if ln.startswith("btime ")))
+        except Exception:
+            at = 0.0
+        _BOOT["at"] = at
+    return _BOOT["at"]
+
+
+def same_process(s):
+    """세션 파일의 pid 가 아직 그 세션의 프로세스인지. 끝난 세션 파일이 남고 pid 를 다른 프로그램이 다시 쓰면
+    살아 있는 것처럼 보이므로: 부팅 전에 시작한 세션은 버리고, 맥·리눅스는 프로세스 시작 시각(ps lstart)을
+    세션이 적어 둔 procStart 와 견준다(pid 마다 10분에 한 번)."""
+    started = (s.get("startedAt") or 0) / 1000
+    boot = boot_time()
+    if boot and started and started < boot - 60:
+        return False
+    ps = s.get("procStart")
+    if WINDOWS or not isinstance(ps, str) or not ps:
+        return True
+    key, now = (s.get("pid"), ps), time.time()
+    hit = _PROC_START.get(key)
+    if hit and now - hit[0] < 600:
+        return hit[1]
+    import subprocess
+    try:
+        cur = " ".join(subprocess.run(["ps", "-o", "lstart=", "-p", str(int(s["pid"]))], capture_output=True, text=True, timeout=3,
+                                      env={**os.environ, "LC_ALL": "C", "LANG": "C"}).stdout.split())
+        ok = True   # 못 읽으면 살린다
+        if cur:
+            import calendar
+            fmt = "%a %b %d %H:%M:%S %Y"
+            real = time.mktime(time.strptime(cur, fmt))                  # ps 는 이 컴퓨터 시간대
+            want = " ".join(ps.split())
+            # Claude Code 는 procStart 를 UTC 로 적는다(판에 따라 지역 시각일 수도 있어 둘 다 견준다)
+            ok = any(abs(real - t) <= 2 for t in (calendar.timegm(time.strptime(want, fmt)), time.mktime(time.strptime(want, fmt))))
+    except Exception:
+        ok = True
+    if len(_PROC_START) > 500:
+        _PROC_START.clear()
+    _PROC_START[key] = (now, ok)
+    return ok
+
+
 def load_env(path):
     """KEY=VALUE 파일을 읽어 아직 없는 환경변수만 채운다."""
     if not path or not os.path.isfile(path):
@@ -174,6 +235,40 @@ def profile_of(root):
     return "Orca " + m.group(1)[:8] if m else os.path.basename(r)[:24]
 
 
+_account_cache = {}   # 설정 폴더 → (파일 mtime, 값)
+
+
+def account_of(root, detail="basic"):
+    """그 설정 폴더로 로그인한 Claude 계정: {id: accountUuid 해시 10자, label: 가린 이메일(sa***@회사.com)}. 모르면 None.
+
+    ~/.claude 는 ~/.claude.json, 그 밖(CLAUDE_CONFIG_DIR·Orca 프로필)은 <폴더>/.claude.json 의 oauthAccount 를 읽는다.
+    이메일은 가려서만, --detail none 이면 id 만 보낸다. 사용 한도를 계정별로 묶는 데 쓴다."""
+    home_default = os.path.abspath(root) == os.path.abspath(os.path.expanduser("~/.claude"))
+    path = os.path.expanduser("~/.claude.json") if home_default else os.path.join(root, ".claude.json")
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return None
+    hit = _account_cache.get((root, detail))
+    if hit and hit[0] == mt:
+        return hit[1]
+    val = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            acc = (json.load(f) or {}).get("oauthAccount") or {}
+        uid = acc.get("accountUuid") or acc.get("emailAddress")
+        if uid:
+            import hashlib
+            email = acc.get("emailAddress") or ""
+            name, _, dom = email.partition("@")
+            label = f"{name[:2]}***@{dom}" if dom and detail != "none" else ""
+            val = {"id": hashlib.sha1(str(uid).encode()).hexdigest()[:10], "label": label[:60]}
+    except (OSError, ValueError, AttributeError):
+        val = None
+    _account_cache[(root, detail)] = (mt, val)
+    return val
+
+
 def claude_roots():
     roots = []
     for g in ROOT_GLOBS:
@@ -181,7 +276,8 @@ def claude_roots():
             if os.path.isdir(os.path.join(r, "sessions")) and r not in roots:
                 roots.append(r)
     return roots
-FIRST_READ_BYTES = 32 * 1024 * 1024  # 처음 열 때 이보다 크면 끝부분만 읽는다(도구 횟수는 그만큼 근사)
+FIRST_READ_BYTES = 8 * 1024 * 1024   # 처음 열 때 이보다 크면 끝부분만 읽는다(도구 횟수는 그만큼 근사).
+# 32MB 였을 때는 큰 기록이 여럿이면 첫 수집이 수십 초 걸려(배경 우선순위) 그동안 화면이 비었다
 SAY_CHARS = 80
 CONFIG_POLL_SEC = 30
 # 도구 결과가 '백그라운드로 돌기 시작했다'는 뜻인지(Bash run_in_background·시간 초과로 넘어감·비동기 서브에이전트·Monitor)
@@ -585,7 +681,7 @@ class Transcript:
 
 
 class Collector:
-    def __init__(self, detail):
+    def __init__(self, detail, quick_first=False):
         self.detail = detail
         self.speech = True      # 허브 설정 'speech' 를 따른다
         self.transcripts = {}   # path -> Transcript
@@ -593,6 +689,7 @@ class Collector:
         self.metas = {}         # meta path -> dict
         self.used = set()
         self.sockets = {}       # sessionId -> 그 세션의 수신함 소켓 경로(sessions/<pid>.json 의 messagingSocketPath)
+        self.first = quick_first   # 상시 실행의 첫 회차는 기록을 읽지 않고 세션 파일만으로 곧장 보낸다(뼈대). 다음 회차부터 다 채운다
 
     def transcript(self, path):
         self.used.add(path)
@@ -671,7 +768,7 @@ class Collector:
             try:
                 with open(f, encoding="utf-8") as fh:
                     s = json.load(fh)
-                if not pid_alive(int(s["pid"])):  # 죽은 프로세스의 파일이 남아 있을 수 있다
+                if not pid_alive(int(s["pid"])) or not same_process(s):  # 죽은 프로세스의 파일이 남아 있을 수 있다
                     continue
             except (OSError, ValueError, KeyError):
                 continue
@@ -680,6 +777,14 @@ class Collector:
                 continue
             seen.add(sid)
             status = s.get("status", "idle")
+            if self.first:
+                project, worktree = project_of(cwd)
+                agents.append({"id": sid, "pid": s.get("pid"), "name": s.get("name") or os.path.basename(cwd), "title": "",
+                               "project": project, "worktree": worktree, "profile": profile_of(root), "account": account_of(root, self.detail),
+                               "status": status, "kind": {"busy": "thinking", "shell": "shell"}.get(status, "idle"), "tool": "", "target": "",
+                               "since": (s.get("statusUpdatedAt", 0) / 1000) or now, "lastActivity": (s.get("updatedAt", 0) / 1000) or now,
+                               "stalled": False, "startedAt": s.get("startedAt", 0) / 1000, "tools": 0, "say": "", "subagents": []})
+                continue
             jsonl = self.find_jsonl(sid, cwd, root) if sid else None
             tr = self.transcript(jsonl) if jsonl else Transcript("")
             last = tr.last or (s.get("updatedAt", 0) / 1000)
@@ -715,6 +820,7 @@ class Collector:
                 "project": project,
                 "worktree": worktree,
                 "profile": profile_of(root),
+                "account": account_of(root, self.detail),
                 "status": status,
                 "kind": kind,
                 "tool": cur["tool"] if cur else (str(ev.get("tool_name") or "") if approval else ""),
@@ -742,6 +848,7 @@ class Collector:
             if p not in self.used:
                 del self.transcripts[p]
         agents.sort(key=lambda a: a["startedAt"])
+        self.first = False
         self.sockets = socks
         return agents
 
@@ -760,20 +867,46 @@ _git_denied = set()
 def git_state(cwd):
     """세션 폴더의 git 작업 폴더에서 {dirty: 바뀐 파일 수, ahead: 푸시 안 한 커밋, behind: 받지 않은 커밋}. git 이 아니면 None.
 
-    작업 폴더마다 GIT_SEC 에 한 번만 잰다. 내용·파일 이름은 보내지 않고 수만. GIT_OPTIONAL_LOCKS=0 으로 index.lock 을 잡지 않는다
+    수집을 막지 않게 따로 도는 스레드가 작업 폴더마다 GIT_SEC 에 한 번 잰다. 여기서는 마지막 값만 돌려주고(처음엔 None),
+    낡았으면 다시 재 달라고 줄에 넣는다. 내용·파일 이름은 보내지 않고 수만. GIT_OPTIONAL_LOCKS=0 으로 index.lock 을 잡지 않는다
     (그 저장소에서 일하는 Claude 의 git 명령과 부딪치지 않게). upstream 이 없으면 ahead·behind 는 None."""
     project_of(cwd)
     root = _root_cache.get((cwd or "").rstrip("/\\"), "")
     if not root:
         return None
-    now = time.time()
     hit = _git_cache.get(root)
-    if hit and now - hit[0] < GIT_SEC:
-        return hit[1]
+    if not hit or time.time() - hit[0] >= GIT_SEC:
+        with _git_lock:
+            if root not in _git_queue:
+                _git_queue.append(root)
+            if not _git_worker["started"]:
+                _git_worker["started"] = True
+                threading.Thread(target=_git_loop, name="git-state", daemon=True).start()
+    return hit[1] if hit else None
+
+
+_git_lock = threading.Lock()
+_git_queue = []
+_git_worker = {"started": False}
+
+
+def _git_loop():
+    while True:
+        with _git_lock:
+            root = _git_queue.pop(0) if _git_queue else None
+        if root is None:
+            time.sleep(1)
+            continue
+        _git_cache[root] = (time.time(), _git_measure(root))
+        if len(_git_cache) > 200:
+            _git_cache.clear()
+
+
+def _git_measure(root):
     import subprocess
     val = None
     try:
-        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v2", "--branch"], capture_output=True, text=True, timeout=5,
+        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v2", "--branch"], capture_output=True, text=True, timeout=10,
                            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
                            creationflags=0x08000000 if WINDOWS else 0)
         if "Operation not permitted" in (r.stderr or ""):
@@ -787,9 +920,6 @@ def git_state(cwd):
                    "ahead": int(ab[0].lstrip("+")) if ab else None, "behind": int(ab[1].lstrip("-")) if ab else None}
     except (OSError, ValueError, subprocess.SubprocessError):
         val = None
-    if len(_git_cache) > 200:
-        _git_cache.clear()
-    _git_cache[root] = (now, val)
     return val
 
 
@@ -1039,6 +1169,27 @@ def setup_status():
     return {**val, "gitDenied": len(_git_denied)}
 
 
+def machine_id():
+    """이 컴퓨터의 고유 id(처음 한 번 만들어 ~/.claude-office/machine-id 에 둔다). 호스트 이름이 겹치는 두 컴퓨터를 허브가 가린다."""
+    path = os.path.expanduser("~/.claude-office/machine-id")
+    try:
+        with open(path, encoding="utf-8") as f:
+            v = f.read().strip()
+        if re.fullmatch(r"[0-9a-f]{12,32}", v):
+            return v
+    except OSError:
+        pass
+    import uuid
+    v = uuid.uuid4().hex[:16]
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(v)
+    except OSError:
+        pass
+    return v
+
+
 def post(hub, payload, timeout=5):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
@@ -1187,7 +1338,7 @@ def main():
     elif sys.stdout is None:   # 창 없는 pythonw 로 떴는데 --log 가 없으면 출력은 버린다
         sys.stdout = sys.stderr = open(os.devnull, "w")
 
-    col = Collector(args.detail)
+    col = Collector(args.detail, quick_first=not args.dump)   # 상시 실행은 첫 회차를 뼈대만으로 곧장 보낸다
     if args.dump:
         json.dump(col.collect(), sys.stdout, ensure_ascii=False, indent=1)
         print()
@@ -1221,6 +1372,7 @@ class Sender:
 
     def __init__(self, hub, host):
         self.hub, self.host = hub, host
+        self.machine = machine_id()
         self.seq = 0
         self.synced = False       # 허브가 우리 seq 를 알고 있다
         self.patch_ok = True      # 허브가 patch 를 받는다
@@ -1250,7 +1402,7 @@ class Sender:
         kind = None
         if self.synced and self.patch_ok:
             try:
-                r = api(self.hub, "/api/ingest/patch", {"host": self.host, "base": self.seq, "seq": self.seq + 1,
+                r = api(self.hub, "/api/ingest/patch", {"host": self.host, "machine": self.machine, "base": self.seq, "seq": self.seq + 1,
                                                          "set": changed, "del": removed, "order": order, "meta": meta})
                 if r.get("ok"):
                     self.seq += 1
@@ -1262,7 +1414,7 @@ class Sender:
                     raise
                 self.patch_ok = False     # 예전 허브: 앞으로는 전체만
         if kind is None:
-            post(self.hub, {"host": self.host, "agents": agents, "meta": meta, "seq": self.seq + 1})
+            post(self.hub, {"host": self.host, "machine": self.machine, "agents": agents, "meta": meta, "seq": self.seq + 1})
             self.seq += 1
             self.synced = True
             kind = "full"
@@ -1294,6 +1446,8 @@ def run(args, col):
                     cfg_at = 0.0
         except (urllib.error.URLError, OSError) as e:
             if not failing:  # 끊길 때 한 번만 남긴다(로그가 쌓이지 않게)
+                if isinstance(e, urllib.error.HTTPError) and e.code == 409:
+                    e = f"같은 이름({args.host})의 다른 컴퓨터가 이미 보내고 있다 — 이 컴퓨터 .env 의 CLAUDE_OFFICE_HOST 를 다른 이름으로 바꾸고 설치를 다시 한다"
                 print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브에 보내지 못함:", e, flush=True)
                 failing = True
             sender.reset()   # 다시 붙으면 전체부터

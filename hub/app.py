@@ -149,6 +149,8 @@ DEFAULT_CONFIG: dict = {
     "meName": "나",
     "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
     "language": "auto",    # 화면 언어: auto(브라우저 언어) · ko · en
+    "rev": 0,              # 설정 판 번호(저장할 때마다 1 씩)
+    "accountNames": {},    # Claude 계정 id(수집기가 보낸 해시) → 화면에 보일 별명
     "outside": True,       # 바깥 풍경
     "weather": True,       # 날씨(브라우저 위치 권한이 있을 때만)
     "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
@@ -225,6 +227,8 @@ class Config(BaseModel):
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
     language: Literal["auto", "ko", "en"] = "auto"   # 화면 언어. auto 는 보는 브라우저의 언어(한국어면 한국어, 아니면 영어)
+    rev: int = 0   # 설정 판 번호. 저장할 때 받은 판이 지금 판과 다르면(그사이 다른 곳에서 저장) 409
+    accountNames: dict[Annotated[str, Field(pattern=r"^[0-9a-f]{6,16}$")], Annotated[str, Field(max_length=24)]] = Field(default={}, max_length=50)
     outside: bool = True    # 뒤쪽 통유리 너머 바깥 풍경(끄면 젖빛 유리)
     weather: bool = True    # 보는 브라우저에 위치 권한이 있을 때만 그곳 날씨를 풍경·시계에
     lookVersion: int = LOOK_VERSION   # 기본 캐릭터 그림을 몇 번째 묶음까지 받았나(load_config 의 한 번 채우기용)
@@ -267,8 +271,17 @@ def load_config() -> dict:
     if CONFIG_PATH.is_file():
         try:
             saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            saved = {}
+            if not isinstance(saved, dict):
+                raise ValueError("설정이 객체가 아니다")
+        except (ValueError, OSError) as e:
+            # 깨진 설정은 옆에 보관하고 기본값으로 띄운다. 자동으로 덮어쓰지 않는다(저장하면 그때 새로 쓴다)
+            broken = CONFIG_PATH.with_name(f"config.json.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+            try:
+                CONFIG_PATH.replace(broken)
+                print(f"[hub] 설정 파일을 읽지 못해 {broken.name} 로 옮기고 기본값으로 시작한다: {e}", file=sys.stderr, flush=True)
+            except OSError:
+                pass
+            return cfg
         # 방 구성이 바뀐 옛 설정이면 방·도구 매핑만 기본값으로 바꾸고 캐릭터·규칙은 살린다
         if sorted(r.get("id") for r in saved.get("rooms", [])) != sorted(ROOM_IDS):
             for k in ("rooms", "toolRooms", "defaultRoom"):
@@ -304,7 +317,10 @@ def fill_default_looks(cfg: dict) -> bool:
 def save_config(cfg: dict) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(cfg, ensure_ascii=False, indent=1))
+        f.flush()
+        os.fsync(f.fileno())   # 전원이 나가도 반쯤 쓴 파일로 바꾸지 않게
     tmp.replace(CONFIG_PATH)
 
 
@@ -321,6 +337,7 @@ class Hub:
         self.approvals: dict[str, dict] = {}   # 승인 요청 id -> 요청(메모리에만)
         self.decided = asyncio.Condition()       # 결정이 나면 기다리는 승인 훅을 깨운다
         self.closing = False   # 종료 신호를 받았다 — 열린 SSE·롱폴링을 바로 끝낸다
+        self.conflicts: dict[str, float] = {}   # 호스트 이름 → 다른 컴퓨터가 같은 이름으로 보내려 한 마지막 시각
 
     @staticmethod
     def online(h: dict, now: float) -> bool:
@@ -337,7 +354,8 @@ class Hub:
             age = now - h["receivedAt"]
             on = self.online(h, now)
             hosts.append({"host": name, "age": round(age, 1), "online": on,
-                          "count": len(h["agents"]), **h.get("meta", {})})
+                          "count": len(h["agents"]), **h.get("meta", {}),
+                          **({"conflict": True} if now - self.conflicts.get(name, 0) < 120 else {})})
             if on:
                 agents.extend({**a, "host": name} for a in h["agents"])
         msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
@@ -463,6 +481,14 @@ async def _expire_loop() -> None:
     flushed = time.time()
     while True:
         await asyncio.sleep(5)
+        try:
+            online, flushed = await _expire_tick(online, flushed)
+        except Exception as e:   # 한 번의 오류로 끊김 처리·요약 저장이 조용히 멈추지 않게
+            print(f"[hub] 주기 작업 오류: {e!r}", file=sys.stderr, flush=True)
+
+
+async def _expire_tick(online: dict, flushed: float) -> tuple:
+    if True:
         now = time.time()
         if now - flushed >= 60:
             flushed = now
@@ -483,6 +509,7 @@ async def _expire_loop() -> None:
         if cur != online or expired:
             online = cur
             await hub.bump()
+        return online, flushed
 
 
 def _hook_exit_signals(loop: asyncio.AbstractEventLoop) -> list:
@@ -564,6 +591,17 @@ async def health() -> dict:
     return {"ok": True, "hosts": len(hub.hosts), "version": hub.version, "auth": bool(TOKEN)}
 
 
+def _check_machine(host: str, body: dict) -> str:
+    """같은 호스트 이름을 다른 컴퓨터(machine id)가 쓰면 409. 예전 수집기(id 없음)는 넘긴다."""
+    m = body.get("machine")
+    m = m if isinstance(m, str) and re.fullmatch(r"[0-9a-f]{12,32}", m) else ""
+    h = hub.hosts.get(host)
+    if m and h and h.get("machine") and h["machine"] != m and hub.online(h, time.time()):
+        hub.conflicts[host] = time.time()
+        raise HTTPException(409, f"같은 이름({host})의 다른 컴퓨터가 이미 보내고 있다. 한쪽 .env 의 CLAUDE_OFFICE_HOST 를 바꾼다")
+    return m
+
+
 def _host_of(body: dict) -> str:
     host = str(body.get("host", ""))[:40]
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,40}", host):
@@ -616,8 +654,9 @@ async def ingest(request: Request) -> dict:
     if not isinstance(agents, list) or len(agents) > 200:
         raise HTTPException(400, "host·agents 형식이 맞지 않다")
     meta = _meta_of(body)
+    machine = _check_machine(host, body)
     prev = hub.hosts.get(host)
-    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq"))}
+    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq")), "machine": machine}
     stats.observe(host, agents)
     if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
         await hub.bump()
@@ -630,6 +669,7 @@ async def ingest_patch(request: Request) -> dict:
     허브가 아는 마지막 seq 가 base 와 다르면(허브 재시작·놓친 전송) resync 를 돌려줘 수집기가 전체를 다시 보낸다."""
     body = await request.json()
     host = _host_of(body)
+    machine = _check_machine(host, body)
     h = hub.hosts.get(host)
     base, seq = _seq_of(body.get("base")), _seq_of(body.get("seq"))
     if not h or h.get("offline") or h.get("seq") is None or base != h["seq"] or seq is None:
@@ -647,7 +687,7 @@ async def ingest_patch(request: Request) -> dict:
     agents = [by[i] for i in order if isinstance(i, str) and i in by]
     meta = _meta_of(body)
     changed = bool(set_ or dels) or [a.get("id") for a in h["agents"]] != [a.get("id") for a in agents] or h.get("meta") != meta
-    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq}
+    hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq, "machine": machine}
     stats.observe(host, agents)
     if changed:
         await hub.bump()
@@ -986,11 +1026,15 @@ async def get_config() -> dict:
 
 
 @app.put("/api/config", dependencies=[Depends(require_write)])
-async def put_config(cfg: Config) -> dict:
+async def put_config(cfg: Config, force: bool = False) -> dict:
     try:
         cfg.check()
     except ValueError as e:
         raise HTTPException(400, str(e))
+    cur = hub.config.get("rev", 0)
+    if cfg.rev != cur and not force:
+        raise HTTPException(409, "다른 곳에서 설정을 바꿨다(판이 다르다). 새로 불러온 뒤 다시 저장한다")
+    cfg.rev = cur + 1
     hub.config = cfg.model_dump()
     save_config(hub.config)
     await hub.bump()
@@ -999,7 +1043,7 @@ async def put_config(cfg: Config) -> dict:
 
 @app.post("/api/config/reset", dependencies=[Depends(require_write)])
 async def reset_config() -> dict:
-    hub.config = default_config()
+    hub.config = {**default_config(), "rev": hub.config.get("rev", 0) + 1}
     save_config(hub.config)
     await hub.bump()
     return hub.config

@@ -152,6 +152,7 @@
          transition: transform .7s cubic-bezier(.45,.05,.35,1), height .3s; z-index: 2; display: grid; place-items: center; font-size: 11px; }
   .lobby { flex: none; background: #1e293b; border: 1px solid #334155; border-top: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
   .lobby .doors { width: 56px; height: 26px; border: 2px solid #475569; border-bottom: 0; background: linear-gradient(90deg, #7dd3fc33 49%, #475569 49%, #475569 51%, #7dd3fc33 51%); }
+  .lobby .chip.conflict { border-color: var(--bad); color: #fecaca; }
   .lobby small { color: var(--text-dim2); font-size: 10px; letter-spacing: .12em; }
   #lobbyHosts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
   /* 사용 한도(상태 표시줄을 건 컴퓨터만): 왼쪽 패널 맨 아래 한 줄, 누르면 계정별 상세 모달.
@@ -642,7 +643,7 @@
   <!-- 사용 한도 상세: 빌딩 아래 한 줄을 누르면 -->
   <div id="limModal" hidden role="dialog" aria-label="사용 한도"><div class="box"><h3><i class="fa-solid fa-gauge-high"></i> 사용 한도<button class="x" title="닫기">Esc</button></h3>
     <ol id="limList"></ol>
-    <p class="lm-note">Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 컴퓨터와 주간 초기화 시각으로 묶고, 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).</p></div></div>
+    <p class="lm-note">Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 설정 폴더의 로그인 정보로 묶고(예전 수집기면 컴퓨터와 주간 초기화 시각으로), 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).</p></div></div>
 
   <aside class="right">
     <nav class="tabs" role="tablist" aria-label="오른쪽 패널">

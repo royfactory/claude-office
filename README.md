@@ -120,6 +120,7 @@ The collector reads session logs and sends only:
 - session name and title, project **folder name** (not the path), state, tool-call count
 - the current tool and a short target: file name (no path), the Bash `description`, the first 32 characters of a search, the host of a URL, a sub-agent's description
 - **the first 80 characters of Claude's last message** (speech bubble)
+- which Claude account each config folder is logged into: a short hash of the account id and a masked email (`ro***@example.com`; hash only with `CLAUDE_OFFICE_DETAIL=none`), so usage limits are grouped per account. Nicknames can be set in `/admin`
 - model, git branch, number of uncommitted files and unpushed commits, token counts, compactions, lines added/removed by Edit/Write (counts, not content)
 - every 5 seconds: CPU, GPU, memory and disk usage percentages of that computer, plus total memory and disk size
 - for the timeline: tools used in the last 30 minutes with start/end time, target and failure, and the **times** you sent a message (not the text)

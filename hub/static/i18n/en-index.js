@@ -42,8 +42,8 @@ I18N.add({
   "10분": "10 min", "30분": "30 min",
   // 사용 한도 상세
   "사용 한도": "Usage limits",
-  "Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 컴퓨터와 주간 초기화 시각으로 묶고, 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).":
-    "Subscription usage (Pro · Max) as Claude Code reports it to the status line. Accounts are grouped by computer and weekly reset time; each session reports the value from its last response, so the largest value in a group is shown. Only terminal (CLI) sessions from config folders with the status line installed appear (the status line does not run in IDE extensions such as VS Code; see step 6 in the Guide tab).",
+  "Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 설정 폴더의 로그인 정보로 묶고(예전 수집기면 컴퓨터와 주간 초기화 시각으로), 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).":
+    "Subscription usage (Pro · Max) as Claude Code reports it to the status line. Accounts are grouped by the login of each config folder (older collectors: by computer and weekly reset time); each session reports the value from its last response, so the largest value in a group is shown. Only terminal (CLI) sessions from config folders with the status line installed appear (the status line does not run in IDE extensions such as VS Code; see step 6 in the Guide tab).",
   // 오른쪽 패널
   "오른쪽 패널": "Right panel",
   "사람들": "People",

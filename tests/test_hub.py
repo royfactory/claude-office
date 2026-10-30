@@ -194,7 +194,7 @@ def test_reset_config(hub):
     mod, c = hub
     _put(c, lambda cfg: cfg.update(meName="바뀜"))
     r = c.post("/api/config/reset")
-    assert r.status_code == 200 and r.json() == mod.default_config()
+    assert r.status_code == 200 and {k: v for k, v in r.json().items() if k != "rev"} == {k: v for k, v in mod.default_config().items() if k != "rev"}
     assert c.get("/api/config").json()["meName"] == "나"
 
 
@@ -442,6 +442,44 @@ def test_stats_accumulate_deltas_and_active_time(hub):
     assert mod.Stats().days == st.days                                      # 파일에서 다시 읽어 이어 센다
     r = c.get("/api/stats?days=3").json()
     assert len(r["days"]) == 3 and r["today"] == r["days"][-1]["date"]
+
+
+def test_config_rev_rejects_stale_save(hub):
+    _, c = hub
+    cfg = c.get("/api/config").json()
+    assert _put(c, lambda x: x.update(meName="가")).status_code == 200          # 판 하나 올라감
+    stale = dict(cfg, meName="나중")                                             # 예전 판으로 저장 시도
+    r = c.put("/api/config", json=stale)
+    assert r.status_code == 409
+    assert c.put("/api/config?force=true", json=stale).status_code == 200      # 일부러 덮어쓰기
+    assert c.get("/api/config").json()["meName"] == "나중"
+
+
+def test_broken_config_is_kept_aside(make_hub, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    (data / "config.json").write_text("{ broken", encoding="utf-8")
+    _, c = make_hub()
+    assert c.get("/api/config").json()["meName"] == "나"                        # 기본값으로 뜬다
+    assert not (data / "config.json").exists()                                    # 덮어쓰지 않았다
+    assert [p.name for p in data.glob("config.json.broken-*")]                   # 옆에 보관
+
+
+def test_same_host_name_from_two_machines_is_rejected(hub):
+    _, c = hub
+    a = {"host": "mac", "machine": "a" * 16, "agents": [agent()]}
+    assert c.post("/api/ingest", json=a, headers=AUTH).status_code == 200
+    b = dict(a, machine="b" * 16)
+    assert c.post("/api/ingest", json=b, headers=AUTH).status_code == 409
+    h = c.get("/api/state").json()["hosts"][0]
+    assert h["conflict"] is True and "machine" not in h
+    assert c.post("/api/ingest", json=a, headers=AUTH).status_code == 200      # 원래 컴퓨터는 그대로
+
+
+def test_account_names_setting(hub):
+    _, c = hub
+    assert _put(c, lambda x: x.update(accountNames={"abcdef1234": "회사"})).status_code == 200
+    assert _put(c, lambda x: x.update(accountNames={"not-hex": "x"})).status_code == 422
 
 
 def test_asset_names_are_strict(hub):

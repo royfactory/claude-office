@@ -1256,6 +1256,43 @@ def test_git_state_counts_changes(collector, tmp_path):
     run("commit", "-q", "-m", "x")
     (repo / "a.txt").write_text("2")
     (sub / "b.txt").write_text("new")
-    v = collector.git_state(str(sub))                     # 하위 폴더에서 연 세션도 저장소 뿌리에서 잰다
+    import time
+    v = collector.git_state(str(sub))                     # 하위 폴더에서 연 세션도 저장소 뿌리에서 잰다(따로 도는 스레드가)
+    for _ in range(100):
+        if v is not None:
+            break
+        time.sleep(0.05)
+        v = collector.git_state(str(sub))
     assert v == {"dirty": 2, "ahead": None, "behind": None}
     assert collector.git_state(str(tmp_path)) is None     # git 이 아닌 폴더
+
+
+
+def test_same_process_drops_sessions_from_before_boot(collector, monkeypatch):
+    monkeypatch.setattr(collector, "boot_time", lambda: 2_000_000_000.0)
+    assert collector.same_process({"pid": 1, "startedAt": 1_000_000_000_000}) is False      # 부팅 전에 시작한 세션 파일
+    assert collector.same_process({"pid": os.getpid(), "startedAt": 2_000_000_100_000}) is True
+
+
+def test_account_of_reads_oauth_account_and_masks_email(collector, tmp_path):
+    root = tmp_path / "profile"
+    root.mkdir()
+    (root / ".claude.json").write_text(json.dumps({"oauthAccount": {"accountUuid": "u-1", "emailAddress": "royzero@example.com"}}))
+    a = collector.account_of(str(root))
+    assert a["label"] == "ro***@example.com" and len(a["id"]) == 10
+    assert collector.account_of(str(root), "none")["label"] == ""          # --detail none: id 만
+    assert collector.account_of(str(tmp_path / "nothing")) is None
+
+
+def test_machine_id_is_stable(collector):
+    a = collector.machine_id()
+    assert a == collector.machine_id() and len(a) >= 12
+
+
+
+def test_quick_first_sends_skeleton_then_full(collector, home):
+    make_session(home, [], status="busy")
+    col = collector.Collector("basic", quick_first=True)
+    first = col.collect()
+    assert len(first) == 1 and first[0]["kind"] == "thinking" and first[0]["tools"] == 0 and "timeline" not in first[0]
+    assert "timeline" in col.collect()[0]                     # 둘째 회차부터 기록을 읽어 다 채운다
