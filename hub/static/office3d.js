@@ -532,15 +532,15 @@ function drawOutside(n, project) {
 // ---------- 벽 기둥 전자시계: 지금 시각·날짜, 날씨가 있으면 기온 ----------
 let clock = null;
 function buildClock() {
-  const { x, z } = OUTSIDE, px = x + 0.75, pz = z + 0.75;
-  box(1.0, 4.9, 1.0, 0x2a3242, px, 0, pz);          // 모서리 기둥
+  // 오른쪽(뒤쪽) 유리벽에 붙인 기둥, 시계는 벽면을 따라 방 안(+z)을 본다. 회의실·개발실 사이 복도 위(x≈3.9)
+  const { z } = OUTSIDE, px = 3.9, pz = z + 0.5;
+  box(1.0, 4.9, 1.0, 0x2a3242, px, 0, pz);
   const c = document.createElement("canvas"); c.width = 512; c.height = 288;
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.52), new THREE.MeshBasicMaterial({ map: t, toneMapped: false }));
-  screen.rotation.y = Math.PI / 4;                    // 카메라 쪽(+x+z)을 본다
-  screen.position.set(px + 0.6, 3.75, pz + 0.6);
+  screen.position.set(px, 3.75, pz + 0.56);
   officeRoot.add(screen);
-  box(2.86, 1.68, 0.08, 0x111827, px + 0.56, 2.91, pz + 0.56, { ry: Math.PI / 4, cast: false });   // 테두리
+  box(2.86, 1.68, 0.08, 0x111827, px, 2.91, pz + 0.52, { cast: false });   // 테두리
   clock = { c, t, key: "" };
   drawClock();
 }
