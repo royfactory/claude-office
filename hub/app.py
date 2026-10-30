@@ -149,6 +149,8 @@ DEFAULT_CONFIG: dict = {
     "meName": "나",
     "meCharacter": "me",   # 내 자리에 앉은 '나'의 캐릭터. 비면 🧑‍💻
     "language": "auto",    # 화면 언어: auto(브라우저 언어) · ko · en
+    "outside": True,       # 바깥 풍경
+    "weather": True,       # 날씨(브라우저 위치 권한이 있을 때만)
     "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
 }
 
@@ -223,6 +225,8 @@ class Config(BaseModel):
     meName: str = Field("나", min_length=1, max_length=12)
     meCharacter: str = ""
     language: Literal["auto", "ko", "en"] = "auto"   # 화면 언어. auto 는 보는 브라우저의 언어(한국어면 한국어, 아니면 영어)
+    outside: bool = True    # 뒤쪽 통유리 너머 바깥 풍경(끄면 젖빛 유리)
+    weather: bool = True    # 보는 브라우저에 위치 권한이 있을 때만 그곳 날씨를 풍경·시계에
     lookVersion: int = LOOK_VERSION   # 기본 캐릭터 그림을 몇 번째 묶음까지 받았나(load_config 의 한 번 채우기용)
 
     def check(self) -> None:

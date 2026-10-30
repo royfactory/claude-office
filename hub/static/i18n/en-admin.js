@@ -111,4 +111,10 @@ I18N.add({
   "이미지 {n}장을 올렸습니다.": "Uploaded {n} image(s).",
   "보관함이 비어 있습니다. 새로 올려 주세요.": "The library is empty. Upload an image.",
   "불러오지 못함: ": "Could not load: ",
+  "바깥 풍경": "City view outside", "날씨(위치 권한이 있을 때)": "Weather (when location is allowed)",
+  "뒤쪽 통유리 너머로 지금 시각의 하늘과 도시를 보입니다. 끄면 젖빛 유리": "Shows the sky and city for the current time through the back glass walls. Off: frosted glass",
+  "켜면 이 브라우저에 위치 권한을 묻고, 허락한 브라우저에서만 그곳 날씨를 풍경·시계에 보입니다(https 또는 이 컴퓨터 주소에서만)": "When on, asks this browser for location and shows the local weather in the view and on the clock, only in browsers that allow it (https or this computer's address only)",
+  "이 주소(http)에서는 브라우저가 위치를 주지 않습니다. https 나 이 컴퓨터 주소(127.0.0.1)로 열면 날씨가 보입니다.": "Browsers don't share location on this http address. Open it over https or on this computer (127.0.0.1) to see weather.",
+  "위치 권한을 받았습니다. 저장하면 사무실 화면에 날씨가 보입니다.": "Location allowed. Save, and the office will show the weather.",
+  "위치 권한이 없어 날씨는 보이지 않습니다(풍경은 그대로).": "No location permission, so no weather (the view stays).",
 });

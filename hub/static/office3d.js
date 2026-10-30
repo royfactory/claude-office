@@ -309,7 +309,7 @@ function buildOffice() {
     officeRoot.add(sign); signs[r.id] = sign;
   }
   buildLibrary(R.library); buildMeeting(R.meeting); buildDev(R.dev); buildLounge(R.lounge);
-  buildMyDesk(R.mydesk); buildServer(R.server); buildSearch(R.search); buildElevator(); buildCafe(); buildCabin(); buildOutside();
+  buildMyDesk(R.mydesk); buildServer(R.server); buildSearch(R.search); buildElevator(); buildCafe(); buildCabin(); buildOutside(); buildClock();
   for (const r of Object.values(R)) r.seats = r.seats.filter(p => !inSolid(p));   // 가구 위에 놓인 자리는 뺀다
   buildNav();
   [[-18, -12.8], [18, -12.8], [-4.4, 6.2], [4, 13], [-11, 13], [18, 6]].forEach(([x, z]) => plant(x, z, 0.9));
@@ -357,78 +357,221 @@ function buildOutside() {
   }
   outside = { canvas, texs, key: "", n: 1, project: "" };
 }
-// 하루 하늘: [시각, 위 색, 아래 색, 밤 정도(별·불 켜진 창)]
-const SKY = [[0, "#070b1a", "#16213d", 1], [5, "#0b1330", "#2a3558", 1], [6.3, "#3b4a80", "#f2a07b", 0.4], [7.5, "#5b9be0", "#ffd9b0", 0],
-  [12, "#3f86d8", "#bfe2f8", 0], [16.5, "#5a95d6", "#f7d8a8", 0], [18.3, "#433870", "#f08a5d", 0.3], [19.5, "#1d2350", "#5b4a7a", 0.8],
-  [21, "#0a1024", "#1a2444", 1], [24, "#070b1a", "#16213d", 1]];
+// 하루 하늘: [시각, 위, 가운데, 지평선, 밤 정도(별·불 켜진 창), 노을 정도]
+const SKY = [
+  [0, "#05081a", "#0b1430", "#1b2347", 1, 0], [4.8, "#070c22", "#121c40", "#2c2c56", 1, 0],
+  [5.8, "#1d2a5c", "#5a4f86", "#e58f7a", 0.55, 0.8], [6.8, "#4e7fc4", "#a8b8dc", "#ffd2a6", 0.1, 0.45],
+  [8.5, "#3f86d8", "#86bce9", "#d9eefb", 0, 0], [15.5, "#3a7fd2", "#8cc0ea", "#e2f1fb", 0, 0],
+  [17.4, "#4f6fb8", "#c79bb0", "#ffc48a", 0, 0.6], [18.4, "#3a2f6e", "#b05f86", "#ff8f5e", 0.25, 1],
+  [19.4, "#141a44", "#3d2f68", "#a65a6e", 0.7, 0.45], [20.6, "#070c22", "#121a3c", "#2a2650", 1, 0.05],
+  [24, "#05081a", "#0b1430", "#1b2347", 1, 0]];
 function skyAt(hour) {
   let i = 0;
   while (i < SKY.length - 2 && SKY[i + 1][0] <= hour) i++;
-  const [h0, t0, b0, n0] = SKY[i], [h1, t1, b1, n1] = SKY[i + 1], f = (hour - h0) / (h1 - h0);
-  const mix = (a, b) => "#" + new THREE.Color(a).lerp(new THREE.Color(b), f).getHexString();
-  return { top: mix(t0, t1), bottom: mix(b0, b1), night: n0 + (n1 - n0) * f };
+  const a = SKY[i], b = SKY[i + 1], f = (hour - a[0]) / (b[0] - a[0]);
+  const mix = k => "#" + new THREE.Color(a[k]).lerp(new THREE.Color(b[k]), f).getHexString();
+  return { top: mix(1), mid: mix(2), low: mix(3), night: a[4] + (b[4] - a[4]) * f, glow: a[5] + (b[5] - a[5]) * f };
 }
-// 주소에 ?hour=18.5 처럼 주면 그 시각으로 그린다(풍경 확인·스크린샷용)
-const FORCED_HOUR = (h => (h !== null && h !== "" && isFinite(+h) ? ((+h % 24) + 24) % 24 : null))(new URLSearchParams(location.search).get("hour"));
+// 주소에 ?hour=18.5 처럼 주면 그 시각으로 그린다(풍경 확인·스크린샷용). ?weather=rain|snow|cloudy|fog|storm|clear 로 날씨 흉내
+const QS = new URLSearchParams(location.search);
+const FORCED_HOUR = (h => (h !== null && h !== "" && isFinite(+h) ? ((+h % 24) + 24) % 24 : null))(QS.get("hour"));
+const FORCED_WEATHER = QS.get("weather");
+const nowHour = () => { const d = new Date(); return FORCED_HOUR ?? d.getHours() + d.getMinutes() / 60; };
+
+// ---------- 날씨: 브라우저 위치 권한이 이미 있을 때만(설정 weather 가 켜져 있으면) ----------
+// 위치는 소수 첫째 자리(약 10km)로 줄여 브라우저가 Open-Meteo 에 바로 묻는다(허브는 모름). 30분마다, 이 브라우저에 기억.
+// 권한을 묻는 창은 여기서 띄우지 않는다 — 관리 화면에서 날씨를 켤 때만 묻는다. https·localhost 가 아니면 위치를 못 쓴다
+let weather = null;   // { kind: clear|cloudy|fog|rain|snow|storm, cloud: 0~1, temp, ts }
+const WMO = c => c === 0 ? "clear" : c <= 2 ? "partly" : c === 3 ? "cloudy" : c === 45 || c === 48 ? "fog"
+  : (c >= 71 && c <= 77) || c === 85 || c === 86 ? "snow" : c >= 95 ? "storm" : c >= 51 ? "rain" : "cloudy";
+async function refreshWeather() {
+  if (FORCED_WEATHER) { weather = { kind: FORCED_WEATHER, cloud: { clear: 0.1, partly: 0.4 }[FORCED_WEATHER] ?? 0.85, temp: 14, ts: Date.now() }; return; }
+  if (!cfg || cfg.weather === false || !window.isSecureContext || !navigator.geolocation || !navigator.permissions) { weather = null; return; }
+  try {
+    const cached = JSON.parse(localStorage.getItem("office.weather") || "null");
+    if (cached && Date.now() - cached.ts < 30 * 60 * 1000) { weather = cached; return; }
+  } catch (_) { /* 다시 받는다 */ }
+  try {
+    if ((await navigator.permissions.query({ name: "geolocation" })).state !== "granted") { weather = null; return; }
+    const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, { maximumAge: 3600e3, timeout: 10e3 }));
+    const lat = pos.coords.latitude.toFixed(1), lon = pos.coords.longitude.toFixed(1);
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,cloud_cover`);
+    const j = (await r.json()).current;
+    weather = { kind: WMO(j.weather_code), cloud: (j.cloud_cover ?? 30) / 100, temp: Math.round(j.temperature_2m), ts: Date.now() };
+    try { localStorage.setItem("office.weather", JSON.stringify(weather)); } catch (_) { /* 그대로 */ }
+  } catch (_) { weather = null; }
+}
+
 function drawOutside(n, project) {
   if (!outside) return;
-  const now = new Date(), hour = FORCED_HOUR ?? now.getHours() + now.getMinutes() / 60;
-  const key = `${n}|${project}|${Math.floor(hour * 6)}`;   // 10분 단위
   outside.n = n; outside.project = project;
+  const on = !cfg || cfg.outside !== false, hour = nowHour(), wk = weather ? weather.kind : "";
+  const key = `${on}|${n}|${project}|${Math.floor(hour * 6)}|${wk}`;   // 10분 단위
   if (key === outside.key) return;
   outside.key = key;
   const c = outside.canvas, g = c.getContext("2d"), W = c.width, H = c.height;
   let seed = 2166136261;
   for (const ch of project) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
   const rnd = () => ((seed = Math.imul(seed ^ (seed >>> 15), 2246822507) ^ Math.imul(seed ^ (seed >>> 13), 3266489909)) >>> 0) / 4294967296;
-  if (n < 0) {   // 지하: 창 너머가 흙벽 — 콘크리트 판과 줄눈, 배관 한 줄
-    g.fillStyle = "#3b4049"; g.fillRect(0, 0, W, H);
-    g.strokeStyle = "rgba(0,0,0,.25)"; g.lineWidth = 2;
+  const col = (a, b, f) => "#" + new THREE.Color(a).lerp(new THREE.Color(b), f).getHexString();
+  const rgba = (hex, a) => { const k = new THREE.Color(hex); return `rgba(${k.r * 255 | 0},${k.g * 255 | 0},${k.b * 255 | 0},${a})`; };
+  g.clearRect(0, 0, W, H);
+  if (!on || n < 0) {   // 풍경 끔: 젖빛 유리 / 지하: 콘크리트
+    const gr = g.createLinearGradient(0, 0, 0, H);
+    if (n < 0) { gr.addColorStop(0, "#3b4049"); gr.addColorStop(1, "#2c3038"); } else { gr.addColorStop(0, "#d9dee6"); gr.addColorStop(1, "#b9c2cf"); }
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    g.strokeStyle = n < 0 ? "rgba(0,0,0,.25)" : "rgba(255,255,255,.35)"; g.lineWidth = 2;
     for (let x = 0; x < W; x += 128) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
-    g.beginPath(); g.moveTo(0, H * 0.55); g.lineTo(W, H * 0.55); g.stroke();
-    g.fillStyle = "#59606b"; g.fillRect(0, H * 0.18, W, 10);
+    if (n < 0) { g.fillStyle = "#59606b"; g.fillRect(0, H * 0.18, W, 10); }
+    for (const t of outside.texs) t.needsUpdate = true;
+    kick(); return;
+  }
+  const sky = skyAt(hour), cloud = weather ? weather.cloud : 0.3, wet = wk === "rain" || wk === "storm" || wk === "snow" || wk === "fog";
+  const dim = wk === "storm" ? 0.45 : wet ? 0.28 : wk === "cloudy" ? 0.18 : 0;   // 궂은 날은 하늘을 회색 쪽으로
+  const grey = "#7d8796";
+  const top = col(sky.top, grey, dim), mid = col(sky.mid, grey, dim), low = col(sky.low, grey, dim * 0.8);
+  // 하늘: 위 → 가운데 → 지평선 빛
+  const level = Math.min(Math.max(n, 1), 14), horizon = H * (0.72 + level * 0.014);   // 하늘을 넉넉히, 높은 층일수록 지평선이 내려간다
+  const gr = g.createLinearGradient(0, 0, 0, horizon);
+  gr.addColorStop(0, top); gr.addColorStop(0.55, mid); gr.addColorStop(1, low);
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  // 별: 크기·밝기를 섞고, 몇 개는 십자 반짝임
+  if (sky.night > 0.2 && cloud < 0.85) {
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * W, y = rnd() * horizon * 0.85, r = rnd() < 0.08 ? 1.6 : 0.8, a = (0.25 + rnd() * 0.75) * sky.night * (1 - cloud);
+      g.fillStyle = `rgba(255,250,235,${a})`; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      if (r > 1) { g.fillRect(x - 4, y - 0.4, 8, 0.8); g.fillRect(x - 0.4, y - 4, 0.8, 8); }
+    }
+  }
+  // 해·달: 빛무리(큰 원형 그라데이션) 위에 원반. 달은 초승달
+  const day = hour >= 5.8 && hour < 19.2, prog = day ? (hour - 5.8) / 13.4 : ((hour + 24 - 19.2) % 24) / 10.6;
+  const sx = W * (0.06 + 0.88 * prog), sy = horizon - (horizon * 0.82) * Math.sin(Math.PI * prog);
+  const veil = 1 - Math.min(0.8, cloud * (wet ? 1 : 0.6));
+  if (day) {
+    const warm = sky.glow, halo = g.createRadialGradient(sx, sy, 0, sx, sy, 150 + 120 * warm);
+    halo.addColorStop(0, `rgba(255,${235 - 60 * warm | 0},${170 - 90 * warm | 0},${0.55 * veil})`); halo.addColorStop(1, "rgba(255,200,140,0)");
+    g.fillStyle = halo; g.fillRect(0, 0, W, H);
+    g.fillStyle = `rgba(255,${246 - 40 * warm | 0},${215 - 90 * warm | 0},${0.95 * veil})`; g.beginPath(); g.arc(sx, sy, 15, 0, Math.PI * 2); g.fill();
   } else {
-    const sky = skyAt(hour), grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, sky.top); grad.addColorStop(1, sky.bottom);
-    g.fillStyle = grad; g.fillRect(0, 0, W, H);
-    if (sky.night > 0.2) {   // 별
-      g.fillStyle = `rgba(255,255,255,${0.7 * sky.night})`;
-      for (let i = 0; i < 140; i++) g.fillRect(rnd() * W, rnd() * H * 0.6, 1.6, 1.6);
+    const halo = g.createRadialGradient(sx, sy, 0, sx, sy, 90);
+    halo.addColorStop(0, `rgba(210,220,255,${0.35 * veil})`); halo.addColorStop(1, "rgba(210,220,255,0)");
+    g.fillStyle = halo; g.fillRect(0, 0, W, H);
+    g.fillStyle = `rgba(240,242,255,${0.95 * veil})`; g.beginPath(); g.arc(sx, sy, 11, 0, Math.PI * 2); g.fill();
+    g.fillStyle = mid; g.beginPath(); g.arc(sx + 5, sy - 3, 10, 0, Math.PI * 2); g.fill();
+  }
+  // 노을·새벽: 지평선을 따라 번지는 띠
+  if (sky.glow > 0.05) {
+    const band = g.createLinearGradient(0, horizon - H * 0.35, 0, horizon);
+    band.addColorStop(0, "rgba(255,150,110,0)"); band.addColorStop(1, `rgba(255,150,110,${0.45 * sky.glow * veil})`);
+    g.fillStyle = band; g.fillRect(0, horizon - H * 0.35, W, H * 0.35);
+  }
+  // 구름: 둥근 덩어리 여럿을 옅게 겹친다. 윗면은 하늘빛을 받고 아랫면은 노을·밤 색
+  const nClouds = Math.round(3 + cloud * 16);
+  const cTop = sky.night > 0.6 ? "#3a4566" : col("#ffffff", "#ffe2d0", sky.glow), cLow = sky.night > 0.6 ? "#1d2442" : col("#c8d3e2", "#d27a86", sky.glow);
+  for (let i = 0; i < nClouds; i++) {
+    const cx = rnd() * W, cy = horizon * (0.15 + rnd() * 0.55), w = 60 + rnd() * 140 * (0.6 + cloud), a = (0.35 + 0.45 * cloud) * (wet ? 1 : 0.85);
+    for (let k = 0; k < 6; k++) {
+      const px = cx + (rnd() - 0.5) * w, py = cy + (rnd() - 0.5) * w * 0.12, r = w * (0.18 + rnd() * 0.18);
+      const cg = g.createRadialGradient(px, py - r * 0.3, r * 0.1, px, py, r);
+      cg.addColorStop(0, rgba(col(cTop, grey, dim), a)); cg.addColorStop(0.7, rgba(col(cLow, grey, dim), a * 0.7)); cg.addColorStop(1, rgba(cLow, 0));
+      g.fillStyle = cg; g.beginPath(); g.ellipse(px, py, r * 1.5, r * 0.75, 0, 0, Math.PI * 2); g.fill();
     }
-    // 해·달: 시각에 따라 가로로 지나간다
-    const day = hour >= 6 && hour < 19, prog = day ? (hour - 6) / 13 : ((hour + 24 - 19) % 24) / 11;
-    const sx = W * (0.08 + 0.84 * prog), sy = H * (0.75 - 0.55 * Math.sin(Math.PI * prog));
-    g.fillStyle = day ? "rgba(255,236,170,.95)" : "rgba(235,240,255,.9)";
-    g.beginPath(); g.arc(sx, sy, day ? 16 : 11, 0, Math.PI * 2); g.fill();
-    // 도시: 높은 층일수록 지평선이 내려가고 건물이 낮아 보인다(내려다보는 각도). 두 겹(먼 것은 옅게)
-    // 도시: 높은 층일수록 지평선이 내려가고 건물이 낮아 보인다(내려다보는 각도). 먼 줄은 옅게, 가까운 줄은 진하게
-    const level = Math.min(Math.max(n, 1), 14);
-    const horizon = H * (0.62 + level * 0.02), scale = 1.05 - level * 0.05;
-    const night = sky.night, ink = new THREE.Color("#0f1726");
-    // 낮에도 건물이 하늘과 갈리게: 하늘 아래색에서 짙은 남색으로 55%(밤 90%), 먼 줄은 그 절반쯤
-    const tone = haze => "#" + new THREE.Color(sky.bottom).lerp(ink, (0.55 + 0.35 * night) * (1 - haze)).getHexString();
-    for (const [layer, haze, wMin, wVar, hMax] of [[0, 0.6, 14, 26, 0.45], [1, 0.25, 18, 34, 0.7]]) {
-      let x = -10 * rnd();
-      while (x < W) {
-        const w = wMin + rnd() * wVar, top = horizon - (0.12 + rnd() * hMax) * H * 0.5 * scale;
-        g.fillStyle = tone(haze);
-        g.fillRect(x, top, w - 2, H - top);
-        if (rnd() < 0.18) g.fillRect(x + w * 0.35, top - 8, 2, 8);   // 안테나
-        if (layer) {   // 창: 밤에는 노랗게 켜지고, 낮에는 하늘빛이 비친다
-          g.fillStyle = night > 0.3 ? `rgba(255,214,120,${0.9 * night})` : "rgba(255,255,255,.18)";
-          for (let wy = top + 5; wy < H - 4; wy += 7) for (let wx = x + 3; wx < x + w - 6; wx += 5)
-            if (rnd() < (night > 0.3 ? 0.28 * night : 0.5)) g.fillRect(wx, wy, 2, 3);
+  }
+  // 먼 산: 부드러운 능선, 지평선 빛에 잠긴다
+  const ridge = (yBase, amp, colr, freq) => {
+    g.fillStyle = colr; g.beginPath(); g.moveTo(0, H);
+    const ph = rnd() * 10;
+    for (let x = 0; x <= W; x += 8) g.lineTo(x, yBase - amp * (0.5 + 0.5 * Math.sin(x * freq + ph) * Math.sin(x * freq * 0.37 + ph * 2)));
+    g.lineTo(W, H); g.fill();
+  };
+  ridge(horizon - 6, H * 0.12 * (1.1 - level * 0.04), col(low, top, 0.35), 0.006);
+  // 도시: 먼 줄은 안개에 옅게, 가까운 줄은 진하게. 높은 층일수록 지평선이 내려가 내려다보인다
+  const ink = new THREE.Color("#101828"), scale = 1.05 - level * 0.05;
+  const tone = haze => "#" + new THREE.Color(low).lerp(ink, (0.5 + 0.4 * sky.night) * (1 - haze)).getHexString();
+  for (const [layer, haze, wMin, wVar, hMax] of [[0, 0.62, 12, 24, 0.22], [1, 0.22, 18, 34, 0.36]]) {
+    let x = -10 * rnd();
+    while (x < W) {
+      const w = wMin + rnd() * wVar, topY = horizon - (0.05 + rnd() * hMax) * H * 0.5 * scale;
+      g.fillStyle = tone(haze); g.fillRect(x, topY, w - 2, H - topY);
+      if (layer && rnd() < 0.22) { g.fillRect(x + w * 0.4, topY - 10, 2, 10); if (sky.night > 0.4) { g.fillStyle = "rgba(255,80,80,.9)"; g.fillRect(x + w * 0.4 - 1, topY - 12, 4, 3); } }
+      if (layer) {
+        const lit = sky.night > 0.3;
+        for (let wy = topY + 5; wy < H - 4; wy += 7) for (let wx = x + 3; wx < x + w - 6; wx += 5) {
+          if (rnd() < (lit ? 0.3 * sky.night : 0.45)) {
+            g.fillStyle = lit ? (rnd() < 0.8 ? `rgba(255,206,120,${0.85 * sky.night})` : `rgba(170,210,255,${0.7 * sky.night})`) : "rgba(255,255,255,.16)";
+            g.fillRect(wx, wy, 2, 3);
+          }
         }
-        x += w;
       }
+      x += w;
     }
-    // 지평선 아래 땅(먼 길·나무 줄)
-    g.fillStyle = tone(0); g.fillRect(0, horizon + 2, W, H - horizon);
+  }
+  // 지평선 안개: 도시 아랫부분을 하늘빛으로 감싼다
+  const haze = g.createLinearGradient(0, horizon - 20, 0, H);
+  haze.addColorStop(0, rgba(low, 0)); haze.addColorStop(1, rgba(low, wk === "fog" ? 0.85 : 0.35));
+  g.fillStyle = haze; g.fillRect(0, horizon - 20, W, H);
+  // 날씨 덧칠
+  if (wk === "rain" || wk === "storm") {
+    g.strokeStyle = "rgba(210,225,245,.35)"; g.lineWidth = 1;
+    for (let i = 0; i < 520; i++) { const x = rnd() * W, y = rnd() * H; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 5, y + 16); g.stroke(); }
+    if (wk === "storm" && rnd() < 0.6) {   // 번개 한 줄기
+      let x = W * (0.2 + rnd() * 0.6), y = 0; g.strokeStyle = "rgba(255,255,230,.85)"; g.lineWidth = 2; g.beginPath(); g.moveTo(x, y);
+      while (y < horizon * 0.8) { x += (rnd() - 0.5) * 30; y += 12 + rnd() * 14; g.lineTo(x, y); }
+      g.stroke();
+    }
+  } else if (wk === "snow") {
+    g.fillStyle = "rgba(255,255,255,.85)";
+    for (let i = 0; i < 420; i++) { g.beginPath(); g.arc(rnd() * W, rnd() * H, 0.8 + rnd() * 1.6, 0, Math.PI * 2); g.fill(); }
+  } else if (wk === "fog") {
+    g.fillStyle = "rgba(225,230,236,.35)"; g.fillRect(0, 0, W, H);
   }
   for (const t of outside.texs) t.needsUpdate = true;
   kick();
 }
-setInterval(() => { if (outside && outside.project) drawOutside(outside.n, outside.project); }, 5 * 60 * 1000);
+
+// ---------- 벽 기둥 전자시계: 지금 시각·날짜, 날씨가 있으면 기온 ----------
+let clock = null;
+function buildClock() {
+  const { x, z } = OUTSIDE, px = x + 0.75, pz = z + 0.75;
+  box(1.0, 4.9, 1.0, 0x2a3242, px, 0, pz);          // 모서리 기둥
+  const c = document.createElement("canvas"); c.width = 512; c.height = 288;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.52), new THREE.MeshBasicMaterial({ map: t, toneMapped: false }));
+  screen.rotation.y = Math.PI / 4;                    // 카메라 쪽(+x+z)을 본다
+  screen.position.set(px + 0.6, 3.75, pz + 0.6);
+  officeRoot.add(screen);
+  box(2.86, 1.68, 0.08, 0x111827, px + 0.56, 2.91, pz + 0.56, { ry: Math.PI / 4, cast: false });   // 테두리
+  clock = { c, t, key: "" };
+  drawClock();
+}
+function drawClock() {
+  if (!clock) return;
+  const d = new Date(), h = FORCED_HOUR ?? null;
+  const hh = h != null ? Math.floor(h) : d.getHours(), mm = h != null ? Math.round((h % 1) * 60) % 60 : d.getMinutes();
+  const time = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  const loc = (window.I18N && I18N.lang === "en") ? "en-US" : "ko-KR";
+  const date = d.toLocaleDateString(loc, { month: "numeric", day: "numeric", weekday: "short" });
+  const wx = weather ? `${{ clear: "☀", partly: "⛅", cloudy: "☁", fog: "🌫", rain: "☂", snow: "❄", storm: "⚡" }[weather.kind] || ""} ${weather.temp}°` : "";
+  const key = `${time}|${date}|${wx}`;
+  if (key === clock.key) return;
+  clock.key = key;
+  const g = clock.c.getContext("2d"), W = clock.c.width, H = clock.c.height;
+  const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, "#0b1220"); bg.addColorStop(1, "#05080f");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.shadowColor = "rgba(94,234,212,.9)"; g.shadowBlur = 18;
+  g.fillStyle = "#5eead4"; g.font = `700 168px ui-monospace, "SF Mono", Menlo, monospace`;
+  g.fillText(time, W / 2, H * 0.4);
+  g.shadowBlur = 8; g.shadowColor = "rgba(251,191,36,.7)";
+  g.fillStyle = "#fbbf24"; g.font = `800 56px ${FONT}`;
+  g.fillText(wx ? `${date}  ${wx}` : date, W / 2, H * 0.83);
+  g.shadowBlur = 0;
+  clock.t.needsUpdate = true;
+  kick();
+}
+// 시계는 분이 바뀔 때, 풍경은 10분 단위가 바뀔 때만 다시 그린다(같으면 키가 같아 그냥 지나감). 날씨는 30분마다
+setInterval(() => { drawClock(); if (outside && outside.project) drawOutside(outside.n, outside.project); }, 15 * 1000);
+setInterval(() => { refreshWeather().then(() => { drawClock(); if (outside && outside.project) drawOutside(outside.n, outside.project); }); }, 30 * 60 * 1000);
 const DOOR_W = 1.8;
 function backWall(r) {
   const z = r.z0, gap = r.door[1] === r.z0 ? r.door[0] : null;
@@ -1118,6 +1261,11 @@ function apply(instant) {
   if (!state) return;
   cfg = state.config;
   if (cfg.language !== apply.lang) { apply.lang = cfg.language; if (I18N.sync(cfg.language)) return; }   // 다르면 새로 고친다
+  const sk = `${cfg.outside !== false}|${cfg.weather !== false}`;   // 바깥 풍경·날씨 설정이 바뀌면 다시 받고 그린다
+  if (sk !== apply.sky) {
+    apply.sky = sk;
+    refreshWeather().then(() => { drawClock(); if (outside && outside.project) { outside.key = ""; drawOutside(outside.n, outside.project); } });
+  }
   const fl = floors();
   const before = floorKey;
   chooseFloor(fl);

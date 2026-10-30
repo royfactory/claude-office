@@ -128,6 +128,8 @@
       <label class="row" style="font-size:13px" title="허브 OFFICE_TOKEN, 그 컴퓨터 .env 의 CLAUDE_OFFICE_APPROVE=on, 승인 훅(install_hooks.py --approve --apply)도 있어야 동작"><input type="checkbox" id="approvals"> 대시보드에서 권한 요청 허용·거절</label>
       <label class="row" style="font-size:13px">내 자리에 앉은 '나' 이름 <input id="meName" maxlength="12" style="width:110px"></label>
       <label class="row" style="font-size:13px">'나' 캐릭터 <select id="meChar"></select></label>
+      <label class="row" style="font-size:13px" title="뒤쪽 통유리 너머로 지금 시각의 하늘과 도시를 보입니다. 끄면 젖빛 유리"><input type="checkbox" id="outside"> 바깥 풍경</label>
+      <label class="row" style="font-size:13px" title="켜면 이 브라우저에 위치 권한을 묻고, 허락한 브라우저에서만 그곳 날씨를 풍경·시계에 보입니다(https 또는 이 컴퓨터 주소에서만)"><input type="checkbox" id="weather"> 날씨(위치 권한이 있을 때)</label>
       <label class="row" style="font-size:13px">언어 <select id="language"><option value="auto">자동(브라우저 언어)</option><option value="ko">한국어</option><option value="en">English</option></select></label>
     </div>
   </section>
@@ -284,6 +286,8 @@ function renderRules() {
   $("approvals").checked = !!cfg.approvals;
   $("meName").value = Office.label(cfg.meName || "나");
   $("language").value = cfg.language || "auto";
+  $("outside").checked = cfg.outside !== false;
+  $("weather").checked = cfg.weather !== false;
 }
 
 function renderRooms() {
@@ -371,6 +375,16 @@ document.addEventListener("input", e => {
   else if (t.id === "meName") cfg.meName = val;
   else if (t.id === "defaultRoom") cfg.defaultRoom = val;
   else if (t.id === "language") cfg.language = val;
+  else if (t.id === "outside") cfg.outside = val;
+  else if (t.id === "weather") {
+    cfg.weather = val;
+    // 날씨를 켤 때 이 브라우저에 위치 권한을 묻는다(사람이 누른 때라야 창이 뜬다). 막혔거나 https 가 아니면 알려 준다
+    if (val && navigator.geolocation) {
+      if (!window.isSecureContext) say(I18N.t("이 주소(http)에서는 브라우저가 위치를 주지 않습니다. https 나 이 컴퓨터 주소(127.0.0.1)로 열면 날씨가 보입니다."), "err");
+      else navigator.geolocation.getCurrentPosition(() => say(I18N.t("위치 권한을 받았습니다. 저장하면 사무실 화면에 날씨가 보입니다."), "ok"),
+        () => say(I18N.t("위치 권한이 없어 날씨는 보이지 않습니다(풍경은 그대로)."), "err"), { timeout: 15000 });
+    }
+  }
   light();
 });
 
