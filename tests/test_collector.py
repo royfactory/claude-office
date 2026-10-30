@@ -1316,3 +1316,17 @@ def test_long_transcript_keeps_title_todos_mode_from_skipped_head(collector, hom
     a = collect_one(collector)
     assert a["title"] == "긴 작업" and a["mode"] == "acceptEdits" and a["compacts"] == 1
     assert a["todos"] == [{"s": "첫 단계", "st": "pending"}]
+
+
+def test_prune_old_files_keeps_live_and_recent(collector, tmp_path, monkeypatch):
+    ev, stt = tmp_path / "events", tmp_path / "status"
+    ev.mkdir(); stt.mkdir()
+    monkeypatch.setattr(collector, "EVENTS_DIR", str(ev))
+    monkeypatch.setattr(collector, "STATUS_DIR", str(stt))
+    old = 1_000_000.0
+    for d, name in ((ev, "dead"), (ev, "live"), (stt, "dead2"), (stt, "fresh")):
+        (d / f"{name}.json").write_text("{}")
+    for p in (ev / "dead.json", ev / "live.json", stt / "dead2.json"):
+        os.utime(p, (old, old))
+    n = collector.prune_old_files({"live"}, now=old + 8 * 86400)
+    assert n == 2 and sorted(p.name for p in ev.iterdir()) == ["live.json"] and sorted(p.name for p in stt.iterdir()) == ["fresh.json"]

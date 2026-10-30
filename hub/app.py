@@ -79,6 +79,7 @@ try:
 except (OSError, ValueError):
     DEFAULT_LOOKS = {}
 HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없는 수집기의 세션은 화면에서 뺀다
+HOST_FORGET_SEC = 24 * 3600   # 이만큼 소식이 없으면 그 컴퓨터를 아예 잊는다(로비·설정 점검표에서 빠짐)
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE = 4000
 OUTBOX_TTL_SEC = 60
@@ -506,6 +507,10 @@ async def _expire_tick(online: dict, flushed: float) -> tuple:
                 stats.flush(now)
             except OSError:
                 pass
+        # 하루 넘게 소식이 없는 컴퓨터는 잊는다(이름이 바뀌었거나 치운 컴퓨터가 로비·점검표에 계속 남지 않게)
+        gone = [h for h, v in hub.hosts.items() if not hub.online(v, now) and now - v["receivedAt"] > HOST_FORGET_SEC]
+        for h in gone:
+            del hub.hosts[h]
         cur = {h: hub.online(v, now) for h, v in hub.hosts.items()}
         expired = False
         for m in hub.outbox:   # 수집기가 1분 안에 가져가지 않으면(꺼짐·메시지 받기 꺼짐) 만료

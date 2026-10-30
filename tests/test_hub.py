@@ -491,6 +491,15 @@ def test_account_names_setting(hub):
     assert _put(c, lambda x: x.update(accountNames={"not-hex": "x"})).status_code == 422
 
 
+def test_long_gone_host_is_forgotten(hub):
+    import asyncio
+    mod, c = hub
+    assert c.post("/api/ingest", json={"host": "old", "agents": []}, headers=AUTH).status_code == 200
+    mod.hub.hosts["old"]["receivedAt"] -= mod.HOST_FORGET_SEC + 10
+    asyncio.run(mod._expire_tick({}, 0.0))
+    assert "old" not in mod.hub.hosts
+
+
 def test_asset_names_are_strict(hub):
     _, c = hub
     assert c.delete("/api/assets/..%2Fconfig.json").status_code == 404

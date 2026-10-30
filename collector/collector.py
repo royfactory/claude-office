@@ -194,6 +194,32 @@ STATUS_DIR = os.environ.get("CLAUDE_OFFICE_STATUS") or os.path.join(os.path.expa
 STATUS_FRESH_SEC = 8 * 24 * 3600   # 주간 한도 창(7일)보다 오래된 파일은 버린다
 
 
+PRUNE_DAYS = 7
+
+
+def prune_old_files(live, now=None):
+    """훅·상태 표시줄이 세션마다 남긴 작은 파일(~/.claude-office/events·status/<세션>.json) 중 PRUNE_DAYS 넘게 안 바뀌었고
+    지금 보이는 세션이 아닌 것을 지운다(끝난 세션의 파일이 계속 쌓였다). 지운 수를 돌려준다."""
+    now = time.time() if now is None else now
+    n = 0
+    for d in (EVENTS_DIR, STATUS_DIR):
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".json") or name[:-5] in live:
+                continue
+            p = os.path.join(d, name)
+            try:
+                if now - os.path.getmtime(p) > PRUNE_DAYS * 86400:
+                    os.remove(p)
+                    n += 1
+            except OSError:
+                pass
+    return n
+
+
 def status_line(sid, now):
     """그 세션의 상태 표시줄 요약 {ts, model, limits, ctx}. 없거나 너무 오래됐으면 None."""
     if not sid or not _SID_FILE.match(sid):
@@ -1487,7 +1513,7 @@ class Sender:
 
 
 def run(args, col):
-    failing, cfg_at = False, 0.0
+    failing, cfg_at, pruned_at = False, 0.0, 0.0
     sender = Sender(args.hub, args.host)
     while True:
         try:
@@ -1499,6 +1525,9 @@ def run(args, col):
                 except Exception:
                     col.speech = False
             agents = col.collect()
+            if time.time() - pruned_at > 3600:   # 한 시간에 한 번, 끝난 세션이 남긴 훅·상태 표시줄 파일을 치운다
+                pruned_at = time.time()
+                prune_old_files({a["id"] for a in agents})
             meta = {"checklistRule": checklist_rule_installed(), "setup": setup_status()}
             if sys_val := system_stats():
                 meta["sys"] = sys_val
