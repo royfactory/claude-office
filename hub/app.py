@@ -390,7 +390,8 @@ hub = Hub()
 STATS_PATH = DATA / "stats.json"
 STATS_KEEP_DAYS = 120
 STATS_GAP_SEC = 30         # 두 소식 사이가 이보다 길면(수집기 끊김) 그 사이는 활동으로 치지 않는다
-ACTIVE_KINDS = {"working", "shell", "thinking", "approval", "waiting"}
+# 활동 시간에 치는 상태. 백그라운드 작업을 기다리는 'waiting'(최대 6시간)은 사람도 Claude 도 일하지 않으니 뺀다
+ACTIVE_KINDS = {"working", "shell", "thinking", "approval"}
 
 
 class Stats:
@@ -426,9 +427,6 @@ class Stats:
             p = self.prev.get(key)
             row = day.setdefault(proj, {"active": 0, "tools": 0, "add": 0, "del": 0, "out": 0, "sessions": []})
             if p:
-                gap = now - p.get("ts", now)
-                if a.get("kind") in ACTIVE_KINDS and 0 < gap <= STATS_GAP_SEC:
-                    row["active"] = round(row["active"] + gap, 1)
                 for k, field in (("t", "tools"), ("a", "add"), ("d", "del"), ("o", "out")):
                     if cur[k] > p.get(k, 0):
                         row[field] += cur[k] - p.get(k, 0)
@@ -436,6 +434,18 @@ class Stats:
             if "/" not in key.split("/", 1)[1] and sid not in row["sessions"]:   # 세션 수는 본 세션만(서브에이전트 빼고)
                 row["sessions"].append(sid)
             self.prev[key] = cur
+        # 활동 시간 = 그 프로젝트에서 누구든 일하던 실제 경과 시간(세션·서브에이전트가 겹쳐도 한 번만). 컴퓨터별로 재고 더한다
+        busy = {str(a.get("project") or a.get("name") or "?")[:80] for a in agents
+                if isinstance(a, dict) and a.get("kind") in ACTIVE_KINDS}
+        for proj in {r[1] for r in rows}:
+            pk = f"{host}#project:{proj}"
+            p = self.prev.get(pk)
+            if p and proj in busy and p.get("busy"):
+                gap = now - p.get("ts", now)
+                if 0 < gap <= STATS_GAP_SEC:
+                    row = day.setdefault(proj, {"active": 0, "tools": 0, "add": 0, "del": 0, "out": 0, "sessions": []})
+                    row["active"] = round(row["active"] + gap, 1)
+            self.prev[pk] = {"ts": now, "busy": proj in busy}
         self.dirty = True
 
     def flush(self, now: float | None = None) -> None:

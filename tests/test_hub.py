@@ -438,6 +438,15 @@ def test_stats_accumulate_deltas_and_active_time(hub):
     st.observe("mac", [a(tools=16, subagents=[{"id": "x", "tools": 4, "tool": "Read"}])], now=1205.0)
     day = st.summary(1, now=1205.0)["days"][-1]["projects"]["web"]
     assert day == {"active": 15.0, "tools": 6, "add": 4, "del": 1, "out": 600, "sessions": 1}
+    # 같은 프로젝트에서 두 세션이 함께 일해도 활동 시간은 한 번만(겹친 구간), 백그라운드 대기는 활동이 아니다
+    st2 = mod.Stats()
+    st2.days, st2.prev = {}, {}
+    two = lambda k: [{"id": "x", "project": "p", "kind": "working"}, {"id": "y", "project": "p", "kind": k}]   # noqa: E731
+    st2.observe("mac", two("working"), now=2000.0)
+    st2.observe("mac", two("working"), now=2010.0)
+    st2.observe("mac", [{"id": "x", "project": "p", "kind": "waiting"}], now=2020.0)
+    st2.observe("mac", [{"id": "x", "project": "p", "kind": "waiting"}], now=2030.0)
+    assert st2.summary(1, now=2030.0)["days"][-1]["projects"]["p"]["active"] == 10.0
     st.flush(now=1205.0)
     assert mod.Stats().days == st.days                                      # 파일에서 다시 읽어 이어 센다
     r = c.get("/api/stats?days=3").json()

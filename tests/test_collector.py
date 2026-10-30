@@ -40,7 +40,8 @@ def notification(tid, status="completed"):
 def write(path, *recs, mode="a"):
     with open(path, mode, encoding="utf-8", newline="\n") as f:
         for r in recs:
-            f.write((r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)) + "\n")
+            # Claude Code 처럼 빈칸 없는 JSON 으로 쓴다(수집기가 큰 기록 앞부분을 이 꼴로 찾는다)
+            f.write((r if isinstance(r, str) else json.dumps(r, ensure_ascii=False, separators=(",", ":"))) + "\n")
 
 
 @pytest.fixture
@@ -1296,3 +1297,22 @@ def test_quick_first_sends_skeleton_then_full(collector, home):
     first = col.collect()
     assert len(first) == 1 and first[0]["kind"] == "thinking" and first[0]["tools"] == 0 and "timeline" not in first[0]
     assert "timeline" in col.collect()[0]                     # 둘째 회차부터 기록을 읽어 다 채운다
+
+
+def test_long_transcript_keeps_title_todos_mode_from_skipped_head(collector, home, monkeypatch):
+    """끝부분만 읽는 큰 기록이어도 앞부분의 제목·할 일·권한 모드·압축 횟수는 남는다."""
+    monkeypatch.setattr(collector, "FIRST_READ_BYTES", 4000)
+    head = [
+        {"type": "ai-title", "aiTitle": "긴 작업"},
+        {"type": "permission-mode", "permissionMode": "acceptEdits"},
+        {"type": "assistant", "timestamp": "2026-10-01T00:00:00Z", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tu1", "name": "TaskCreate", "input": {"subject": "첫 단계"}}]}},
+        {"type": "user", "timestamp": "2026-10-01T00:00:01Z", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "Task #1 created successfully"}]}},
+        {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-01T00:00:02Z", "compactMetadata": {"preTokens": 900000, "postTokens": 20000}},
+    ]
+    filler = [{"type": "user", "timestamp": "2026-10-01T00:01:00Z", "message": {"role": "user", "content": "x" * 300}} for _ in range(40)]
+    make_session(home, head + filler, status="idle")
+    a = collect_one(collector)
+    assert a["title"] == "긴 작업" and a["mode"] == "acceptEdits" and a["compacts"] == 1
+    assert a["todos"] == [{"s": "첫 단계", "st": "pending"}]

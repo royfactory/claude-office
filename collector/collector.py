@@ -472,6 +472,7 @@ class Transcript:
             self.ino = st.st_ino
             if st.st_size > FIRST_READ_BYTES:
                 self.offset = st.st_size - FIRST_READ_BYTES
+                self._scan_head(self.offset, detail)
         if st.st_size == self.offset:
             if self.last is None:
                 self.last = st.st_mtime
@@ -488,6 +489,64 @@ class Transcript:
         if self.last is None:
             self.last = st.st_mtime
         return self
+
+    # 끝부분만 읽는 큰 기록에서도 놓치면 안 되는 줄: 제목·권한 모드·압축, 할 일 도구와 그 결과(번호). JSON 은 이 줄들만 푼다
+    # JSON 구조에만 나오는 꼴로 찾는다(대화 속 인용은 따옴표가 \" 로 바뀌어 걸리지 않는다)
+    _HEAD_KEYS = (b'"type":"ai-title"', b'"type":"custom-title"', b'"type":"permission-mode"', b'"subtype":"compact_boundary"',
+                  b'"name":"TaskCreate"', b'"name":"TaskUpdate"', b'"name":"TodoWrite"', b'"content":"Task #', b'"text":"Task #')
+
+    def _scan_head(self, end, detail):
+        """건너뛰는 앞부분(0 ~ end)을 4MB 씩 훑어 _HEAD_KEYS 가 든 줄만 처리한다. 도구 횟수·타임라인은 건드리지 않는다."""
+        try:
+            with open(self.path, "rb") as f:
+                rest, pos = b"", 0
+                while pos < end:
+                    chunk = f.read(min(4 << 20, end - pos))
+                    if not chunk:
+                        break
+                    pos += len(chunk)
+                    buf = rest + chunk
+                    cut = buf.rfind(b"\n") + 1          # 덜 끝난 마지막 줄은 다음 조각으로
+                    buf, rest = buf[:cut], buf[cut:]
+                    # 줄을 다 나누지 않고 열쇠말이 든 곳만 찾아 그 줄을 뽑는다(수백 MB 기록에서 몇 배 빠르다)
+                    starts = set()
+                    for k in self._HEAD_KEYS:
+                        i = buf.find(k)
+                        while i >= 0:
+                            st0 = buf.rfind(b"\n", 0, i) + 1
+                            starts.add(st0)
+                            nxt = buf.find(b"\n", i)
+                            i = buf.find(k, nxt if nxt >= 0 else len(buf))
+                    for st0 in sorted(starts):            # 기록 순서대로(할 일 만들기 → 그 결과)
+                        e = buf.find(b"\n", st0)
+                        e = e if e >= 0 else len(buf)
+                        if e - st0 <= 65536:              # 찾는 줄은 모두 짧다. 긴 줄은 그 말을 인용한 대화·출력이라 건너뛴다
+                            self._feed_head(buf[st0:e], detail)
+        except OSError:
+            pass
+
+    def _feed_head(self, raw, detail):
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            return
+        t = rec.get("type")
+        if t in ("permission-mode", "ai-title", "custom-title") or (t == "system" and rec.get("subtype") == "compact_boundary"):
+            self._feed(raw, detail)
+            return
+        msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+        for c in msg.get("content") if isinstance(msg.get("content"), list) else []:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "tool_use" and c.get("name") in ("TaskCreate", "TaskUpdate", "TodoWrite"):
+                self._task_tool(c["name"], c.get("input") or {}, c.get("id"), detail)
+            elif c.get("type") == "tool_result" and c.get("tool_use_id") in self.task_create:
+                text = c.get("content")
+                if not isinstance(text, str):
+                    text = " ".join(x.get("text", "") for x in text if isinstance(x, dict)) if isinstance(text, list) else ""
+                m = re.search(r"Task #(\d+)", text)
+                if m:
+                    self.tasks[m.group(1)] = {"s": self.task_create.pop(c["tool_use_id"]), "st": "pending"}
 
     def _feed(self, raw, detail):
         try:
