@@ -214,6 +214,7 @@ I18N.add({
     "In System Settings → Privacy & Security → Full Disk Access, click +, press ⌘⇧G and open the path below, add it, then restart the collector with sh collector/install.sh (needed to read git status of repos inside Desktop or Documents)",
   "같은 이름의 다른 컴퓨터가 보내려 했습니다. 한쪽 .env 의 CLAUDE_OFFICE_HOST 를 바꾸세요": "Another computer tried to report under the same name. Change CLAUDE_OFFICE_HOST in one .env",
   "Claude 계정": "Claude account",
+  "규칙이 있는 설정 폴더 {a}/{b}곳 (CLAUDE.md)": "Config folders with the rule: {a}/{b} (CLAUDE.md)",
   // 컴퓨터 자원 게이지
   "메모리": "Memory", "디스크": "Disk", "잴 수 없음": "not available on this computer", "전체 {x}": "{x} total",
 });

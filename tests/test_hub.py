@@ -1103,8 +1103,8 @@ def test_meta_roots_detail_is_sanitized(hub):
         [{"label": f"~/p{i}"} for i in range(20)]
     c.post("/api/ingest", json={"host": "m", "agents": [], "meta": {"setup": {"rootsDetail": rows}}})
     rd = c.get("/api/state").json()["hosts"][0]["setup"]["rootsDetail"]
-    assert rd[0] == {"label": "~/.claude", "hooks": True, "approveHook": False, "statusline": True, "todoTools": False}
-    assert len(rd) == 9   # 앞 10개 중 dict 만
+    assert rd[0] == {"label": "~/.claude", "hooks": True, "approveHook": False, "statusline": True, "todoTools": False, "rule": False}
+    assert len(rd) == 19   # 앞 20개 중 dict 만
 
 
 def test_meta_setup_keeps_repo_and_python(hub):

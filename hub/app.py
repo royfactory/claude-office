@@ -619,7 +619,7 @@ def _host_of(body: dict) -> str:
     return host
 
 
-SETUP_INTS = ("roots", "hooks", "approveHook", "statusline", "todoTools", "gitDenied")
+SETUP_INTS = ("roots", "hooks", "approveHook", "statusline", "todoTools", "gitDenied", "rules")
 SETUP_BOOLS = ("messagesEnv", "approveEnv")
 
 
@@ -640,8 +640,8 @@ def _meta_of(body: dict) -> dict:
         rows = su.get("rootsDetail")
         if isinstance(rows, list):
             clean["rootsDetail"] = [
-                {"label": str(r.get("label", ""))[:160], **{k: bool(r.get(k)) for k in ("hooks", "approveHook", "statusline", "todoTools")}}
-                for r in rows[:10] if isinstance(r, dict)]
+                {"label": str(r.get("label", ""))[:160], **{k: bool(r.get(k)) for k in ("hooks", "approveHook", "statusline", "todoTools", "rule")}}
+                for r in rows[:20] if isinstance(r, dict)]
         out["setup"] = clean
     sy = meta.get("sys")
     if isinstance(sy, dict):   # 그 컴퓨터의 CPU·GPU·메모리·디스크 사용률(0~100, 잴 수 없으면 None)과 메모리·디스크 크기

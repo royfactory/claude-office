@@ -1143,26 +1143,29 @@ def system_stats():
     return _sys["val"]
 
 
+def rule_in(root):
+    """그 설정 폴더의 CLAUDE.md(전역 지침)에 할 일 체크리스트 규칙이 있는지. '@경로' 로 끌어오는 파일은 한 단계만 따라간다
+    (Orca 프로필이 '@~/.claude/CLAUDE.md' 로 이렇게 한다)."""
+    try:
+        with open(os.path.join(root, "CLAUDE.md"), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return False
+    for inc in re.findall(r"(?m)^@(\S+)", text):
+        try:
+            with open(os.path.expanduser(inc), encoding="utf-8") as f:
+                text += "\n" + f.read()
+        except OSError:
+            pass
+    return "TaskCreate" in text or "TodoWrite" in text
+
+
 def checklist_rule_installed():
+    """모든 설정 폴더에 규칙이 있으면 True(폴더 하나라도 빠지면 그 폴더의 세션은 목록을 잘 안 만든다)."""
     if time.time() - _rule_cache["at"] < 60:
         return _rule_cache["ok"]
-    ok = False
-    for root in claude_roots():
-        for path in [os.path.join(root, "CLAUDE.md")]:
-            try:
-                with open(path, encoding="utf-8") as f:
-                    text = f.read()
-            except OSError:
-                continue
-            # '@~/.claude/CLAUDE.md' 처럼 다른 파일을 끌어오는 줄은 한 단계만 따라간다(Orca 프로필이 이렇게 한다)
-            for inc in re.findall(r"(?m)^@(\S+)", text):
-                try:
-                    with open(os.path.expanduser(inc), encoding="utf-8") as f:
-                        text += "\n" + f.read()
-                except OSError:
-                    pass
-            if "TaskCreate" in text or "TodoWrite" in text:
-                ok = True
+    roots = claude_roots()
+    ok = bool(roots) and all(rule_in(r) for r in roots)
     _rule_cache.update(at=time.time(), ok=ok)
     return ok
 
@@ -1177,13 +1180,14 @@ def setup_status():
     if _setup_cache["val"] is not None and time.time() - _setup_cache["at"] < 60:
         return {**_setup_cache["val"], "gitDenied": len(_git_denied)}
     roots = claude_roots()
-    hooks = approve = status = todo = 0
+    hooks = approve = status = todo = rules = 0
     home = os.path.expanduser("~")
     detail = []
     for root in roots:
-        # 화면에 그 폴더용 명령을 보이려고 홈 아래 경로만 '~/…' 로 보낸다(사용자 이름 없이)
-        label = "~" + root[len(home):].replace("\\", "/") if root.startswith(home) else os.path.basename(root)
-        row = {"label": label[:160], "hooks": False, "approveHook": False, "statusline": False, "todoTools": False}
+        # 화면에 그 폴더용 명령을 보이려고 홈 아래 경로는 '~/…' 로(사용자 이름 없이), 홈 밖은 경로 그대로 보낸다
+        label = "~" + root[len(home):].replace("\\", "/") if root.startswith(home) else root.replace("\\", "/")
+        row = {"label": label[:160], "hooks": False, "approveHook": False, "statusline": False, "todoTools": False, "rule": rule_in(root)}
+        rules += row["rule"]
         detail.append(row)
         try:
             with open(os.path.join(root, "settings.json"), encoding="utf-8-sig") as f:
@@ -1218,7 +1222,7 @@ def setup_status():
         exe = alt if os.path.exists(alt) else exe
     py = ("~" + exe[len(home):]) if exe.startswith(home) else exe
     val = {"repo": repo[:200], "python": py.replace("\\", "/")[:200], "os": "windows" if WINDOWS else ("mac" if sys.platform == "darwin" else "linux"),
-           "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rootsDetail": detail[:10],
+           "roots": len(roots), "hooks": hooks, "approveHook": approve, "statusline": status, "todoTools": todo, "rules": rules, "rootsDetail": detail[:20],
            "messagesEnv": MESSAGES, "approveEnv": APPROVE}
     # 맥의 명령줄 도구 파이썬은 실제로 …/Python3.framework/…/Resources/Python.app 이 권한을 받는다(전체 디스크 접근 권한에 더할 것)
     app = os.path.join(sys.base_prefix, "Resources", "Python.app") if sys.platform == "darwin" else ""

@@ -1676,7 +1676,12 @@ function setupSteps(h) {
         fix: t("시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 + 를 누르고 ⌘⇧G 로 아래 경로를 열어 더한 뒤, sh collector/install.sh 로 수집기를 다시 띄운다(데스크톱·문서 폴더 안 저장소의 git 상태를 읽으려면 필요)"),
         copy: su.pythonApp || su.python }] : [])] },
     { t: t("할 일 체크리스트 규칙"), must: true, items: [
-      { ok: h.checklistRule === true, label: t("Claude 전역 지침(CLAUDE.md)에 규칙"), fix: t("claude-office 폴더에서 실행 — CLAUDE.md 끝에 규칙을 덧붙인다(이미 있으면 그대로, 백업을 남김). 할 일 도구 켜기도 함께"), copy: inRepo(rowCmd(rows.find(r => r.label === "~/.claude") || { label: "~/.claude" }, ["--rule", "--todo-tools"])) },
+      // 설정 폴더마다 본다(예전 수집기는 rules 가 없어 전체 한 값으로). 빠진 폴더마다 명령 한 줄
+      { ok: su && su.rules != null ? frac(su.rules, su.roots) : h.checklistRule === true,
+        label: su && su.rules != null ? t("규칙이 있는 설정 폴더 {a}/{b}곳 (CLAUDE.md)", { a: su.rules, b: su.roots }) : t("Claude 전역 지침(CLAUDE.md)에 규칙"),
+        fix: t("claude-office 폴더에서 실행 — CLAUDE.md 끝에 규칙을 덧붙인다(이미 있으면 그대로, 백업을 남김). 할 일 도구 켜기도 함께"),
+        copy: su && su.rules != null && rows.some(r => "rule" in r) ? cmd("rule", "--rule", "--todo-tools")
+          : inRepo(rowCmd(rows.find(r => r.label === "~/.claude") || { label: "~/.claude" }, ["--rule", "--todo-tools"])) },
       { ok: frac(su && su.todoTools, su && su.roots), label: t("할 일 도구를 켠 설정 폴더 {a}/{b}곳 (새 모델은 기본으로 꺼져 있음)", { a: su ? (su.todoTools ?? "?") : "?", b: su ? su.roots : "?" }), fix: t("claude-office 저장소 폴더에서 실행 — settings.json 의 env 에 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 을 넣는다(승인 대기 감지 훅도 함께 들어감). 새 세션부터"), copy: cmd("todoTools", "--rule", "--todo-tools") }],
       note: t("지금 할 일 목록이 있는 세션 {a}/{b}개 · 둘 다 새로 시작한 세션부터 적용", { a: mine.filter(a => a.todos && a.todos.length).length, b: mine.length }) },
     { t: t("승인 대기 감지(훅)"), items: [
