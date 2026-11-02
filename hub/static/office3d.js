@@ -1660,6 +1660,12 @@ function ruleHint(host) {
     <button class="copy" data-goto-tab="legend"><i class="fa-solid fa-list-check"></i> ${t("설정 점검 열기")}</button></div>`;
 }
 function hostInfo(host) { return (state && state.hosts.find(h => h.host === host)) || {}; }
+// 세션 상세의 '다시 열기': claude --resume 명령(수집기가 작업 폴더·설정 폴더를 붙여 보낸다)을 복사
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-resume]"); if (!b) return;
+  const html = b.innerHTML;
+  copyText(b.dataset.resume).then(() => { b.innerHTML = '<i class="fa-solid fa-check"></i> ' + t("복사했습니다"); setTimeout(() => { b.innerHTML = html; }, 1800); }, () => prompt(t("복사하지 못했습니다. 직접 복사하세요"), b.dataset.resume));
+});
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
   const ta = document.createElement("textarea");   // http 주소(보안 컨텍스트 아님)에서는 예전 방식으로
@@ -1812,7 +1818,8 @@ function todoList(todos) {
 function detailCard(a, ch, now) {
   const recent = (a.recent || []).map(r => `<li><span class="t">${esc(r.tool)}</span><span class="g">${esc(r.target)}</span><span class="a">${r.ts ? agoSpan(r.ts) : ""}</span></li>`).join("");
   return `<div class="detail"><div class="dh"><span class="av big" style="--c:${ch ? ch.color : "#64748b"}">${ch ? avatarSmall(ch, stateOf(a)) : ""}</span>
-    <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? Office.label(ch.name) : "")} · PID ${esc(a.pid)}</small></span></div>
+    <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? Office.label(ch.name) : "")} · PID ${esc(a.pid)}</small></span>
+    ${a.resume ? `<button class="copy resume" data-resume="${esc(a.resume)}" title="${esc(t("이 세션을 다시 여는 명령을 복사합니다(터미널에 붙여 넣기)"))}\n${esc(a.resume)}"><i class="fa-solid fa-terminal"></i> ${t("다시 열기")}</button>` : ""}</div>
     ${sessionMeta(a)}
     ${a.kind === "approval" ? `<div class="approval-note"><i class="fa-solid fa-hand"></i> ${t("권한 승인을 기다리는 중")}${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, t("째"))}<small>${t("그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.")}</small>${approvalBox(a)}</div>` : ""}
     ${clashes().has(a.id) ? `<div class="clash-note"><i class="fa-solid fa-code-merge"></i>${t("다른 세션도 같은 파일을 방금 고쳤습니다 — 서로 덮어쓰지 않게 확인하세요.")}<small>${clashText(clashes().get(a.id))}</small></div>` : ""}

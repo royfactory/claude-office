@@ -270,6 +270,25 @@ def profile_of(root):
     return "Orca " + m.group(1)[:8] if m else os.path.basename(r)[:24]
 
 
+def resume_cmd(sid, cwd, root, detail="basic"):
+    """그 세션을 다시 여는 명령(화면의 복사 단추). 작업 폴더로 가서, 기본이 아닌 설정 폴더면 CLAUDE_CONFIG_DIR 도 붙인다.
+
+    --detail none 이면 폴더 경로를 빼고 'claude --resume <id>' 만."""
+    if not sid:
+        return ""
+    base = f"claude --resume {sid}"
+    if detail == "none" or not cwd:
+        return base
+    default = os.path.abspath(root) == os.path.abspath(os.path.expanduser("~/.claude"))
+    if WINDOWS:   # PowerShell
+        q = lambda x: "'" + x.replace("'", "''") + "'"   # noqa: E731
+        env = "" if default else f"$env:CLAUDE_CONFIG_DIR={q(root)}; "
+        return f"cd {q(cwd)}; {env}{base}"
+    import shlex
+    env = "" if default else f"CLAUDE_CONFIG_DIR={shlex.quote(root)} "
+    return f"cd {shlex.quote(cwd)} && {env}{base}"
+
+
 _account_cache = {}   # 설정 폴더 → (파일 mtime, 값)
 
 
@@ -311,6 +330,9 @@ def claude_roots():
             if os.path.isdir(os.path.join(r, "sessions")) and r not in roots:
                 roots.append(r)
     return roots
+# 이보다 큰 기록은 처음 열 때 따로 읽는다(상시 실행만). 앞부분 훑기가 수백 MB 를 읽어, 메모리가 빠듯해 캐시가 없으면 몇 분씩
+# 다른 세션 갱신까지 멈췄다(473MB 기록 하나로 첫 전체 전송이 3분). 다 읽을 때까지 그 세션은 뼈대처럼 보인다
+BIG_TRANSCRIPT_BYTES = 24 * 1024 * 1024
 FIRST_READ_BYTES = 8 * 1024 * 1024   # 처음 열 때 이보다 크면 끝부분만 읽는다(도구 횟수는 그만큼 근사).
 # 32MB 였을 때는 큰 기록이 여럿이면 첫 수집이 수십 초 걸려(배경 우선순위) 그동안 화면이 비었다
 SAY_CHARS = 80
@@ -802,8 +824,12 @@ class Transcript:
 
 
 class Collector:
-    def __init__(self, detail, quick_first=False):
+    def __init__(self, detail, quick_first=False, bg_big=False):
         self.detail = detail
+        self.bg_big = bg_big    # 아주 큰 기록의 첫 읽기를 따로 하는가(상시 실행)
+        self.loading = set()    # 따로 읽는 중인 기록
+        self.loaded = {}        # 따로 다 읽은 기록 path -> Transcript(다음 회차에 넘겨받는다)
+        self._load_lock = threading.Lock()   # 큰 기록은 한 번에 하나씩 읽는다
         self.speech = True      # 허브 설정 'speech' 를 따른다
         self.transcripts = {}   # path -> Transcript
         self.paths = {}         # sessionId -> jsonl path
@@ -815,9 +841,34 @@ class Collector:
     def transcript(self, path):
         self.used.add(path)
         t = self.transcripts.get(path)
+        if t is None and path in self.loaded:   # 따로 다 읽었다 — 이제부터 이 스레드가 이어 읽는다
+            t = self.transcripts[path] = self.loaded.pop(path)
+            self.loading.discard(path)
         if t is None:
+            if self.bg_big and self._big(path):
+                if path not in self.loading:
+                    self.loading.add(path)
+                    threading.Thread(target=self._load, args=(path,), name="big-transcript", daemon=True).start()
+                return Transcript(path)   # 읽는 동안은 빈 기록(세션 파일의 상태만 보인다)
             t = self.transcripts[path] = Transcript(path)
         return t.read(self.detail)
+
+    @staticmethod
+    def _big(path):
+        try:
+            return os.path.getsize(path) > BIG_TRANSCRIPT_BYTES
+        except OSError:
+            return False
+
+    def _load(self, path):
+        with self._load_lock:
+            try:
+                t = Transcript(path).read(self.detail)
+            except Exception as e:   # 읽다 실패하면 다음 회차에 다시(빈 채로 두지 않게)
+                print(time.strftime("%Y-%m-%d %H:%M:%S"), "큰 기록 읽기 오류:", repr(e), flush=True)
+                self.loading.discard(path)
+                return
+            self.loaded[path] = t
 
     def find_jsonl(self, sid, cwd, root):
         p = self.paths.get(sid)
@@ -901,6 +952,9 @@ class Collector:
                 continue
             seen.add(sid)
             status = s.get("status", "idle")
+            sock = s.get("messagingSocketPath") or ""
+            if sock:
+                socks[sid] = sock
             if self.first:
                 project, worktree = project_of(cwd)
                 agents.append({"id": sid, "pid": s.get("pid"), "name": s.get("name") or os.path.basename(cwd), "title": "",
@@ -934,9 +988,6 @@ class Collector:
             usage = tr.usage()
             if sl and sl.get("ctxSize") and usage.get("ctx"):   # 상태 표시줄이 알려 준 창 크기가 짐작보다 정확하다
                 usage["ctx"] = dict(usage["ctx"], max=sl["ctxSize"])
-            sock = s.get("messagingSocketPath") or ""
-            if sock:
-                socks[sid] = sock
             agents.append({
                 "id": sid,
                 "pid": s.get("pid"),
@@ -962,6 +1013,7 @@ class Collector:
                 "git": git_state(cwd),
                 "mem": proc_mem(s.get("pid")),
                 "edits": recent_edits(trs, now, self.detail),
+                "resume": resume_cmd(sid, cwd, root, self.detail),
                 **usage,
                 "limits": dict(sl["limits"], ts=sl["ts"]) if sl and sl.get("limits") else None,
                 "timeline": tr.timeline(now),
@@ -974,6 +1026,10 @@ class Collector:
         for p in list(self.transcripts):  # 끝난 세션·서브에이전트는 잊는다
             if p not in self.used:
                 del self.transcripts[p]
+        for p in list(self.loaded):
+            if p not in self.used:
+                self.loaded.pop(p, None)
+                self.loading.discard(p)
         agents.sort(key=lambda a: a["startedAt"])
         self.first = False
         self.sockets = socks
@@ -1507,7 +1563,7 @@ def main():
     elif sys.stdout is None:   # 창 없는 pythonw 로 떴는데 --log 가 없으면 출력은 버린다
         sys.stdout = sys.stderr = open(os.devnull, "w")
 
-    col = Collector(args.detail, quick_first=not args.dump)   # 상시 실행은 첫 회차를 뼈대만으로 곧장 보낸다
+    col = Collector(args.detail, quick_first=not args.dump, bg_big=not args.dump)   # 상시 실행은 첫 회차를 뼈대만으로 곧장 보낸다
     if args.dump:
         json.dump(col.collect(), sys.stdout, ensure_ascii=False, indent=1)
         print()
@@ -1520,14 +1576,13 @@ def main():
     except (ValueError, OSError, AttributeError):
         pass
     try:
+        outbox = None
         if MESSAGES and not WINDOWS:
-            # 소켓 표를 먼저 채운다 — 비어 있으면 재시작 직후 허브에 쌓여 있던 메시지가 '수신함을 찾지 못했다' 로 실패한다
-            try:
-                col.collect()
-            except Exception as e:
-                print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집 오류:", repr(e), flush=True)
-            threading.Thread(target=outbox_loop, args=(args.hub, args.host, col), name="outbox", daemon=True).start()
-        run(args, col)
+            # 메시지 받기는 첫 수집(뼈대도 소켓 표는 채운다) 뒤에 시작한다 — 표가 비어 있으면 재시작 직후 허브에 쌓여 있던 메시지가
+            # '수신함을 찾지 못했다' 로 실패한다. 예전처럼 여기서 미리 한 번 모으면 뼈대 회차를 써 버려 첫 전송이 전체 수집(수 분)을 기다렸다
+            def outbox():
+                threading.Thread(target=outbox_loop, args=(args.hub, args.host, col), name="outbox", daemon=True).start()
+        run(args, col, outbox)
     except (KeyboardInterrupt, SystemExit):
         say_bye(args.hub, args.host)
         print(time.strftime("%Y-%m-%d %H:%M:%S"), "수집기 종료", flush=True)
@@ -1592,7 +1647,8 @@ class Sender:
         return kind
 
 
-def run(args, col):
+def run(args, col, after_first=None):
+    """계속 모아 보낸다. after_first: 첫 수집이 끝나면 한 번 부를 것(메시지 받기 시작)."""
     failing, cfg_at, pruned_at = False, 0.0, 0.0
     sender = Sender(args.hub, args.host)
     while True:
@@ -1605,6 +1661,9 @@ def run(args, col):
                 except Exception:
                     col.speech = False
             agents = col.collect()
+            if after_first:
+                after_first()
+                after_first = None
             if time.time() - pruned_at > 3600:   # 한 시간에 한 번, 끝난 세션이 남긴 훅·상태 표시줄 파일을 치운다
                 pruned_at = time.time()
                 prune_old_files({a["id"] for a in agents})

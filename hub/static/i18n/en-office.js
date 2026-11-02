@@ -54,6 +54,8 @@ I18N.add({
   "「안내」 탭 설정 점검 2단계의 명령 한 줄로 넣을 수 있습니다(직접 고치지 않아도 됩니다).":
     "Add it with the one-line command in step 2 of the setup checklist on the Guide tab (no manual editing needed).",
   "설정 점검 열기": "Open setup checklist",
+  "다시 열기": "Resume", "이 세션을 다시 여는 명령을 복사합니다(터미널에 붙여 넣기)": "Copy the command that reopens this session (paste it in a terminal)",
+  "복사하지 못했습니다. 직접 복사하세요": "Couldn't copy. Copy it yourself",
   "복사했습니다": "Copied", "문장 복사": "Copy text",
   // 설정 점검표
   "완료": "Done", "일부": "Partly", "아직": "Not yet", "해당 없음": "N/A",

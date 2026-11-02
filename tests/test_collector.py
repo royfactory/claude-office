@@ -5,6 +5,7 @@ import re
 import socket
 import sys
 import tempfile
+import threading
 import time
 from unittest import mock
 
@@ -843,6 +844,7 @@ def main_env(collector, monkeypatch):
 
     class FakeThreading:
         Thread = FakeThread
+        Lock = threading.Lock
 
     monkeypatch.setattr(collector, "threading", FakeThreading)
     monkeypatch.setattr(collector, "say_bye", lambda hub, host: rec["bye"].append((hub, host)))
@@ -854,7 +856,7 @@ def main_env(collector, monkeypatch):
 
 @pytest.mark.parametrize("exc", [SystemExit(143), KeyboardInterrupt()])
 def test_main_says_bye_on_exit(collector, monkeypatch, main_env, capsys, exc):
-    def run(args, col):
+    def run(args, col, after_first=None):
         raise exc
     monkeypatch.setattr(collector, "run", run)
     collector.main()
@@ -865,7 +867,7 @@ def test_main_says_bye_on_exit(collector, monkeypatch, main_env, capsys, exc):
 def test_main_installs_sigterm_handler(collector, monkeypatch, main_env):
     import signal
     seen = []
-    monkeypatch.setattr(collector, "run", lambda args, col: seen.append(signal.getsignal(signal.SIGTERM)))
+    monkeypatch.setattr(collector, "run", lambda args, col, after_first=None: seen.append(signal.getsignal(signal.SIGTERM)))
     collector.main()
     assert seen == [collector._exit_on_signal]
 
@@ -874,7 +876,7 @@ def test_main_installs_sigterm_handler(collector, monkeypatch, main_env):
 def test_main_real_sigterm_sends_bye(collector, monkeypatch, main_env):
     import signal
 
-    def run(args, col):
+    def run(args, col, after_first=None):
         os.kill(os.getpid(), signal.SIGTERM)
         for _ in range(100):          # 신호 처리기가 SystemExit 을 던질 때까지
             time.sleep(0.01)
@@ -887,7 +889,7 @@ def test_main_real_sigterm_sends_bye(collector, monkeypatch, main_env):
 def test_main_starts_outbox_thread_when_messages_on(collector, monkeypatch, main_env):
     monkeypatch.setattr(collector, "MESSAGES", True)
     monkeypatch.setattr(collector, "WINDOWS", False)
-    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    monkeypatch.setattr(collector, "run", lambda args, col, after_first=None: after_first())   # run 이 첫 수집 뒤에 부른다
     collector.main()
     (t,) = main_env["threads"]
     assert t["target"] is collector.outbox_loop and t["daemon"] is True and t["name"] == "outbox"
@@ -898,7 +900,7 @@ def test_main_starts_outbox_thread_when_messages_on(collector, monkeypatch, main
 def test_main_no_outbox_thread_on_windows_or_off(collector, monkeypatch, main_env, messages, windows):
     monkeypatch.setattr(collector, "MESSAGES", messages)
     monkeypatch.setattr(collector, "WINDOWS", windows)    # os.name == "nt" 일 때 import 시점에 정해지는 값
-    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    monkeypatch.setattr(collector, "run", lambda args, col, after_first=None: after_first and after_first())
     collector.main()
     assert main_env["threads"] == [] and main_env["bye"] == []   # 정상 반환이면 bye 도 없다
 
@@ -914,37 +916,21 @@ def test_main_on_nt_does_not_start_outbox_thread(collector, monkeypatch, main_en
         sys.modules.pop("office_collector_nt", None)
     assert nt.WINDOWS is True and nt.MESSAGES is True
     started = []
-    monkeypatch.setattr(nt, "threading", type("T", (), {"Thread": lambda *a, **k: started.append(k)}))
-    monkeypatch.setattr(nt, "run", lambda args, col: None)
+    monkeypatch.setattr(nt, "threading", type("T", (), {"Thread": lambda *a, **k: started.append(k), "Lock": threading.Lock}))
+    monkeypatch.setattr(nt, "run", lambda args, col, after_first=None: after_first and after_first())
     monkeypatch.setattr(nt.signal, "signal", lambda *a: None)   # 이 시험에서는 신호 처리기를 바꾸지 않는다
     nt.main()
     assert started == []
 
 
-def test_main_collects_once_before_outbox_thread(collector, monkeypatch, main_env):
+def test_main_does_not_collect_before_run(collector, monkeypatch, main_env):
+    """시작할 때 미리 모으지 않는다 — 첫 회차(뼈대)를 run 이 곧장 보내야 재시작 직후 화면이 오래 비지 않는다."""
     monkeypatch.setattr(collector, "MESSAGES", True)
     monkeypatch.setattr(collector, "WINDOWS", False)
-    real_collect = collector.Collector.collect
-
-    def collect(self):
-        main_env["order"].append("collect")
-        return real_collect(self)
-    monkeypatch.setattr(collector.Collector, "collect", collect)
-    monkeypatch.setattr(collector, "run", lambda args, col: None)
+    monkeypatch.setattr(collector.Collector, "collect", lambda self: main_env["order"].append("collect") or [])
+    monkeypatch.setattr(collector, "run", lambda args, col, after_first=None: main_env["order"].append("run"))
     collector.main()
-    assert main_env["order"] == ["collect", "thread"]
-
-
-def test_main_outbox_thread_starts_even_if_first_collect_fails(collector, monkeypatch, main_env, capsys):
-    monkeypatch.setattr(collector, "MESSAGES", True)
-    monkeypatch.setattr(collector, "WINDOWS", False)
-
-    def boom(self):
-        raise ValueError("이상한 세션 파일")
-    monkeypatch.setattr(collector.Collector, "collect", boom)
-    monkeypatch.setattr(collector, "run", lambda args, col: None)
-    collector.main()
-    assert main_env["order"] == ["thread"] and "수집 오류" in capsys.readouterr().out
+    assert main_env["order"] == ["run"] and main_env["threads"] == []   # 스레드는 run 이 첫 수집 뒤에 띄운다
 
 
 # ---------- 모델·컨텍스트·토큰·바꾼 줄 ----------
@@ -1356,3 +1342,64 @@ def test_recent_edits_hash_paths_and_skip_old(collector, home):
     e = collect_one(collector)["edits"]
     assert [x["f"] for x in e] == ["app.py"] and len(e[0]["k"]) == 12 and "/w" not in json.dumps(e)   # 읽기·오래된 것 빼고, 경로 원문은 없이
     assert collect_one(collector, "none")["edits"][0]["f"] == ""                                     # --detail none: 해시만
+
+
+def test_resume_cmd_quotes_and_config_dir(collector, home):
+    sid = "abc-123"
+    default = os.path.join(str(home), ".claude")
+    if sys.platform == "win32":
+        assert collector.resume_cmd(sid, "C:\\w\\it's", default) == "cd 'C:\\w\\it''s'; claude --resume abc-123"
+    else:
+        assert collector.resume_cmd(sid, "/w/my proj", default) == "cd '/w/my proj' && claude --resume abc-123"
+        assert collector.resume_cmd(sid, "/w/p", "/o/prof") == "cd /w/p && CLAUDE_CONFIG_DIR=/o/prof claude --resume abc-123"
+    assert collector.resume_cmd(sid, "/w/p", "/o/prof", "none") == "claude --resume abc-123"     # 경로를 빼고
+    assert collector.resume_cmd("", "/w/p", default) == ""
+
+
+def test_skeleton_round_fills_socket_table(collector, home):
+    """메시지 받기를 위해 첫 수집(뼈대)도 소켓 표를 채운다 — 그래서 시작할 때 미리 한 번 모으지 않아도 된다."""
+    make_session(home, [], status="busy", messagingSocketPath="/tmp/cc-socks/x.sock")
+    col = collector.Collector("basic", quick_first=True)
+    col.collect()
+    assert col.sockets == {SID: "/tmp/cc-socks/x.sock"}
+
+
+def test_run_calls_after_first_once_after_first_collect(collector, monkeypatch):
+    class Stop(BaseException):
+        pass
+    calls, sleeps = [], []
+    col = collector.Collector("basic", quick_first=True)
+    monkeypatch.setattr(col, "collect", lambda: calls.append("collect") or [])
+    monkeypatch.setattr(collector, "hub_speech", lambda hub: True)
+    monkeypatch.setattr(collector, "system_stats", lambda: None)
+    monkeypatch.setattr(collector.Sender, "send", lambda self, a, m, now=None: True)
+
+    def sleep(_):
+        sleeps.append(1)
+        if len(sleeps) >= 2:
+            raise Stop
+    monkeypatch.setattr(collector.time, "sleep", sleep)
+    args = type("A", (), {"hub": "http://hub", "host": "mac", "interval": 1})()
+    with pytest.raises(Stop):
+        collector.run(args, col, lambda: calls.append("after"))
+    assert calls == ["collect", "after", "collect"]
+
+
+def test_big_transcript_loads_in_background_then_fills(collector, home, monkeypatch):
+    """아주 큰 기록은 따로 읽는다 — 읽는 동안 그 세션은 빈 기록(다른 세션 갱신을 막지 않게), 다 읽으면 다음 회차부터 채운다."""
+    monkeypatch.setattr(collector, "BIG_TRANSCRIPT_BYTES", 100)
+    make_session(home, [{"type": "ai-title", "aiTitle": "큰 기록"}, use("t1", "Edit", file_path="/w/app.py"), said("x" * 200)])
+    col = collector.Collector("basic", bg_big=True)
+    gate = col._load_lock
+    gate.acquire()                                   # 따로 읽기를 잠깐 붙잡아 둔다
+    try:
+        a = col.collect()[0]
+        assert a["title"] == "" and col.loading and not col.transcripts
+    finally:
+        gate.release()
+    for _ in range(200):
+        if col.loaded:
+            break
+        time.sleep(0.01)
+    a = col.collect()[0]
+    assert a["title"] == "큰 기록" and a["tools"] == 1 and not col.loading and not col.loaded
