@@ -1122,3 +1122,20 @@ def test_meta_setup_keeps_repo_and_python(hub):
         "os": "windows", "repo": "D:/01_Developer/claude-office", "python": "~/AppData/Local/anaconda3/python.exe", "junk": "x"}}})
     su = c.get("/api/state").json()["hosts"][0]["setup"]
     assert su["repo"] == "D:/01_Developer/claude-office" and su["python"] == "~/AppData/Local/anaconda3/python.exe" and "junk" not in su
+
+
+def test_stale_host_sessions_held_dim_then_dropped(authed):
+    """수집기가 떠남을 알리지 않고 끊기면(멈춤·잠자기) 세션을 몇 분 흐리게 남긴다 — 화면이 통째로 비지 않게."""
+    mod, c = authed
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent()]}, headers=AUTH)
+    h = mod.hub.hosts["mac"]
+    h["receivedAt"] = time.time() - mod.HOST_STALE_SEC - 1
+    s = c.get("/api/state").json()
+    assert s["hosts"][0]["online"] is False
+    assert len(s["agents"]) == 1 and s["agents"][0]["hostStale"] is True
+    assert mod.Hub.state(h, time.time()) == "held"
+    h["receivedAt"] = time.time() - mod.HOST_HOLD_SEC - 1
+    assert c.get("/api/state").json()["agents"] == [] and mod.Hub.state(h, time.time()) == "off"
+    h["receivedAt"] = time.time()
+    s = c.get("/api/state").json()
+    assert "hostStale" not in s["agents"][0] and mod.Hub.state(h, time.time()) == "on"

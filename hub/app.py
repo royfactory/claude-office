@@ -78,7 +78,9 @@ try:
     DEFAULT_LOOKS: dict = json.loads((DEFAULTS / "characters.json").read_text(encoding="utf-8"))
 except (OSError, ValueError):
     DEFAULT_LOOKS = {}
-HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없는 수집기의 세션은 화면에서 뺀다
+HOST_STALE_SEC = 30  # 이 시간 동안 소식이 없으면 그 수집기는 끊긴 것으로 본다
+# 끊긴(떠남을 알리지 않은) 수집기의 세션을 흐리게 남겨 두는 시간. 메모리 압박으로 허브·수집기가 잠깐 멈출 때 화면이 통째로 비지 않게
+HOST_HOLD_SEC = 300
 HOST_FORGET_SEC = 24 * 3600   # 이만큼 소식이 없으면 그 컴퓨터를 아예 잊는다(로비·설정 점검표에서 빠짐)
 MAX_ASSET_BYTES = 2 * 1024 * 1024
 MAX_MESSAGE = 4000
@@ -345,6 +347,13 @@ class Hub:
         # 수집기가 '떠남'을 알렸으면(정상 종료) 바로 끊김, 아니면 마지막 소식 뒤 HOST_STALE_SEC 기준
         return not h.get("offline") and now - h["receivedAt"] < HOST_STALE_SEC
 
+    @classmethod
+    def state(cls, h: dict, now: float) -> str:
+        """on: 살아 있음, held: 소식이 끊겼지만 세션을 흐리게 남겨 둠, off: 떠났거나 너무 오래 끊김."""
+        if cls.online(h, now):
+            return "on"
+        return "held" if not h.get("offline") and now - h["receivedAt"] < HOST_HOLD_SEC else "off"
+
     def messaging_ready(self) -> bool:
         return bool(TOKEN) and bool(self.config.get("messaging"))
 
@@ -357,8 +366,9 @@ class Hub:
             hosts.append({"host": name, "age": round(age, 1), "online": on,
                           "count": len(h["agents"]), **h.get("meta", {}),
                           **({"conflict": True} if now - self.conflicts.get(name, 0) < 120 else {})})
-            if on:
-                agents.extend({**a, "host": name} for a in h["agents"])
+            st = self.state(h, now)
+            if st != "off":
+                agents.extend({**a, "host": name, **({"hostStale": True} if st == "held" else {})} for a in h["agents"])
         msgs = [{k: m[k] for k in ("id", "host", "session", "status", "error", "createdAt", "preview")}
                 for m in self.outbox[-20:]]
         # 기다리는 승인 요청. 명령 미리보기는 토큰이 있어야 따로 받는다(읽기는 누구나 하므로)
@@ -511,7 +521,7 @@ async def _expire_tick(online: dict, flushed: float) -> tuple:
         gone = [h for h, v in hub.hosts.items() if not hub.online(v, now) and now - v["receivedAt"] > HOST_FORGET_SEC]
         for h in gone:
             del hub.hosts[h]
-        cur = {h: hub.online(v, now) for h, v in hub.hosts.items()}
+        cur = {h: hub.state(v, now) for h, v in hub.hosts.items()}
         expired = False
         for m in hub.outbox:   # 수집기가 1분 안에 가져가지 않으면(꺼짐·메시지 받기 꺼짐) 만료
             if m["status"] in ("queued", "sending") and now - m["createdAt"] > OUTBOX_TTL_SEC:

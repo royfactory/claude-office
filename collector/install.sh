@@ -85,7 +85,7 @@ cat > "$PLIST" <<PL
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>Standard</string>   <!-- Background 면 메모리가 빠듯할 때 먼저 멈춰 보내기가 수 분씩 끊겼다 -->
   <key>LowPriorityIO</key><true/>
   <key>StandardOutPath</key><string>$APP_DIR/collector.log</string>
   <key>StandardErrorPath</key><string>$APP_DIR/collector.log</string>

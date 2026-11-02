@@ -1308,6 +1308,9 @@ function apply(instant) {
     }
     ac.item = it;
     if (it.ch) setLook(ac, it.ch, it.st);
+    // 그 컴퓨터의 수집기와 잠깐 끊겼다(허브가 몇 분 남겨 둔다) — 비우지 않고 흐리게
+    const dim = (it.parent || it.a).hostStale ? 0.4 : 1;
+    if (!ac.leaving && (ac.opacity ?? 1) !== dim) setOpacity(ac, dim);
   }
   for (const [key, ac] of actors) {
     if (seen.has(key) || ac.leaving) continue;
@@ -1357,6 +1360,7 @@ function updateMe() {
 
 // ---------- 화면 글자 ----------
 function stateHTML(a, st, now) {
+  if (a.hostStale) return `<i class="fa-solid fa-plug-circle-xmark"></i>${t("연결 끊김 · 다시 이어지길 기다리는 중")}`;
   if (st === "waiting") {
     const n = (a.bg || []).length, b = (a.bg || [])[0];
     return `<i class="fa-solid fa-hourglass-half"></i>${t("백그라운드 기다리는 중")}${n ? ` <small>${t("{n}개", { n })}${b ? " · " + esc(b.target || b.tool) : ""}</small>` : ""}`;
@@ -1384,13 +1388,14 @@ function renderLabels() {
     const it = ac.item; if (!it) continue;
     const lab = ac.lab;
     const say = cfg.speech !== false && it.a.say && (it.st !== "idle" || selected === it.key) ? it.a.say : "";
-    const pillHTML = stateHTML(it.a, it.st, now), pillOff = it.st === "idle" && selected !== it.key;
+    const stale = !!(it.parent || it.a).hostStale;
+    const pillHTML = stateHTML(stale ? { ...it.a, hostStale: true } : it.a, it.st, now), pillOff = it.st === "idle" && selected !== it.key && !stale;
     const title = it.sub ? `${it.a.type}${it.a.description ? " · " + it.a.description : ""}` : (it.a.title || it.a.name);
     const color = it.ch ? it.ch.color : "#64748b";
     // 쉬는 사람은 라운지에 몰려 이름표가 겹친다 — 올리거나 고르거나 크게 확대했을 때만 보인다
     const sel = selected === it.key, quiet = it.st === "idle" && !sel && hovered !== it.key && zoom < 1.8;
     const pct = it.sub ? null : ctxPct(it.a);
-    const sig = [say, pillHTML, it.st, pillOff, title, color, sel, quiet, pct].join("\u0001");
+    const sig = [say, pillHTML, it.st, pillOff, title, color, sel, quiet, pct, stale].join("\u0001");
     if (lab._sig !== sig) {   // 내용이 같으면 손대지 않는다(크기를 다시 재는 일도 없다)
       lab._sig = sig;
       lab.querySelector(".q").textContent = say;
@@ -1408,6 +1413,7 @@ function renderLabels() {
       lab.classList.toggle("sel", sel);
       lab.classList.toggle("idle", it.st === "idle");
       lab.classList.toggle("quiet", quiet);
+      lab.classList.toggle("stale", stale);
       ac.ring.visible = sel;
       lab._dirty = changed = true;
     }

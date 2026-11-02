@@ -75,6 +75,18 @@ def pid_alive(pid):
     return True
 
 
+def _proc(cmd, timeout, env=None):
+    """짧은 명령을 돌려 결과를 받는다(subprocess.run, 출력 모음).
+
+    맥에서는 실행 파일을 절대 경로로, close_fds=False 로 넘겨 fork 대신 posix_spawn 을 쓰게 한다. fork 를 쓰면 자식이
+    exec 하기 전에 'MallocStackLogging: can't turn off …' 를 수집기 로그에 한 줄씩 남겨, 로그가 하루 만에 수십 MB 가 됐다."""
+    import shutil
+    import subprocess
+    exe = cmd[0] if os.path.isabs(cmd[0]) else (shutil.which(cmd[0]) or cmd[0])
+    kw = {"creationflags": 0x08000000} if WINDOWS else {"close_fds": False}   # Windows: 콘솔 창을 띄우지 않는다
+    return subprocess.run([exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL, **kw)
+
+
 _BOOT = {"at": None}
 _PROC_START = {}   # (pid, 세션이 적은 procStart) → (확인한 시각, 같은 프로세스인가)
 
@@ -85,8 +97,7 @@ def boot_time():
         at = 0.0
         try:
             if sys.platform == "darwin":
-                import subprocess
-                m = re.search(r"sec = (\d+)", subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=3).stdout)
+                m = re.search(r"sec = (\d+)", _proc(["sysctl", "-n", "kern.boottime"], 3).stdout)
                 at = float(m.group(1)) if m else 0.0
             elif WINDOWS:
                 import ctypes
@@ -116,10 +127,8 @@ def same_process(s):
     hit = _PROC_START.get(key)
     if hit and now - hit[0] < 600:
         return hit[1]
-    import subprocess
     try:
-        cur = " ".join(subprocess.run(["ps", "-o", "lstart=", "-p", str(int(s["pid"]))], capture_output=True, text=True, timeout=3,
-                                      env={**os.environ, "LC_ALL": "C", "LANG": "C"}).stdout.split())
+        cur = " ".join(_proc(["ps", "-o", "lstart=", "-p", str(int(s["pid"]))], 3, env={**os.environ, "LC_ALL": "C", "LANG": "C"}).stdout.split())
         ok = True   # 못 읽으면 살린다
         if cur:
             import calendar
@@ -991,9 +1000,7 @@ def _git_measure(root):
     import subprocess
     val = None
     try:
-        r = subprocess.run(["git", "-C", root, "status", "--porcelain=v2", "--branch"], capture_output=True, text=True, timeout=10,
-                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"},
-                           creationflags=0x08000000 if WINDOWS else 0)
+        r = _proc(["git", "-C", root, "status", "--porcelain=v2", "--branch"], 10, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"})
         if "Operation not permitted" in (r.stderr or ""):
             _git_denied.add(root)
         else:
@@ -1016,10 +1023,8 @@ _sys = {"val": None, "started": False}
 
 
 def _run(cmd, timeout=4):
-    import subprocess
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           creationflags=0x08000000 if WINDOWS else 0)   # Windows: 콘솔 창을 띄우지 않는다
+        r = _proc(cmd, timeout)
         return r.stdout if r.returncode == 0 else ""
     except (OSError, ValueError, Exception):
         return ""
@@ -1279,7 +1284,11 @@ def machine_id():
     return v
 
 
-def post(hub, payload, timeout=5):
+# 허브가 메모리 압박으로 몇 초씩 멈춰도(스왑) 포기하지 않게 넉넉히. 5초였을 때 수 분씩 '보내지 못함'이 이어졌다
+SEND_TIMEOUT = 15
+
+
+def post(hub, payload, timeout=SEND_TIMEOUT):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
         headers["X-Office-Token"] = TOKEN
@@ -1289,7 +1298,7 @@ def post(hub, payload, timeout=5):
         r.read()
 
 
-def api(hub, path, payload, timeout=5):
+def api(hub, path, payload, timeout=SEND_TIMEOUT):
     headers = {"Content-Type": "application/json"}
     if TOKEN:
         headers["X-Office-Token"] = TOKEN

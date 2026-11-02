@@ -77,7 +77,7 @@ cat > "$PLIST" <<PL
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>Standard</string>   <!-- Background 면 메모리가 빠듯할 때 먼저 멈춰 화면이 비었다 -->
 </dict>
 </plist>
 PL

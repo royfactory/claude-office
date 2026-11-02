@@ -1330,3 +1330,10 @@ def test_prune_old_files_keeps_live_and_recent(collector, tmp_path, monkeypatch)
         os.utime(p, (old, old))
     n = collector.prune_old_files({"live"}, now=old + 8 * 86400)
     assert n == 2 and sorted(p.name for p in ev.iterdir()) == ["live.json"] and sorted(p.name for p in stt.iterdir()) == ["fresh.json"]
+
+
+def test_proc_resolves_command_and_runs(collector):
+    """짧은 명령은 실행 파일을 절대 경로로 찾아 돌린다(맥에서 fork 대신 posix_spawn — 로그에 잡음이 남지 않게)."""
+    r = collector._proc([sys.executable, "-c", "print('ok')"], 10)
+    assert r.returncode == 0 and r.stdout.strip() == "ok"
+    assert collector._run(["no-such-command-xyz"]) == ""

@@ -1,5 +1,6 @@
 // 영어 사전: 사무실 화면(office3d.js). 키는 office3d.js 의 t("…") 에 쓴 한국어 그대로
 I18N.add({
+  "연결 끊김 · 다시 이어지길 기다리는 중": "Disconnected · waiting to reconnect",
   // 재생(층 순회)
   "정지": "Stop", "재생": "Play",
   "근무 중인 층을 돌아가며 보는 중": "Touring busy floors",
