@@ -929,6 +929,7 @@ class Collector:
                 "mode": tr.mode,
                 "branch": tr.branch,
                 "git": git_state(cwd),
+                "mem": proc_mem(s.get("pid")),
                 **usage,
                 "limits": dict(sl["limits"], ts=sl["ts"]) if sl and sl.get("limits") else None,
                 "timeline": tr.timeline(now),
@@ -1020,6 +1021,44 @@ def _git_measure(root):
 # 표준 라이브러리와 기본 명령만 쓴다. 잴 수 없는 값(예: GPU 를 읽을 길이 없는 컴퓨터)은 None.
 SYS_SEC = 5
 _sys = {"val": None, "started": False}
+MEM_SEC = 15
+_ptree = {"at": 0.0, "rss": {}, "kids": {}}
+
+
+def proc_mem(pid):
+    """그 세션 프로세스와 자식들(MCP 서버·셸·서브 프로세스)이 쓰는 메모리(RSS 합, 바이트). 못 재면 None.
+
+    맥·리눅스는 ps 한 번으로 전체 표를 읽어 MEM_SEC 동안 쓴다. Windows 는 아직 재지 않는다."""
+    if WINDOWS or not pid:
+        return None
+    now = time.time()
+    if now - _ptree["at"] > MEM_SEC:
+        _ptree["at"] = now
+        rss, kids = {}, {}
+        for line in _run(["ps", "-A", "-o", "pid=,ppid=,rss="]).splitlines():
+            try:
+                p, pp, r = (int(x) for x in line.split())
+            except ValueError:
+                continue
+            rss[p] = r * 1024
+            kids.setdefault(pp, []).append(p)
+        _ptree["rss"], _ptree["kids"] = rss, kids
+    rss, kids = _ptree["rss"], _ptree["kids"]
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid not in rss:
+        return None
+    total, todo, seen = 0, [pid], set()
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        total += rss.get(p, 0)
+        todo.extend(kids.get(p, ()))
+    return total
 
 
 def _run(cmd, timeout=4):

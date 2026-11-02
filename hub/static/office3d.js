@@ -1506,12 +1506,42 @@ function renderSys() {
   $("sysbar").hidden = !h;
   if (!h) { setHTML($("sysbar"), ""); return; }
   const s = h.sys, gb = n => `${(n / 2 ** 30).toFixed(n >= 100 * 2 ** 30 ? 0 : 1)} GB`;
-  const item = (icon, name, v, total) => v == null
-    ? `<span class="sg na" title="${esc(h.host)} · ${esc(name)} — ${esc(t("잴 수 없음"))}"><i class="fa-solid fa-${icon}"></i><b>–</b><span class="lt"><i style="width:0"></i></span></span>`
-    : `<span class="sg" data-lv="${limLv(v)}" title="${esc(h.host)} · ${esc(name)} ${v}%${total ? " · " + esc(t("전체 {x}", { x: gb(total) })) : ""}"><i class="fa-solid fa-${icon}"></i><b class="lv-${limLv(v)}">${v}%</b><span class="lt"><i style="width:${v}%"></i></span></span>`;
-  setHTML($("sysbar"), item("microchip", "CPU", s.cpu) + item("display", "GPU", s.gpu)
-    + item("memory", t("메모리"), s.mem, s.memTotal) + item("hard-drive", t("디스크"), s.disk, s.diskTotal));
+  // tag·tip: 메모리 칸만 누를 수 있는 버튼으로, 툴팁에 세션 합계를 더한다
+  const item = (icon, name, v, total, tag = "span", tip = "") => v == null
+    ? `<${tag} class="sg na" title="${esc(h.host)} · ${esc(name)} — ${esc(t("잴 수 없음"))}${esc(tip)}"><i class="fa-solid fa-${icon}"></i><b>–</b><span class="lt"><i style="width:0"></i></span></${tag}>`
+    : `<${tag} class="sg" data-lv="${limLv(v)}" title="${esc(h.host)} · ${esc(name)} ${v}%${total ? " · " + esc(t("전체 {x}", { x: gb(total) })) : ""}${esc(tip)}"><i class="fa-solid fa-${icon}"></i><b class="lv-${limLv(v)}">${v}%</b><span class="lt"><i style="width:${v}%"></i></span></${tag}>`;
+  // 메모리 칸은 누르면 세션별 메모리 표가 열린다(그 컴퓨터의 Claude 세션 합계를 툴팁에)
+  const ms = memSessions(h.host), sum = ms.reduce((n, a) => n + a.mem, 0), old = ms.filter(oldIdle);
+  const memTip = ms.length ? " · " + t("Claude 세션 {n}개 {x}", { n: ms.length, x: fmtMem(sum) }) + (old.length ? " · " + t("한 시간 넘게 쉰 세션 {n}개 {x}", { n: old.length, x: fmtMem(old.reduce((n, a) => n + a.mem, 0)) }) : "") : "";
+  const mem = item("memory", t("메모리"), s.mem, s.memTotal, "button", memTip).replace("<button ", '<button id="memOpen" ');
+  setHTML($("sysbar"), item("microchip", "CPU", s.cpu) + item("display", "GPU", s.gpu) + mem + item("hard-drive", t("디스크"), s.disk, s.diskTotal));
+  if (!$("memModal").hidden) renderMemModal();
 }
+// ---------- 세션별 메모리(수집기가 프로세스 트리의 RSS 합을 보낸다) ----------
+const OLD_IDLE_SEC = 3600;
+const fmtMem = n => n >= 2 ** 30 ? `${(n / 2 ** 30).toFixed(1)} GB` : `${Math.round(n / 2 ** 20)} MB`;
+const oldIdle = a => a.kind === "idle" && Date.now() / 1000 - skew - (a.since || a.lastActivity || 0) > OLD_IDLE_SEC;
+function memSessions(host) {
+  return (state ? state.agents : []).filter(a => a.mem > 0 && !a.hostStale && (!host || a.host === host)).sort((a, b) => b.mem - a.mem);
+}
+function renderMemModal() {
+  const h = sysHost(), list = memSessions(h ? h.host : null), now = Date.now() / 1000 - skew;
+  const sum = list.reduce((n, a) => n + a.mem, 0), old = list.filter(oldIdle);
+  setHTML($("memSum"), list.length ? `${esc(h ? h.host : "")} · ${t("Claude 세션 {n}개", { n: list.length })} <b>${fmtMem(sum)}</b>`
+    + (old.length ? ` · ${t("정리 후보 {n}개", { n: old.length })} <b>${fmtMem(old.reduce((n, a) => n + a.mem, 0))}</b>` : "") : "");
+  setHTML($("memList"), list.map(a => {
+    const o = oldIdle(a), st = stateOf(a);
+    return `<li class="${o ? "old" : ""}" data-id="${esc(a.id)}" data-p="${esc(a.project)}"><span class="mn">${esc(a.title || a.name)}<small>${esc(a.name)}${a.worktree ? " · " + esc(a.worktree) : ""}</small></span>
+      <span class="ms">${o ? `<i class="fa-solid fa-broom"></i> ${t("{x}째 쉬는 중", { x: shortDur(now - (a.since || a.lastActivity)) })}` : esc(STATE_WORD[st] || "")}</span><span class="mv">${fmtMem(a.mem)}</span></li>`;
+  }).join("") || `<li class="muted">${t("메모리를 잰 세션이 없습니다(Windows 수집기이거나 예전 수집기).")}</li>`);
+}
+function setMemModal(on) { $("memModal").hidden = !on; if (on) renderMemModal(); }
+document.addEventListener("click", e => {
+  if (e.target.closest("#memOpen")) { setMemModal(true); return; }
+  if (e.target === $("memModal") || e.target.closest("#memModal .x")) { setMemModal(false); return; }
+  const li = e.target.closest("#memList li[data-id]");
+  if (li) { setMemModal(false); jumpTo(li.dataset.id, li.dataset.p); }
+});
 function renderLimitModal() {
   const now = Date.now() / 1000 - skew, list = limitGroups();
   const bar = (label, x) => x ? `<div class="lm-row" data-lv="${limLv(x.pct)}"><b>${label}</b><span class="lt"><i style="width:${Math.min(100, Math.round(x.pct))}%"></i></span>
@@ -1785,6 +1815,7 @@ function detailCard(a, ch, now) {
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? Office.label(ch.name) : "")} · PID ${esc(a.pid)}</small></span></div>
     ${sessionMeta(a)}
     ${a.kind === "approval" ? `<div class="approval-note"><i class="fa-solid fa-hand"></i> ${t("권한 승인을 기다리는 중")}${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, t("째"))}<small>${t("그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.")}</small>${approvalBox(a)}</div>` : ""}
+    ${oldIdle(a) ? `<div class="idle-note"><i class="fa-solid fa-broom"></i>${t("{x}째 쉬는 중입니다.", { x: shortDur(now - (a.since || a.lastActivity)) })}${a.mem > 0 ? " " + t("메모리 {x}를 쓰고 있어요.", { x: fmtMem(a.mem) }) : ""} ${t("안 쓰면 그 터미널에서 /exit 로 닫고, 나중에 이어서 열 수 있습니다.")}</div>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
     ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
     <h4>${t("최근 도구")}</h4>${recent ? `<ol class="recent">${recent}</ol>` : `<div class="muted">${t("기록 없음")}</div>`}</div>`;
@@ -1801,6 +1832,7 @@ function sessionMeta(a) {
   if (ln[0] || ln[1]) bits.push(`<span title="${t("이 세션이 Edit·Write 로 더하고 뺀 줄")}"><i class="fa-solid fa-pen-to-square"></i><em class="add">+${ln[0]}</em> <em class="del">−${ln[1]}</em></span>`);
   const lm = a.limits || {};
   if (lm.five_hour || lm.seven_day) bits.push(`<span title="${t("이 세션이 마지막으로 응답받을 때의 사용 한도(오래 쉰 세션은 예전 값 — 빌딩 아래 칸이 최신)")}"><i class="fa-solid fa-gauge-high"></i>${lm.five_hour ? `${t("5시간")} ${Math.round(lm.five_hour.pct)}%` : ""}${lm.five_hour && lm.seven_day ? " · " : ""}${lm.seven_day ? `${t("주간")} ${Math.round(lm.seven_day.pct)}%` : ""}</span>`);
+  if (a.mem > 0) bits.push(`<span title="${t("이 세션 프로세스와 자식(MCP 서버·셸 등)이 쓰는 메모리")}"><i class="fa-solid fa-memory"></i>${fmtMem(a.mem)}</span>`);
   if (a.outTokens) bits.push(`<span title="${t("이 세션이 쓴 출력 토큰(기록이 아주 크면 끝부분만 센 값)")}"><i class="fa-solid fa-feather"></i>${t("출력")} ${fmtTok(a.outTokens)}</span>`);
   const p = ctxPct(a);
   const bar = p == null ? "" : `<div class="ctxbar" data-lv="${ctxLevel(p)}"><div class="row"><b>${t("컨텍스트")}</b><span>${fmtTok(a.ctx.used)} / ${fmtTok(a.ctx.max)} · ${p}%</span></div>
@@ -2433,7 +2465,7 @@ document.addEventListener("keydown", e => {
   if (!state) return;
   const k = e.key;
   if (k === "?") { toggleKeys(); }
-  else if (k === "Escape") { if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
+  else if (k === "Escape") { if (!$("memModal").hidden) setMemModal(false); else if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
   else if (k === "ArrowUp") stepFloor(1);
   else if (k === "ArrowDown") stepFloor(-1);
   else if (/^[1-9]$/.test(k)) { const f = floors().find(x => x.n === +k); if (f) jumpFloor(f.project); }

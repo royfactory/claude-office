@@ -1337,3 +1337,13 @@ def test_proc_resolves_command_and_runs(collector):
     r = collector._proc([sys.executable, "-c", "print('ok')"], 10)
     assert r.returncode == 0 and r.stdout.strip() == "ok"
     assert collector._run(["no-such-command-xyz"]) == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 수집기는 아직 메모리를 재지 않는다")
+def test_proc_mem_sums_process_tree(collector, monkeypatch):
+    table = "  10     1  1000\n  11    10   200\n  12    11    30\n  13     1    99\n bad line\n"
+    monkeypatch.setattr(collector, "_run", lambda cmd, timeout=4: table)
+    monkeypatch.setitem(collector._ptree, "at", 0.0)
+    assert collector.proc_mem(10) == (1000 + 200 + 30) * 1024        # 자식·손자까지
+    assert collector.proc_mem(13) == 99 * 1024
+    assert collector.proc_mem(999) is None and collector.proc_mem(None) is None
