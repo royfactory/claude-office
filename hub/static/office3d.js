@@ -1815,6 +1815,7 @@ function detailCard(a, ch, now) {
     <span><b>${esc(a.title || a.name)}</b><small>${esc(a.name)} · ${esc(ch ? Office.label(ch.name) : "")} · PID ${esc(a.pid)}</small></span></div>
     ${sessionMeta(a)}
     ${a.kind === "approval" ? `<div class="approval-note"><i class="fa-solid fa-hand"></i> ${t("권한 승인을 기다리는 중")}${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, t("째"))}<small>${t("그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.")}</small>${approvalBox(a)}</div>` : ""}
+    ${clashes().has(a.id) ? `<div class="clash-note"><i class="fa-solid fa-code-merge"></i>${t("다른 세션도 같은 파일을 방금 고쳤습니다 — 서로 덮어쓰지 않게 확인하세요.")}<small>${clashText(clashes().get(a.id))}</small></div>` : ""}
     ${oldIdle(a) ? `<div class="idle-note"><i class="fa-solid fa-broom"></i>${t("{x}째 쉬는 중입니다.", { x: shortDur(now - (a.since || a.lastActivity)) })}${a.mem > 0 ? " " + t("메모리 {x}를 쓰고 있어요.", { x: fmtMem(a.mem) }) : ""} ${t("안 쓰면 그 터미널에서 /exit 로 닫고, 나중에 이어서 열 수 있습니다.")}</div>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
     ${todoList(a.todos) || (hostInfo(a.host).checklistRule === false ? ruleHint(a.host) : "")}
@@ -2309,14 +2310,40 @@ setFeedView(feedView);
 const doneAt = new Map();   // 세션 id -> 일을 마친 시각(열어 보거나 다시 일을 시작하면 지운다)
 const ATTN = {
   approval: { icon: "hand", word: t("승인 대기"), short: t("승인") },
+  clash: { icon: "code-merge", word: t("같은 파일을 여러 세션이 고치는 중"), short: t("동시 편집") },
   stalled: { icon: "hourglass-end", word: t("막힘"), short: t("막힘") },
   done: { icon: "circle-check", word: t("작업 완료"), short: t("완료") },
 };
-const ATTN_ORDER = ["approval", "stalled", "done"];
+const ATTN_ORDER = ["approval", "clash", "stalled", "done"];
+// ---------- 같은 파일 동시 편집 ----------
+// 수집기가 세션마다 최근 15분 안에 고친 파일을 경로 해시(k)로 보낸다. 같은 컴퓨터에서 두 세션 이상이 CLASH_SEC 안에 같은 파일을
+// 고쳤으면 경고한다(서로 덮어쓰거나 충돌하기 쉽다). 다른 worktree 는 경로가 달라 겹치지 않는다
+const CLASH_SEC = 600;
+function clashes() {
+  const now = Date.now() / 1000 - skew, by = new Map(), out = new Map();
+  for (const a of (state ? state.agents : [])) {
+    for (const e of a.edits || []) {
+      if (now - e.ts > CLASH_SEC) continue;
+      const key = a.host + "|" + e.k;
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push({ a, f: e.f, ts: e.ts });
+    }
+  }
+  for (const list of by.values()) {
+    if (new Set(list.map(x => x.a.id)).size < 2) continue;
+    for (const x of list) {
+      if (!out.has(x.a.id)) out.set(x.a.id, []);
+      out.get(x.a.id).push({ f: x.f || list.find(y => y.f)?.f || "", ts: x.ts, others: list.filter(y => y.a.id !== x.a.id).map(y => y.a) });
+    }
+  }
+  return out;
+}
+const clashText = cs => cs.map(c => `${c.f ? `<code>${esc(c.f)}</code>` : t("같은 파일")} ↔ ${c.others.map(o => esc(o.title || o.name)).join(", ")}`).join(" · ");
 let attnOpen = "";
 function attention() {
   if (!state) return [];
-  const out = [];
+  const out = [], cl = clashes();
+  for (const a of state.agents) if (cl.has(a.id)) out.push({ a, type: "clash", ts: Math.max(...cl.get(a.id).map(c => c.ts)), cs: cl.get(a.id) });
   for (const a of state.agents) {
     if (a.kind === "approval") out.push({ a, type: "approval", ts: a.since });
     else if (a.stalled) out.push({ a, type: "stalled", ts: a.lastActivity });
@@ -2336,6 +2363,7 @@ function renderAttention() {
   setHTML($("attnList"), items.length ? items.map(x => {
     const n = floorN.get(x.a.project);
     const what = x.type === "approval" ? `${x.a.tool ? esc(x.a.tool) + " · " : ""}${agoSpan(x.ts || null, t("째"))}`
+      : x.type === "clash" ? clashText(x.cs)
       : x.type === "stalled" ? `${t("조용한 지")} ${agoSpan(x.a.lastActivity)}` : `${agoSpan(x.ts, t(" 전"))}${x.a.say ? ` · ${esc(x.a.say)}` : ""}`;
     return `<li data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">${n ? `<span class="badge" style="--h:${floorHue(n)}">${floorLabel(n)}</span>` : ""}
       <span class="w"><b>${esc(x.a.title || x.a.name)}</b><small>${what}</small></span></li>`;

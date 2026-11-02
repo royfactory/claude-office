@@ -210,6 +210,8 @@
   .mem-sum { margin: 0 0 8px; color: var(--text-dim); font-size: 12px; } .mem-sum b { color: var(--text-hi); }
   .sysbar button.sg { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
   .idle-note { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.25); font-size: 12px; color: var(--text); }
+  .clash-note { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.35); font-size: 12px; color: var(--text); }
+  .clash-note > i { color: #f87171; margin-right: 4px; } .clash-note small { display: block; margin-top: 4px; color: var(--text-dim); } .clash-note code { font-size: 11px; }
   .idle-note i { color: var(--warning); margin-right: 4px; } .idle-note code { font-size: 11px; }
   .lm-f { margin: 6px 0 0; color: var(--text-dim2); font-size: 11px; line-height: 1.5; }
   .lm-note { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-dim2); font-size: 11px; line-height: 1.55; }
@@ -317,6 +319,7 @@
               border: 1px solid; box-shadow: 0 2px 10px rgba(0,0,0,.3); white-space: nowrap; }
   #attn .ac b { font-variant-numeric: tabular-nums; }
   #attn .ac-approval { background: #f97316; color: #fff; border-color: #c2410c; animation: apprPulse 1.6s ease-in-out infinite; }
+  #attn .ac-clash { background: #fee2e2; color: #991b1b; border-color: #f87171; }
   #attn .ac-stalled { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
   #attn .ac-done { background: #d1fae5; color: #065f46; border-color: #34d399; }
   #attn .ac.on { outline: 2px solid #fff; outline-offset: 1px; }

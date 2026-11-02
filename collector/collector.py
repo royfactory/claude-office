@@ -465,6 +465,26 @@ def say_of(text):
     return short(t, SAY_CHARS)
 
 
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+EDIT_WINDOW_SEC = 900   # 이 안에 고친 파일만 보낸다(같은 파일을 두 세션이 고치는지 화면이 견준다)
+
+
+def recent_edits(trs, now, detail):
+    """여러 기록(세션과 그 서브에이전트)이 최근 고친 파일. 경로 원문 대신 해시(k)와 파일 이름(f)만 보낸다.
+
+    해시는 같은 컴퓨터 안에서만 견줄 수 있다(다른 worktree 의 같은 파일은 경로가 달라 겹치지 않는다 — 실제로도 겹치지 않는다)."""
+    import hashlib
+    last = {}
+    for tr in trs:
+        for fp, ts in tr.edits.items():
+            if now - ts <= EDIT_WINDOW_SEC and ts > last.get(fp, 0):
+                last[fp] = ts
+    out = [{"k": hashlib.sha1(os.path.normcase(os.path.abspath(fp)).encode("utf-8", "replace")).hexdigest()[:12],
+            "f": "" if detail == "none" else os.path.basename(fp), "ts": ts}
+           for fp, ts in sorted(last.items(), key=lambda x: -x[1])[:20]]
+    return out
+
+
 class Transcript:
     """jsonl 을 새로 붙은 만큼만 읽어 지금 걸린 도구·최근 도구·도구 횟수·제목·마지막 말을 유지한다."""
 
@@ -473,6 +493,7 @@ class Transcript:
         self.offset = 0
         self.rest = b""
         self.pending = {}
+        self.edits = {}   # 고친 파일의 전체 경로 → 마지막으로 고친 시각(같은 파일 동시 편집 경고용)
         self.recent = []
         self.tools = 0
         self.title = ""
@@ -637,6 +658,12 @@ class Transcript:
                 name = c.get("name", "?")
                 inp = c.get("input") if isinstance(c.get("input"), dict) else {}
                 item = {"tool": name, "target": target_of(name, inp, detail), "ts": ts}
+                fp = (inp.get("file_path") or inp.get("notebook_path")) if name in EDIT_TOOLS else None
+                if isinstance(fp, str) and fp:
+                    self.edits.pop(fp, None)
+                    self.edits[fp] = ts or time.time()
+                    if len(self.edits) > 60:
+                        del self.edits[next(iter(self.edits))]
                 self.pending[c.get("id")] = item
                 self.tools_by_id[c.get("id")] = dict(item, bg=bool(inp.get("run_in_background")))
                 if len(self.tools_by_id) > 400:
@@ -819,7 +846,8 @@ class Collector:
     def said(self, tr):
         return tr.say if self.speech else ""
 
-    def subagents(self, jsonl, parent, now):
+    def subagents(self, jsonl, parent, now, trs=None):
+        """출근 중인 서브에이전트. trs 를 주면 읽은 서브에이전트 기록을 거기에 더한다(고친 파일을 세션에 합치려고)."""
         d = os.path.join(jsonl[: -len(".jsonl")], "subagents")
         if not os.path.isdir(d):
             return []
@@ -837,6 +865,8 @@ class Collector:
             if not active:
                 continue
             tr = self.transcript(p)
+            if trs is not None:
+                trs.append(tr)
             cur = tr.current()
             out.append({
                 "id": os.path.basename(p)[6:-6],
@@ -897,7 +927,8 @@ class Collector:
             if approval:
                 kind = "approval"   # 권한 창을 띄우고 사용자의 승인을 기다리는 중(훅을 넣은 경우만 안다)
             since = (ev["ts"] if approval else None) or (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
-            subs = self.subagents(jsonl, tr, now) if jsonl else []
+            trs = [tr]
+            subs = self.subagents(jsonl, tr, now, trs) if jsonl else []
             project, worktree = project_of(cwd)
             sl = status_line(sid, now)
             usage = tr.usage()
@@ -930,6 +961,7 @@ class Collector:
                 "branch": tr.branch,
                 "git": git_state(cwd),
                 "mem": proc_mem(s.get("pid")),
+                "edits": recent_edits(trs, now, self.detail),
                 **usage,
                 "limits": dict(sl["limits"], ts=sl["ts"]) if sl and sl.get("limits") else None,
                 "timeline": tr.timeline(now),

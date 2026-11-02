@@ -1347,3 +1347,12 @@ def test_proc_mem_sums_process_tree(collector, monkeypatch):
     assert collector.proc_mem(10) == (1000 + 200 + 30) * 1024        # 자식·손자까지
     assert collector.proc_mem(13) == 99 * 1024
     assert collector.proc_mem(999) is None and collector.proc_mem(None) is None
+
+
+def test_recent_edits_hash_paths_and_skip_old(collector, home):
+    old = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 3600))
+    make_session(home, [use("t1", "Edit", file_path="/w/app.py"), result("t1"), use("t2", "Read", file_path="/w/read.py"),
+                        use("t3", "Write", ts=old, file_path="/w/old.py"), use("t4", "Edit", file_path="/w/app.py")])
+    e = collect_one(collector)["edits"]
+    assert [x["f"] for x in e] == ["app.py"] and len(e[0]["k"]) == 12 and "/w" not in json.dumps(e)   # 읽기·오래된 것 빼고, 경로 원문은 없이
+    assert collect_one(collector, "none")["edits"][0]["f"] == ""                                     # --detail none: 해시만

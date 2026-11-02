@@ -1,5 +1,7 @@
 // 영어 사전: 사무실 화면(office3d.js). 키는 office3d.js 의 t("…") 에 쓴 한국어 그대로
 I18N.add({
+  "같은 파일을 여러 세션이 고치는 중": "Several sessions are editing the same file", "동시 편집": "Same file",
+  "같은 파일": "same file", "다른 세션도 같은 파일을 방금 고쳤습니다 — 서로 덮어쓰지 않게 확인하세요.": "Another session just edited the same file — check they don't overwrite each other.",
   "연결 끊김 · 다시 이어지길 기다리는 중": "Disconnected · waiting to reconnect",
   // 재생(층 순회)
   "정지": "Stop", "재생": "Play",
