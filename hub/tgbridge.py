@@ -48,6 +48,7 @@ STR = {
         "bound_bypass": "\n⚠ 이 세션은 권한 건너뛰기 모드라, 여기서 보낸 글이 그 컴퓨터 터미널에서 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 바로 받는 세션을 고르거나, 그 설정 폴더의 Claude Code 설정에 crossSessionInbound: \"accept\" 를 둡니다.",
         "ago_m": "{n}분 전", "ago_h": "{n}시간 전", "ago_d": "{n}일 전", "now": "방금",
         "bad_number": "번호가 맞지 않습니다. /status 로 목록을 다시 보세요.",
+        "bad_more": "목록에 없는 세션은 /status all 로 전부 본 뒤 고릅니다.",
         "bound": "이제 이 채팅의 글은 「{title}」({host})로 갑니다. 그 세션의 답이 여기로 옵니다.",
         "bound_no_msg": "\n(주의: 그 컴퓨터가 메시지를 받지 않습니다 — 수집기 .env 의 CLAUDE_OFFICE_MESSAGES=on 과 관리 화면 '메시지 보내기'를 켜세요)",
         "unbound": "세션을 뗐습니다. 알림은 계속 옵니다.",
@@ -82,6 +83,7 @@ STR = {
         "bound_bypass": "\n⚠ This session runs in bypass-permissions mode, so messages from here wait for approval in its terminal (dropped after 5 minutes). To use it remotely, pick a ready-to-receive session or set crossSessionInbound: \"accept\" in that config folder's Claude Code settings.",
         "ago_m": "{n}m ago", "ago_h": "{n}h ago", "ago_d": "{n}d ago", "now": "now",
         "bad_number": "No such number. Send /status to see the list again.",
+        "bad_more": "For sessions not listed, send /status all first.",
         "bound": "This chat now talks to “{title}” ({host}). Its replies will come here.",
         "bound_no_msg": "\n(Note: that computer doesn't accept messages — set CLAUDE_OFFICE_MESSAGES=on in its collector .env and enable messaging on the admin page)",
         "unbound": "Detached. Notifications continue.",
@@ -411,7 +413,7 @@ class Bridge:
         elif cmd in ("status", "list", "sessions"):
             every = self._sessions()
             ag = every if arg == "all" else every[:STATUS_N]
-            self.lists[chat] = [(a["host"], a["id"]) for a in every]   # /use 번호는 전체 순서로(짧은 목록은 앞부분)
+            self.lists[chat] = [(a["host"], a["id"]) for a in ag]   # /use 번호는 방금 보여 준 목록에서만(안 보인 번호에 붙지 않게)
             if not ag:
                 self.send(chat, s["no_sessions"])
                 return
@@ -422,7 +424,7 @@ class Bridge:
                 mark = "📎 " if b.get("session") == a["id"] and b.get("host") == a["host"] else ""
                 warn = "" if self.ready(a) else (" ⚠" if a.get("canMessage") else " 🚫")
                 kind = s["kind"].get(a.get("kind"), a.get("kind", ""))
-                when = kind if a.get("kind") != "idle" else f"{kind} {self._ago(a.get('lastActivity'), s)}"
+                when = kind if a.get("kind") != "idle" else f"{kind} · {self._ago(a.get('lastActivity'), s)}"
                 where = f" @{a['host']}" if len(hosts) > 1 else ""
                 lines.append(f"{i}. {mark}{a.get('project', '')} · {(a.get('title') or a.get('name') or '')[:36]} · {when}{where}{warn}")
             if len(ag) < len(every):
@@ -433,11 +435,14 @@ class Bridge:
                 lines.append(s["legend_nomsg"])
             self.send(chat, "\n".join(lines))
         elif cmd == "use":
-            lst = self.lists.get(chat) or [(a["host"], a["id"]) for a in self._sessions()]
+            lst = self.lists.get(chat) or [(a["host"], a["id"]) for a in self._sessions()[:STATUS_N]]
             try:
-                host, sid = lst[int(arg) - 1]
+                n = int(arg)
+                if n < 1:
+                    raise IndexError
+                host, sid = lst[n - 1]
             except (ValueError, IndexError):
-                self.send(chat, s["bad_number"])
+                self.send(chat, s["bad_number"] + (" " + s["bad_more"] if len(lst) < len(self._sessions()) else ""))
                 return
             await self.bind(link, host, sid)
         elif cmd == "stop":

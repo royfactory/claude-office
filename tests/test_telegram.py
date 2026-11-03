@@ -288,3 +288,16 @@ def test_status_puts_ready_sessions_first_and_warns_bypass(tgh):
     n = [l for l in full.split("\n") if "건너뛰기 · 근무" in l][0].split(".")[0]
     handle(mod, c, msg(f"/use {n}", mid=4))
     assert mod.tg.data["links"][0]["bind"]["session"] == "by" and "crossSessionInbound" in fake.sent()[-1]
+
+
+def test_use_number_only_from_shown_list(tgh):
+    mod, c, fake = tgh
+    link(mod, c)
+    ingest(c, *[agent(f"x{i:02d}", title=f"쉼{i:02d}", mode="auto", lastActivity=1000 - i) for i in range(15)])
+    handle(mod, c, msg("/status", mid=2))
+    assert "쉼00 · 휴식 · " in fake.sent()[-1]
+    handle(mod, c, msg("/use 14", mid=3))                             # 12개만 보였으니 14번은 없다
+    assert mod.tg.data["links"][0]["bind"] is None and "/status all" in fake.sent()[-1]
+    handle(mod, c, msg("/status all", mid=4))
+    handle(mod, c, msg("/use 14", mid=5))
+    assert mod.tg.data["links"][0]["bind"]["session"] == "x13"
