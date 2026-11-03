@@ -289,7 +289,9 @@ function imageTexture(name, pixel, flip) {
     if (flip) { t.repeat.x = -1; t.offset.x = 1; }
     imgTex.set(k, t);
   }
-  return imgTex.get(k);
+  const t = imgTex.get(k);
+  t.userData.used = performance.now();   // 오래 안 쓴 그림은 sweepMemory 가 GPU 에서 내린다
+  return t;
 }
 
 // ---------- 건물 ----------
@@ -2586,6 +2588,42 @@ buildOffice();
 new ResizeObserver(resize).observe(stage);
 resize();
 requestAnimationFrame(frame);
+// ---------- 오래 띄워 둔 화면의 메모리 정리 ----------
+// 화면을 며칠씩 켜 두면 층을 돌 때마다 캐릭터 그림(장당 GPU 약 0.5MB, 좌우 반전 포함 수백 장)이 쌓이고, 끝난 서브에이전트의
+// 자리 기록·지나간 승인 미리보기가 남는다. 5분마다 지금 아무도 안 쓰고 10분 넘게 안 본 그림은 GPU 에서 내리고, 없어진 세션의 기록은 지운다
+const TEX_IDLE_MS = 10 * 60 * 1000;
+function sweepMemory() {
+  const now = performance.now(), live = new Set();
+  const keep = a => {
+    if (!a || !a.group) return;
+    if (a.baseTex) live.add(a.baseTex);   // 걷는 동안 머리에는 걷기 그림이 걸려 있어도 서 있는 모습은 곧 다시 쓴다
+    a.group.traverse(m => { if (m.material && m.material.map) live.add(m.material.map); });
+  };
+  for (const a of actors.values()) keep(a);
+  keep(me.actor);
+  let freed = 0;
+  for (const [k, tex] of imgTex) {
+    if (live.has(tex) || now - (tex.userData.used || 0) < TEX_IDLE_MS) continue;
+    tex.dispose(); imgTex.delete(k); freed++;
+  }
+  if (state) {
+    const ids = new Set(state.agents.map(a => a.id));
+    for (const k of lastRoom.keys()) if (!ids.has(k.split("/")[0])) lastRoom.delete(k);
+    const pend = new Set((state.approvals || []).map(x => x.id));
+    for (const k of apprPreview.keys()) if (!pend.has(k)) apprPreview.delete(k);
+  }
+  return freed;
+}
+setInterval(sweepMemory, 5 * 60 * 1000);
+// 하루 넘게 열려 있던 탭은 아무도 안 볼 때(숨겨졌거나 10분 넘게 입력이 없고 쓰던 메시지가 없을 때) 조용히 새로 연다.
+// 브라우저 쪽 조각난 메모리를 돌려받고, 허브를 업데이트한 뒤에도 옛 화면 코드로 계속 도는 일을 막는다. 보던 층은 주소(#)에 남는다
+const OPENED_AT = Date.now(), REFRESH_AFTER_MS = 24 * 3600 * 1000;
+setInterval(() => {
+  if (Date.now() - OPENED_AT < REFRESH_AFTER_MS || lostAt) return;   // 허브가 끊겨 있으면 새로 열어도 빈 화면이라 기다린다
+  const ta = $("composeText");
+  const quiet = document.hidden || (Date.now() - lastInput > 10 * 60 * 1000 && document.activeElement !== ta && !(ta && ta.value.trim()));
+  if (quiet) location.reload();
+}, 60 * 1000);
 // 5초마다 시간에 따라 바뀌는 글자('n초 전', 오래 걸림 표시, 최근 1시간 수)를 맞춘다. 내용이 같으면 DOM 은 그대로
 setInterval(() => {
   if (!state || document.hidden) return;
@@ -2706,4 +2744,4 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("online", () => { if (lostAt) { retryMs = 1000; connect(); } });
 connect();
 // 점검용: 주소에 ?debug 가 있으면 길찾기를 밖에서 부를 수 있게 둔다(벽·가구 통과 시험)
-if (new URLSearchParams(location.search).has("debug")) window.officeDebug = { route, R, ELEV, OBST, me };
+if (new URLSearchParams(location.search).has("debug")) window.officeDebug = { route, R, ELEV, OBST, me, actors, imgTex, sweepMemory, get renderer() { return renderer; } };
