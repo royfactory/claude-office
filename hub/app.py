@@ -50,6 +50,9 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # 시험·도구가 app.py 를 경로로 읽어도 옆 모듈을 찾게
+import tgbridge  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent   # 저장소 루트(도커 안에서는 / 이라 data 가 /data 가 된다)
 
 
@@ -157,6 +160,8 @@ DEFAULT_CONFIG: dict = {
     "outside": True,       # 바깥 풍경
     "weather": True,       # 날씨(브라우저 위치 권한이 있을 때만)
     "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
+    # 텔레그램(봇 토큰은 .env OFFICE_TELEGRAM_TOKEN): 알릴 일, 완료 알림 기준 초, 내용 수준, 붙인 세션의 답, 승인 단추
+    "telegram": {"notify": ["approval", "done"], "doneSec": 60, "detail": "basic", "replies": True, "approvals": False},
 }
 
 
@@ -217,6 +222,15 @@ class ToolRoom(BaseModel):
     room: WorkRoomId
 
 
+class TelegramCfg(BaseModel):
+    """텔레그램 알림·대화 설정(봇 토큰·연결된 채팅은 여기 두지 않는다 — .env 와 data/telegram.json)."""
+    notify: list[Literal["approval", "done", "stalled"]] = ["approval", "done"]
+    doneSec: int = Field(60, ge=0, le=6 * 3600)   # 이보다 오래 일한 턴이 끝났을 때만 '완료' 알림
+    detail: Literal["basic", "minimal"] = "basic"   # minimal: 무슨 일·어느 층만(제목·도구·말풍선 빼고)
+    replies: bool = True     # 붙인 세션의 답을 텔레그램으로
+    approvals: bool = False  # 텔레그램 알림에 허용·거절 단추(관리 화면 '대시보드에서 승인'도 켜져 있어야)
+
+
 class Config(BaseModel):
     characters: list[Character] = Field(min_length=1, max_length=200)
     subagentCharacter: str = ""
@@ -235,6 +249,7 @@ class Config(BaseModel):
     outside: bool = True    # 뒤쪽 통유리 너머 바깥 풍경(끄면 젖빛 유리)
     weather: bool = True    # 보는 브라우저에 위치 권한이 있을 때만 그곳 날씨를 풍경·시계에
     lookVersion: int = LOOK_VERSION   # 기본 캐릭터 그림을 몇 번째 묶음까지 받았나(load_config 의 한 번 채우기용)
+    telegram: TelegramCfg = TelegramCfg()
 
     def check(self) -> None:
         ids = [c.id for c in self.characters]
@@ -377,7 +392,8 @@ class Hub:
         return {"version": self.version, "now": now, "hosts": hosts, "agents": agents,
                 "config": self.config, "messaging": {"ready": self.messaging_ready(), "auth": bool(TOKEN)},
                 "messages": msgs, "approvals": appr,
-                "approvalsReady": bool(TOKEN) and bool(self.config.get("approvals"))}
+                "approvalsReady": bool(TOKEN) and bool(self.config.get("approvals")),
+                "telegram": tg.snapshot()}
 
     async def close(self) -> None:
         """종료가 시작되면 기다리는 SSE·롱폴링을 모두 깨워 바로 끝나게 한다."""
@@ -565,7 +581,9 @@ def _hook_exit_signals(loop: asyncio.AbstractEventLoop) -> list:
 async def lifespan(_app: FastAPI):
     task = asyncio.create_task(_expire_loop())
     _hook_exit_signals(asyncio.get_running_loop())   # uvicorn 은 serve 를 마치면 자기 처리기 이전 것으로 되돌린다
+    tg.start(asyncio.get_running_loop())
     yield
+    tg.stop()
     await hub.close()
     try:
         stats.flush()
@@ -683,9 +701,16 @@ async def ingest(request: Request) -> dict:
     prev = hub.hosts.get(host)
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq")), "machine": machine}
     stats.observe(host, agents)
+    tg.observe(host, agents)
     if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
         await hub.bump()
-    return {"ok": True}
+    return _ingest_reply(host)
+
+
+def _ingest_reply(host: str) -> dict:
+    """수집기에게: 받았다 + 답을 텔레그램으로 보낼 세션(붙인 시각). 붙인 세션이 없으면 relay 를 싣지 않는다."""
+    relay = tg.relay_for(host)
+    return {"ok": True, **({"relay": relay} if relay else {})}
 
 
 @app.post("/api/ingest/patch", dependencies=[Depends(require_write)])
@@ -714,9 +739,10 @@ async def ingest_patch(request: Request) -> dict:
     changed = bool(set_ or dels) or [a.get("id") for a in h["agents"]] != [a.get("id") for a in agents] or h.get("meta") != meta
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq, "machine": machine}
     stats.observe(host, agents)
+    tg.observe(host, agents)
     if changed:
         await hub.bump()
-    return {"ok": True}
+    return _ingest_reply(host)
 
 
 class Bye(BaseModel):
@@ -738,7 +764,7 @@ async def state() -> dict:
     return hub.snapshot()
 
 
-PATCH_KEYS = ("config", "messaging", "messages", "approvals", "approvalsReady")
+PATCH_KEYS = ("config", "messaging", "messages", "approvals", "approvalsReady", "telegram")
 
 
 def _agent_key(a: dict) -> str:
@@ -816,21 +842,27 @@ def _require_messaging() -> None:
 @app.post("/api/sessions/message", dependencies=[Depends(require_write)])
 async def send_message(m: OutMessage) -> dict:
     _require_messaging()
-    h = hub.hosts.get(m.host)
-    agent = next((a for a in (h or {}).get("agents", []) if a.get("id") == m.session), None)
+    mid = await queue_message(m.host, m.session, m.text)
+    return {"id": mid, "status": "queued"}
+
+
+async def queue_message(host: str, session: str, text: str, via: str = "") -> str:
+    """세션에 보낼 메시지를 큐에 넣는다(화면·텔레그램). 보낼 수 없으면 HTTPException(404·409). via: 어디서 왔나(수집기가 머리말에 쓴다)."""
+    h = hub.hosts.get(host)
+    agent = next((a for a in (h or {}).get("agents", []) if a.get("id") == session), None)
     if not agent or h.get("offline"):
         raise HTTPException(404, "그 세션이 지금 보이지 않는다")
     if not agent.get("canMessage"):
         raise HTTPException(409, "그 컴퓨터의 수집기가 메시지를 받지 않는다(CLAUDE_OFFICE_MESSAGES 꺼짐·Windows·수신함 없음)")
     now = time.time()
-    item = {"id": hashlib.sha256(f"{now}{m.session}{m.text}".encode()).hexdigest()[:12], "host": m.host,
-            "session": m.session, "text": m.text, "preview": m.text[:60], "status": "queued", "error": "",
-            "createdAt": now}
+    item = {"id": hashlib.sha256(f"{now}{session}{text}".encode()).hexdigest()[:12], "host": host,
+            "session": session, "text": text[:MAX_MESSAGE], "preview": text[:60], "status": "queued", "error": "",
+            "createdAt": now, **({"via": via} if via else {})}
     hub.outbox = (hub.outbox + [item])[-50:]
     async with hub.queued:
         hub.queued.notify_all()
     await hub.bump()
-    return {"id": item["id"], "status": "queued"}
+    return item["id"]
 
 
 class Pull(BaseModel):
@@ -846,7 +878,7 @@ async def _claim(host: str) -> dict:
     for m in hub.outbox:
         if m["host"] == host and m["status"] == "queued":
             m["status"] = "sending"
-            out.append({"id": m["id"], "session": m["session"], "text": m["text"]})
+            out.append({"id": m["id"], "session": m["session"], "text": m["text"], **({"via": m["via"]} if m.get("via") else {})})
     if out:
         await hub.bump()
     return {"messages": out}
@@ -909,6 +941,7 @@ async def outbox_result(r: Result) -> dict:
         if m["id"] == r.id and m["host"] == r.host:
             m.update(status="sent" if r.ok else "failed", error=r.error[:200])
             m["text"] = ""   # 전달이 끝난 본문은 허브 메모리에 남기지 않는다(미리보기만)
+            tg.on_result(m["id"], r.ok, r.error[:200])
             await hub.bump()
             break
     return {"ok": True}
@@ -1028,16 +1061,154 @@ class Decision(BaseModel):
 @app.post("/api/approvals/{aid}/decide", dependencies=[Depends(require_write)])
 async def approval_decide(aid: str, d: Decision) -> dict:
     _require_approvals()
+    return {"ok": True, "status": await decide_approval(aid, d.decision)}
+
+
+async def decide_approval(aid: str, decision: str) -> str:
     x = hub.approvals.get(aid)
     if not x:
         raise HTTPException(404, "그 요청이 없다")
     if x["status"] != "pending":
         raise HTTPException(409, f"이미 끝난 요청이다({x['status']})")
-    x.update(status=d.decision, decidedAt=time.time())
+    x.update(status=decision, decidedAt=time.time())
     async with hub.decided:
         hub.decided.notify_all()
     await hub.bump()
-    return {"ok": True, "status": x["status"]}
+    return x["status"]
+
+
+# ---------- 텔레그램 ----------
+# 봇 토큰(OFFICE_TELEGRAM_TOKEN)이 있으면 허브가 봇을 돌린다(hub/tgbridge.py). 연결·붙이기·답 전달은 쓰기 토큰이 필요하다
+class _TgOps:
+    """텔레그램 다리가 허브에 하는 일."""
+
+    @staticmethod
+    def agents() -> list[dict]:
+        now = time.time()
+        return [{**a, "host": name} for name, h in hub.hosts.items() if hub.state(h, now) == "on" for a in h["agents"]]
+
+    @staticmethod
+    def config() -> dict:
+        return hub.config
+
+    @staticmethod
+    async def send(host: str, session: str, text: str) -> tuple[str, str]:
+        if not TOKEN or not hub.config.get("messaging"):
+            return "", "관리 화면에서 '대시보드에서 메시지 보내기'를 켜야 합니다(허브 OFFICE_TOKEN 도 필요)"
+        try:
+            return await queue_message(host, session, text, via="telegram"), ""
+        except HTTPException as e:
+            return "", str(e.detail)
+
+    @staticmethod
+    async def decide(aid: str, decision: str) -> str:
+        if not TOKEN or not hub.config.get("approvals"):
+            return "관리 화면에서 '대시보드에서 승인'이 꺼져 있다"
+        try:
+            await decide_approval(aid, decision)
+            return ""
+        except HTTPException as e:
+            return str(e.detail)
+
+    @staticmethod
+    def pending(host: str, session: str) -> dict | None:
+        return next((x for x in hub.approvals.values() if x["host"] == host and x["session"] == session and x["status"] == "pending"), None)
+
+    @staticmethod
+    async def bump() -> None:
+        await hub.bump()
+
+
+tg = tgbridge.Bridge(os.environ.get("OFFICE_TELEGRAM_TOKEN", ""), DATA / "telegram.json", _TgOps())
+
+
+def _require_tg() -> None:
+    if not tg.enabled:
+        raise HTTPException(404, "허브 .env 에 OFFICE_TELEGRAM_TOKEN 이 없다")
+
+
+@app.post("/api/telegram/pair", dependencies=[Depends(require_write)])
+async def tg_pair() -> dict:
+    """연결 코드(6자리, 10분). 텔레그램 봇에게 이 코드를 보낸 개인 채팅이 연결된다."""
+    _require_tg()
+    out = tg.new_code()
+    await hub.bump()
+    return out
+
+
+class TgRelay(BaseModel):
+    host: str = Field(min_length=1, max_length=40)
+    session: str = Field(min_length=1, max_length=80)
+    items: list[dict] = Field(default=[], max_length=20)
+
+
+@app.post("/api/telegram/relay", dependencies=[Depends(require_write)])
+async def tg_relay(r: TgRelay) -> dict:
+    """수집기가 붙인 세션의 답(턴의 마지막 말)을 보낸다. 공개 상태에는 싣지 않고 텔레그램으로만."""
+    n = tg.relay(r.host, r.session, r.items)
+    if n:
+        await hub.bump()
+    return {"ok": True, "sent": n}
+
+
+class TgBind(BaseModel):
+    link: str = Field(min_length=1, max_length=16)
+    host: str = Field("", max_length=40)
+    session: str = Field("", max_length=80)   # 비우면 떼기
+
+
+@app.post("/api/telegram/bind", dependencies=[Depends(require_write)])
+async def tg_bind(b: TgBind) -> dict:
+    _require_tg()
+    link = tg.link_by_id(b.link)
+    if not link:
+        raise HTTPException(404, "그 텔레그램 연결이 없다")
+    if not b.session:
+        link["bind"] = None
+        tg.save()
+        await hub.bump()
+        return {"ok": True}
+    if not any(a["host"] == b.host and a["id"] == b.session for a in _TgOps.agents()):
+        raise HTTPException(404, "그 세션이 지금 보이지 않는다")
+    await tg.bind(link, b.host, b.session)
+    return {"ok": True}
+
+
+class TgLink(BaseModel):
+    muted: bool | None = None
+    hosts: list[Annotated[str, Field(max_length=40)]] | None = Field(None, max_length=50)
+    accounts: list[Annotated[str, Field(pattern=r"^[0-9a-f]{6,16}$")]] | None = Field(None, max_length=50)
+
+
+@app.put("/api/telegram/links/{lid}", dependencies=[Depends(require_write)])
+async def tg_link_update(lid: str, b: TgLink) -> dict:
+    _require_tg()
+    link = tg.link_by_id(lid)
+    if not link:
+        raise HTTPException(404, "그 텔레그램 연결이 없다")
+    if b.muted is not None:
+        link["muted"] = b.muted
+    f = dict(link.get("filter") or {})
+    if b.hosts is not None:
+        f["hosts"] = b.hosts
+    if b.accounts is not None:
+        f["accounts"] = b.accounts
+    link["filter"] = {k: v for k, v in f.items() if v}
+    tg.save()
+    await hub.bump()
+    return {"ok": True}
+
+
+@app.delete("/api/telegram/links/{lid}", dependencies=[Depends(require_write)])
+async def tg_link_delete(lid: str) -> dict:
+    _require_tg()
+    link = tg.link_by_id(lid)
+    if not link:
+        raise HTTPException(404, "그 텔레그램 연결이 없다")
+    tg.data["links"] = [x for x in tg.data["links"] if x is not link]
+    tg.save()
+    await hub.bump()
+    return {"ok": True}
 
 
 @app.get("/api/stats")

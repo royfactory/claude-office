@@ -24,6 +24,7 @@ Bash 의 description, 검색어 앞부분 등), 도구 호출 횟수, 그리고 
 from __future__ import annotations
 
 import argparse
+import collections
 import glob
 import json
 import os
@@ -167,6 +168,8 @@ TOKEN = os.environ.get("OFFICE_TOKEN", "").strip()
 MESSAGES = os.environ.get("CLAUDE_OFFICE_MESSAGES", "").strip().lower() in ("on", "1", "true", "yes")
 APPROVE = os.environ.get("CLAUDE_OFFICE_APPROVE", "").strip().lower() in ("on", "1", "true", "yes")
 MESSAGE_PREFIX = "[claude-office 대시보드에서 이 컴퓨터의 사용자가 보낸 메시지]\n"
+# 텔레그램에서 온 글. 답은 텔레그램으로 가니 짧고 읽기 쉽게 써 달라는 뜻도 함께
+MESSAGE_PREFIX_TG = "[claude-office 텔레그램으로 이 컴퓨터의 사용자가 보낸 메시지 — 이 턴의 마지막 답이 휴대폰 텔레그램으로 전달된다]\n"
 MAX_MESSAGE = 4000
 
 # Claude Code 설정 폴더들. 기본 ~/.claude 말고도 Orca 가 띄운 세션은 프로필마다 CLAUDE_CONFIG_DIR 이 따로 있다.
@@ -353,6 +356,8 @@ CONTEXT_DEFAULT = 200_000
 CONTEXT_1M_PREFIXES = ("opus-5",)   # 'claude-' 를 뗀 이름 기준
 CONTEXT_OVERRIDE = int(os.environ.get("CLAUDE_OFFICE_CONTEXT_WINDOW") or 0)
 HEARTBEAT_SEC = 10
+REPLY_KEEP = 8          # 세션마다 기억해 둘 최근 답 수(텔레그램에 붙이면 턴의 마지막 것을 보낸다)
+REPLY_CHARS = 12000     # 한 답에서 보낼 최대 글자(허브가 텔레그램 크기로 나눈다)
 WAIT_SEC = 25           # 메시지 롱폴링(/api/outbox/wait) 한 번에 기다리는 시간(허브 최대 25초)
 
 
@@ -520,6 +525,7 @@ class Transcript:
         self.tools = 0
         self.title = ""
         self.say = ""
+        self.texts = []   # 최근 Claude 답(본 줄의 글 덩어리) [{id, ts, text}] — 텔레그램에 붙인 세션의 답을 보내려고
         self.mode = ""
         self.bg = {}            # 아직 끝나지 않은 백그라운드 작업: tool_use_id -> {tool, target, ts}
         self.tools_by_id = {}   # tool_use_id -> {tool, target, ts} (결과가 올 때 백그라운드인지 판단용, 최근 것만)
@@ -724,6 +730,9 @@ class Transcript:
                 txt = say_of(c.get("text", ""))
                 if txt:
                     self.say = txt
+                    if not rec.get("isSidechain") and rec.get("uuid"):
+                        self.texts = (self.texts + [{"id": f"{rec['uuid']}:{len(c.get('text', ''))}", "ts": ts or time.time(),
+                                                     "text": c.get("text", "")[:REPLY_CHARS]}])[-REPLY_KEEP:]
 
     @staticmethod
     def _is_prompt(rec, msg):
@@ -830,6 +839,8 @@ class Collector:
         self.loading = set()    # 따로 읽는 중인 기록
         self.loaded = {}        # 따로 다 읽은 기록 path -> Transcript(다음 회차에 넘겨받는다)
         self._load_lock = threading.Lock()   # 큰 기록은 한 번에 하나씩 읽는다
+        self.turns = {}
+        self.relayed = collections.deque(maxlen=200)   # 텔레그램으로 넘긴(또는 건너뛴) 답 id
         self.speech = True      # 허브 설정 'speech' 를 따른다
         self.transcripts = {}   # path -> Transcript
         self.paths = {}         # sessionId -> jsonl path
@@ -869,6 +880,19 @@ class Collector:
                 self.loading.discard(path)
                 return
             self.loaded[path] = t
+
+    def replies(self, relay):
+        """텔레그램에 붙인 세션마다 보낼 답: 턴이 끝났고(busy 아님) 붙인 뒤에 나온 새 답 중 마지막 것.
+        [(세션, 보낼 답, 이번에 처리한 답 id들)] — 턴 중간의 말은 건너뛴다(보낸 것으로 친다)."""
+        out = []
+        for sid, at in relay.items():
+            x = self.turns.get(sid)
+            if not x or x[1] == "busy":
+                continue
+            new = [t for t in x[0].texts if t["ts"] >= at - 5 and t["id"] not in self.relayed]
+            if new:
+                out.append((sid, new[-1], [t["id"] for t in new]))
+        return out
 
     def find_jsonl(self, sid, cwd, root):
         p = self.paths.get(sid)
@@ -935,6 +959,7 @@ class Collector:
     def collect(self):
         now = time.time()
         self.used = set()
+        self.turns = {}   # 이번 회차: 세션 → (기록, 상태). 텔레그램 답 보내기가 쓴다
         socks = {}   # 다 모은 뒤 한 번에 바꾼다 — 메시지 스레드가 반쯤 찬 사전을 읽지 않게
         agents = []
         seen = set()
@@ -982,6 +1007,7 @@ class Collector:
                 kind = "approval"   # 권한 창을 띄우고 사용자의 승인을 기다리는 중(훅을 넣은 경우만 안다)
             since = (ev["ts"] if approval else None) or (cur or {}).get("ts") or (s.get("statusUpdatedAt", 0) / 1000) or last
             trs = [tr]
+            self.turns[sid] = (tr, status)
             subs = self.subagents(jsonl, tr, now, trs) if jsonl else []
             project, worktree = project_of(cwd)
             sl = status_line(sid, now)
@@ -1422,7 +1448,11 @@ def post(hub, payload, timeout=SEND_TIMEOUT):
     req = urllib.request.Request(hub.rstrip("/") + "/api/ingest", data=json.dumps(payload).encode(),
                                  headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        r.read()
+        body = r.read()
+    try:
+        return json.loads(body or b"{}")
+    except ValueError:
+        return {}
 
 
 def api(hub, path, payload, timeout=SEND_TIMEOUT):
@@ -1448,12 +1478,13 @@ def socket_ok(path):
     return stat.S_ISSOCK(st.st_mode) and st.st_uid == os.getuid()
 
 
-def deliver(sock_path, text):
+def deliver(sock_path, text, via=""):
     """세션 수신함 소켓에 한 줄짜리 메시지를 쓴다(Claude Code 의 교차 세션 메시지 형식).
 
     인증 줄은 보내지 않는다 — 받는 세션은 이 메시지를 '다른 세션이 보낸 것'으로 다루고, 그 세션의
     수신 규칙(crossSessionInbound, 권한 모드)에 따라 바로 전달하거나 터미널에서 승인을 기다린다."""
-    line = json.dumps({"type": "user", "message": {"role": "user", "content": MESSAGE_PREFIX + text}}, ensure_ascii=False)
+    prefix = MESSAGE_PREFIX_TG if via == "telegram" else MESSAGE_PREFIX
+    line = json.dumps({"type": "user", "message": {"role": "user", "content": prefix + text}}, ensure_ascii=False)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(5)
     try:
@@ -1480,7 +1511,7 @@ def handle_outbox(hub, host, col, items):
             err = "그 세션의 수신함을 찾지 못했다(끝났거나 메시지를 받지 않는 세션)"
         else:
             try:
-                deliver(sock, text)
+                deliver(sock, text, str(m.get("via") or ""))
                 ok = True
             except Exception as e:   # OSError 말고도(UnicodeEncodeError 등) 이 메시지만 실패로 보고 다음으로
                 err = f"전달 실패: {e}"
@@ -1602,6 +1633,7 @@ class Sender:
         self.patch_ok = True      # 허브가 patch 를 받는다
         self.sigs, self.full, self.order, self.meta = {}, {}, [], None
         self.last_at = 0.0
+        self.relay = {}           # 허브가 알려 준 '답을 텔레그램으로 보낼 세션' → 붙인 시각
 
     @staticmethod
     def _sig(a, with_activity=False):
@@ -1609,6 +1641,10 @@ class Sender:
 
     def reset(self):
         self.synced = False
+
+    def _relay(self, r):
+        rel = r.get("relay") if isinstance(r, dict) else None
+        self.relay = {str(k): float(v) for k, v in rel.items() if isinstance(v, (int, float))} if isinstance(rel, dict) else {}
 
     def send(self, agents, meta, now=None):
         """보낼 게 있으면 보내고 무엇을 했는지 돌려준다('full'·'patch'·None). 네트워크 오류는 그대로 올린다."""
@@ -1631,6 +1667,7 @@ class Sender:
                 if r.get("ok"):
                     self.seq += 1
                     kind = "patch"
+                    self._relay(r)
                 else:
                     self.synced = False   # 허브가 다시 떴거나 전송을 놓쳤다 → 아래에서 전체
             except urllib.error.HTTPError as e:
@@ -1638,13 +1675,24 @@ class Sender:
                     raise
                 self.patch_ok = False     # 예전 허브: 앞으로는 전체만
         if kind is None:
-            post(self.hub, {"host": self.host, "machine": self.machine, "agents": agents, "meta": meta, "seq": self.seq + 1})
+            self._relay(post(self.hub, {"host": self.host, "machine": self.machine, "agents": agents, "meta": meta, "seq": self.seq + 1}))
             self.seq += 1
             self.synced = True
             kind = "full"
         self.sigs, self.order, self.meta, self.last_at = sigs, order, meta, now
         self.full = {a["id"]: self._sig(a, True) for a in agents}
         return kind
+
+
+def send_replies(hub, host, col, relay):
+    """텔레그램에 붙인 세션의 답을 허브로. 실패하면 다음 회차에 다시(처리한 것으로 치지 않는다)."""
+    for sid, item, ids in col.replies(relay):
+        try:
+            api(hub, "/api/telegram/relay", {"host": host, "session": sid, "items": [item]})
+        except urllib.error.HTTPError as e:
+            if e.code not in (404, 405):   # 예전 허브면 텔레그램이 없다 — 건너뛴 것으로 친다
+                raise
+        col.relayed.extend(ids)
 
 
 def run(args, col, after_first=None):
@@ -1670,7 +1718,9 @@ def run(args, col, after_first=None):
             meta = {"checklistRule": checklist_rule_installed(), "setup": setup_status()}
             if sys_val := system_stats():
                 meta["sys"] = sys_val
-            if sender.send(agents, meta):
+            sent = sender.send(agents, meta)
+            send_replies(args.hub, args.host, col, sender.relay)
+            if sent:
                 if failing:
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "허브 연결 복구", flush=True)
                     failing = False

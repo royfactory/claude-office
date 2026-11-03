@@ -18,6 +18,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **What needs you.** A chip at the top gathers every session waiting for approval, stuck, or newly finished, across all floors — with sound and tab-title counts if you want them.
 - **Computer load.** CPU, GPU, memory and disk gauges for the computer on the floor you are viewing, right above the usage-limit bar. Click the memory gauge for memory by session (process plus children), with sessions idle for over an hour flagged as cleanup candidates.
 - **Same-file warning.** When two sessions on one computer edit the same file within ten minutes, a "Same file" chip appears at the top and in both sessions' details.
+- **Telegram.** Get approval, done and stuck notifications on your phone, attach one session to a chat and talk to it from Telegram (its last reply of each turn comes back), and optionally approve from Telegram. Linked chats get their own floor at the top of the building.
 - **Resume.** Each session's details have a button that copies `cd <folder> && claude --resume <id>` (with `CLAUDE_CONFIG_DIR` for non-default profiles).
 - **Daily and weekly summary.** Active time, tool calls, lines changed, output tokens and sessions per project, for today or the last 7 days (Recent activity → Summary). Stored on the hub in `data/stats.json`.
 - **Git status per floor.** Uncommitted changes and unpushed commits for each project's checkouts (counts only). On macOS the collector needs Full Disk Access to read repos inside Desktop or Documents; the Guide tab's setup checklist shows how.
@@ -143,6 +144,7 @@ Your prompts, command text, and file contents are never sent. Turn speech bubble
 | `OFFICE_BIND` / `OFFICE_PORT` | hub | `127.0.0.1` / `3006` | listen address |
 | `OFFICE_DATA` | hub (direct run) | `./data` | settings and images (Docker uses the `office_data` volume) |
 | `OFFICE_TOKEN` | both | | required for writes (collector, settings, images, messages) when set |
+| `OFFICE_TELEGRAM_TOKEN` | hub | | Telegram bot token from @BotFather; turns on the Telegram bridge |
 
 The collector reads `~/.claude` and Orca profiles (`~/Library/Application Support/orca/claude-profiles/*/home`). After editing `.env`, re-run `docker compose up -d` for the hub and the install command for the collector.
 
@@ -155,6 +157,7 @@ All of these are off unless you turn them on. Details are in the [Korean README]
 | **Approval-wait detection.** Show sessions stopped at a permission prompt. A Claude Code hook writes only the last event name and time to a local file; nothing goes over the network. | `python3 hooks/install_hooks.py --apply` (preview without `--apply`, undo with `--remove`) |
 | **Approve / deny from the dashboard.** "Allow once" and "Deny" buttons with a command preview. The terminal prompt stays up and whichever answers first wins. | `OFFICE_TOKEN` on the hub, the switch in `/admin`, `CLAUDE_OFFICE_APPROVE=on` on that computer, and `install_hooks.py --approve --apply` |
 | **Message a session.** Type into a session from the dashboard. Uses Claude Code's [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging); macOS/Linux only. | `OFFICE_TOKEN`, the switch in `/admin`, and `CLAUDE_OFFICE_MESSAGES=on` on that computer |
+| **Telegram.** Notifications for approvals, finished turns (longer than a threshold) and stuck sessions; reply to a notification to message that session; `/status` and `/use N` to attach a session so the chat talks to it and each turn's last reply comes back; optional Allow/Deny buttons. The hub long-polls Telegram, so it doesn't need to be reachable from the internet. Linking needs a one-time code from `/admin`, private chats only. Notification text, your Telegram messages and the attached session's replies pass through Telegram's servers. | `OFFICE_TELEGRAM_TOKEN` in the hub `.env`, restart the hub, then `/admin` → Telegram → Get a link code. Messaging (above) is needed to talk to a session |
 | **Usage-limit bar.** 5-hour and weekly limits from the [status line](https://code.claude.com/docs/en/statusline), per account. Your existing status line keeps working. Terminal (CLI) sessions only. | `install_hooks.py --statusline --apply` |
 
 ## Operations

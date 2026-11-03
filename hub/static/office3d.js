@@ -1178,7 +1178,8 @@ function stateOf(a) {
 }
 function roomFor(key, a, parentRoom) {
   let room;
-  if (a.kind === "idle") room = "lounge";
+  if (a.fixedRoom) room = a.fixedRoom;
+  else if (a.kind === "idle") room = "lounge";
   else if (a.kind === "waiting") room = (a.bg && a.bg[0]) ? roomForTool(cfg, a.bg[0].tool) : (lastRoom.get(key) || "server");
   else if (a.kind === "shell") room = "server";
   else if (a.tool) room = roomForTool(cfg, a.tool);
@@ -1188,8 +1189,9 @@ function roomFor(key, a, parentRoom) {
   return room;
 }
 function floors() {
-  const m = new Map();
+  const m = new Map(), tg = tgFloor();
   for (const a of state.agents) {
+    if (tg && tg.bound.has(a.host + "/" + a.id)) { tg.floor.agents.push(a); continue; }   // 텔레그램에 붙인 세션은 그 층으로
     const f = m.get(a.project) || { project: a.project, agents: [], busy: 0, last: 0, first: Infinity, host: a.host };
     f.agents.push(a); f.busy += a.kind !== "idle" ? 1 : 0;
     f.last = Math.max(f.last, a.lastActivity || 0); f.first = Math.min(f.first, a.startedAt || 0);
@@ -1200,8 +1202,43 @@ function floors() {
   const under = f => !f.busy && now - f.last > BASEMENT_SEC;
   const up = all.filter(f => !under(f)).sort((x, y) => x.first - y.first).map((f, i) => ({ ...f, n: i + 1 }));
   const down = all.filter(under).sort((x, y) => y.last - x.last).map((f, i) => ({ ...f, n: -(i + 1), under: true }));
+  if (tg) {   // 맨 위층. 비서·연결된 사람은 화면에만 있는 사람이라 근무 수에 세지 않는다
+    const f = tg.floor;
+    for (const a of f.agents) if (!a.virtual) { f.busy += a.kind !== "idle" ? 1 : 0; f.last = Math.max(f.last, a.lastActivity || 0); f.host = f.host || a.host; }
+    up.push({ ...f, n: up.length + 1 });
+  }
   return up.concat(down).map(f => ({ ...f, git: floorGit(f) }));
 }
+// ---------- 텔레그램 층 ----------
+// 허브에 봇이 있고 연결된 채팅이 하나라도 있으면 맨 위에 「Telegram」 층이 생긴다. 붙인 세션이 이 층으로 오고,
+// 회의실에 봇 비서(🤖), 라운지에 연결된 사람(📱)이 있다. 비서·사람은 화면에만 있는 사람(virtual) — 근무 수·순회·요약에 세지 않는다
+const TG_FLOOR = "Telegram";
+const TG_BOT_CH = { id: "_tgbot", name: "텔레그램 비서", emoji: "🤖", color: "#229ED9", image: "", states: {} };
+const TG_USER_CH = { id: "_tguser", name: "텔레그램", emoji: "📱", color: "#38bdf8", image: "", states: {} };
+function tgFloor() {
+  const tg = state && state.telegram;
+  if (!tg || !tg.enabled || !(tg.links || []).length) return null;
+  const now = Date.now() / 1000 - skew, log = tg.log || [];
+  const recent = x => x && now - x.ts < 600;
+  const lastBot = [...log].reverse().find(x => x.dir === "out");
+  const bot = { id: "_tg:bot", virtual: "bot", virtualCh: TG_BOT_CH, project: TG_FLOOR, host: "", name: tg.bot ? "@" + tg.bot : t("텔레그램 비서"),
+    title: t("텔레그램 비서"), kind: "waiting", fixedRoom: "meeting", since: (lastBot || {}).ts || now, lastActivity: (lastBot || {}).ts || 0, startedAt: 0, tools: 0,
+    say: recent(lastBot) ? `${tgKindIcon(lastBot.kind)} ${lastBot.text}` : "",
+    pill: `<i class="fa-solid fa-paper-plane"></i>${esc(tg.bot ? "@" + tg.bot : t("텔레그램 비서"))}${tg.error ? ` · <span class="tg-err">${esc(t("연결 오류"))}</span>` : ""}` };
+  const people = tg.links.map(l => {
+    const last = [...log].reverse().find(x => x.dir === "in" && x.who === l.name);
+    return { id: "_tg:" + l.id, virtual: "user", link: l, virtualCh: TG_USER_CH, project: TG_FLOOR, host: "", name: l.name, title: l.name,
+      kind: "idle", since: (last || {}).ts || now, lastActivity: (last || {}).ts || 0, startedAt: 0, tools: 0,
+      say: recent(last) && last.kind === "msg" ? last.text : "",
+      pill: `<i class="fa-solid fa-mobile-screen"></i>${esc(l.name)}${l.muted ? ` · <i class="fa-solid fa-bell-slash"></i>` : ""}` };
+  });
+  const bound = new Set(tg.links.filter(l => l.bind).map(l => l.bind.host + "/" + l.bind.session));
+  return { bound, floor: { project: TG_FLOOR, tg: true, agents: [bot, ...people], busy: 0, last: 0, first: 0, host: "" } };
+}
+const realN = f => f.agents.filter(a => !a.virtual).length;   // 층의 세션 수(텔레그램 층의 비서·사람은 빼고)
+const tgKindIcon = k => ({ approval: "✋", done: "✅", stalled: "⏳", reply: "💬", bind: "📎", link: "🔗", allow: "👍", deny: "🙅" }[k] || "✉️");
+function tgLinks() { return (state && state.telegram && state.telegram.enabled && state.telegram.links) || []; }
+function tgBoundTo(a) { return tgLinks().filter(l => l.bind && l.bind.host === a.host && l.bind.session === a.id); }
 // 층의 git 상태: 작업 폴더(저장소 뿌리·worktree)마다 한 번씩 더한다. 수집기가 30초마다 잰 값
 function floorGit(f) {
   const seen = new Map();
@@ -1283,7 +1320,7 @@ function apply(instant) {
   const items = [];
   for (const a of agents) {
     const room = roomFor(a.id, a);
-    items.push({ key: a.id, a, st: stateOf(a), room, sub: false, ch: chars.get(a.id) });
+    items.push({ key: a.id, a, st: stateOf(a), room, sub: false, ch: a.virtualCh || chars.get(a.id) });
     for (const s of a.subagents || []) {
       const key = a.id + "/" + s.id;
       const sa = { ...s, kind: s.tool ? "working" : "thinking", lastActivity: s.since, name: s.type };
@@ -1362,6 +1399,7 @@ function updateMe() {
 
 // ---------- 화면 글자 ----------
 function stateHTML(a, st, now) {
+  if (a.virtual) return a.pill;
   if (a.hostStale) return `<i class="fa-solid fa-plug-circle-xmark"></i>${t("연결 끊김 · 다시 이어지길 기다리는 중")}`;
   if (st === "waiting") {
     const n = (a.bg || []).length, b = (a.bg || [])[0];
@@ -1429,7 +1467,7 @@ function autoPick(floor) {
   if (alive) return;
   if (selected && autoPicked) pickPending = true;     // 자동으로 고른 세션이 끝나 사라졌으면 다음 후보
   if (!pickPending) return;                           // 사람이 선택을 풀었으면 이 층에서는 다시 고르지 않는다
-  const best = floor.agents.slice().sort((a, b) =>
+  const best = (floor.agents.some(a => !a.virtual) ? floor.agents.filter(a => !a.virtual) : floor.agents).slice().sort((a, b) =>
     (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0))[0];
   selected = best.id; pickPending = false; autoPicked = true;
 }
@@ -1573,15 +1611,15 @@ function renderFloors(fl) {
     const ws = f.agents.slice().sort((a, b) => (b.kind !== "idle") - (a.kind !== "idle") || (b.lastActivity || 0) - (a.lastActivity || 0));
     // 밀도(fitBuilding)마다 보일 것만 CSS 가 고른다: .x = 한 줄 밀도에서 숨는 창, .m-full·.m-row = 밀도별 "+n"
     const wins = ws.slice(0, MAX_WINDOWS).map((a, i) => {
-      const ch = chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
+      const ch = a.virtualCh || chars.get(a.id), st = stateOf(a), l = ch ? lookFor(ch, st) : { emoji: "🙂" };
       const face = l.image ? `<img src="/assets/${encodeURIComponent(l.image)}" alt="">` : esc(l.emoji || "🙂");
       return `<span class="win ${a.kind !== "idle" ? "lit" : ""} w-${st}${i >= ROW_WINDOWS ? " x" : ""}" title="${esc(a.title || a.name)} · ${STATE_WORD[st]}">${face}</span>`;
     }).join("") + (ws.length > MAX_WINDOWS ? `<span class="win more m-full">+${ws.length - MAX_WINDOWS}</span>` : "")
       + (ws.length > ROW_WINDOWS ? `<span class="win more m-row">+${ws.length - ROW_WINDOWS}</span>` : "");
     return `<div class="story${f.project === floorKey ? " cur" : ""}${f.busy ? " busy" : ""}${f.under ? " under" : ""}" data-p="${esc(f.project)}">
       <span class="no" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span>
-      <span class="info"><span class="nm"><b>${esc(f.project)}</b>${gitBadge(f.git)}</span><small>${f.busy ? `<em>${t("{n}명 근무 중", { n: f.busy })}</em> · ` : ""}${t("세션 {n}개", { n: f.agents.length })}${f.busy ? "" : " · " + agoSpan(f.last, t(" 전"))}</small>
-      <span class="wins">${wins}</span><span class="cnt" title="${t("근무 중 / 세션")}"><em>${f.busy}</em>/${f.agents.length}</span></span></div>`;
+      <span class="info"><span class="nm"><b>${esc(f.project)}</b>${gitBadge(f.git)}</span><small>${f.busy ? `<em>${t("{n}명 근무 중", { n: f.busy })}</em> · ` : ""}${t("세션 {n}개", { n: realN(f) })}${f.busy ? "" : " · " + agoSpan(f.last, t(" 전"))}</small>
+      <span class="wins">${wins}</span><span class="cnt" title="${t("근무 중 / 세션")}"><em>${f.busy}</em>/${realN(f)}</span></span></div>`;
   };
   // 위에서부터: 지상 층(높은 층 먼저) → 로비(컴퓨터들) → 지하 층(B1 부터 깊은 쪽으로)
   const up = fl.filter(f => f.n > 0).reverse(), down = fl.filter(f => f.n < 0);
@@ -1595,7 +1633,7 @@ function renderFloors(fl) {
   // 엘리베이터 칸을 지금 보는 층으로 옮긴다(위치가 바뀌면 미끄러지듯 이동)
   if (!(transit && transit.phase === "ride")) placeCar(floorKey);
   const f = fl.find(x => x.project === floorKey);
-  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b>${gitBadge(f.git)}<small>${esc(f.host || "")} · ${t("세션 {n}개", { n: f.agents.length })}</small>` : "");
+  setHTML($("floorBadge"), f ? `<span class="badge" style="--h:${floorHue(f.n)}">${floorLabel(f.n)}</span><b>${esc(f.project)}</b>${gitBadge(f.git)}<small>${esc(f.host || "")} · ${t("세션 {n}개", { n: realN(f) })}</small>` : "");
 }
 // 왼쪽 빌딩을 스크롤 없이 보이게: 넉넉한 밀도부터 들어갈 때까지 줄인다.
 // full = 이름·상태·창문 세 줄, row = 한 줄에 창문 3개까지, tight = 한 줄에 근무/세션 숫자만(지붕·로비도 줄인다).
@@ -1625,20 +1663,70 @@ function renderPeople(floor, chars) {
   if (!floor) { setHTML($("people"), ""); setHTML($("detail"), ""); updateCompose(null); updateSessionTab(null); return; }
   const rows = [];
   for (const a of floor.agents) {
+    if (a.virtual) { rows.push(tgPersonRow(a)); continue; }
     rows.push(personRow(a.id, a, chars.get(a.id), stateOf(a), a.title || a.name, a.worktree ? `${a.name} · worktree ${a.worktree}` : a.name, now, false));
     for (const s of a.subagents || []) rows.push(personRow(a.id + "/" + s.id, { ...s, kind: s.tool ? "working" : "thinking", lastActivity: s.since }, chars.get(a.id + "/" + s.id), s.tool ? "working" : "thinking", `${s.type}${s.description ? " · " + s.description : ""}`, t("서브에이전트"), now, true));
   }
-  const busy = floor.agents.filter(a => a.kind !== "idle").length;
-  setText($("peopleHead"), t("{n}명 · {b}명 근무 중", { n: floor.agents.length, b: busy }));
-  setText($("tabPeopleN"), String(floor.agents.length || ""));
+  const real = floor.agents.filter(a => !a.virtual), busy = real.filter(a => a.kind !== "idle").length;
+  setText($("peopleHead"), t("{n}명 · {b}명 근무 중", { n: real.length, b: busy }));
+  setText($("tabPeopleN"), String(real.length || ""));
   setHTML($("people"), rows.join(""));
   tickTimes($("people"), now);
   const a = floor.agents.find(x => x.id === selected) || floor.agents.find(x => selected && selected.startsWith(x.id + "/"));
-  setHTML($("detail"), a ? detailCard(a, chars.get(a.id), now) : "");
+  setHTML($("detail"), a ? (a.virtual ? tgCard(a, now) : detailCard(a, chars.get(a.id), now)) : "");
   tickTimes($("detail"), now);
-  updateCompose(a, now);
+  updateCompose(a && !a.virtual ? a : null, now);
   updateSessionTab(a);
 }
+// 텔레그램 층의 비서·연결된 사람: 목록 한 줄과 고르면 나오는 칸
+function tgPersonRow(a) {
+  const ch = a.virtualCh, sub = a.virtual === "bot" ? t("텔레그램 봇 · 알림과 붙인 세션의 답을 보냅니다") : (a.link.bind ? `📎 ${tgSessionName(a.link.bind)}` : t("붙인 세션 없음"));
+  return `<li data-k="${esc(a.id)}" class="${selected === a.id ? "on" : ""}">
+    <span class="av" style="--c:${ch.color}"><span class="emo">${esc(ch.emoji)}</span></span>
+    <span class="body"><span class="r1"><b>${esc(a.title)}</b><span class="st st-waiting">${a.virtual === "bot" ? "BOT" : "TG"}</span></span>
+    <span class="r2">${esc(a.say || "")}</span><span class="r3">${esc(sub)}</span></span></li>`;
+}
+function tgSessionName(b) {
+  const a = state.agents.find(x => x.host === b.host && x.id === b.session);
+  return a ? `${a.project} · ${a.title || a.name}` : `${b.host} · ${b.session.slice(0, 8)}`;
+}
+function tgCard(a, now) {
+  const tg = state.telegram || {};
+  const log = (tg.log || []).filter(x => a.virtual === "bot" || x.who === a.name || (x.dir === "out" && a.link.bind && x.session === a.link.bind.session)).slice(-12).reverse();
+  const links = a.virtual === "bot" ? tg.links : [a.link];
+  return `<div class="detail tg-card"><div class="dh"><span class="av big" style="--c:${a.virtualCh.color}"><span class="emo">${esc(a.virtualCh.emoji)}</span></span>
+    <span><b>${esc(a.title)}</b><small>${a.virtual === "bot" ? esc(tg.bot ? "@" + tg.bot : "") + (tg.error ? ` · ${esc(tg.error)}` : "") : t("텔레그램 개인 채팅")}</small></span></div>
+    <h4>${t("연결된 채팅")}</h4><ul class="tg-l">${links.map(l => `<li><i class="fa-solid fa-mobile-screen"></i><b>${esc(l.name)}</b>${l.muted ? ` <i class="fa-solid fa-bell-slash" title="${esc(t("알림 꺼짐"))}"></i>` : ""}
+      <small>${l.bind ? `📎 ${esc(tgSessionName(l.bind))}` : t("붙인 세션 없음 — 텔레그램에서 /status → /use 번호, 또는 세션 상세의 「텔레그램에 붙이기」")}</small></li>`).join("")}</ul>
+    <h4>${t("최근에 오간 것")}</h4>${log.length ? `<ol class="recent tg-log">${log.map(x => `<li><span class="t">${x.dir === "in" ? "⬅" : "➡"} ${tgKindIcon(x.kind)}</span><span class="g">${esc(x.text || x.who)}</span><span class="a">${agoSpan(x.ts)}</span></li>`).join("")}</ol>` : `<div class="muted">${t("기록 없음")}</div>`}
+    <p class="muted tg-note">${t("글 내용·답은 텔레그램 서버를 거칩니다. 관리 화면 「텔레그램」에서 알림 종류와 내용 수준을 고릅니다.")}</p></div>`;
+}
+// 세션 상세: 텔레그램에 붙이기·떼기(연결된 채팅이 여럿이면 고른다)
+function tgBindBox(a) {
+  const links = tgLinks();
+  if (!links.length) return "";
+  const mine = tgBoundTo(a);
+  return `<div class="tg-bind">${mine.length ? `<i class="fa-solid fa-paperclip"></i> ${t("텔레그램 {name} 에 붙음 — 거기서 보낸 글이 이 세션으로 오고, 턴마다 마지막 답이 거기로 갑니다.", { name: esc(mine.map(l => l.name).join(", ")) })}
+      <button class="copy" data-tgbind="off"><i class="fa-solid fa-link-slash"></i> ${t("떼기")}</button>`
+    : `<button class="copy" data-tgbind="on" title="${esc(t("텔레그램에서 이 세션과 대화합니다"))}"><i class="fa-solid fa-paper-plane"></i> ${t("텔레그램에 붙이기")}</button>`}</div>`;
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-tgbind]"); if (!b) return;
+  const a = state.agents.find(x => x.id === selected || (selected && selected.startsWith(x.id + "/"))); if (!a) return;
+  let links = b.dataset.tgbind === "off" ? tgBoundTo(a) : tgLinks();
+  if (b.dataset.tgbind === "on" && links.length > 1) {
+    const pick = prompt(t("어느 텔레그램에 붙일까요? 번호를 넣으세요") + "\n" + links.map((l, i) => `${i + 1}. ${l.name}`).join("\n"), "1");
+    const l = links[(+pick || 0) - 1]; if (!l) return;
+    links = [l];
+  }
+  b.disabled = true;
+  for (const l of links) {
+    const r = await tokenFetch("/api/telegram/bind", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(b.dataset.tgbind === "off" ? { link: l.id } : { link: l.id, host: a.host, session: a.id }) }).catch(() => null);
+    if (!r || !r.ok) { alert(t("붙이지 못했습니다") + (r ? ` (${r.status})` : "")); break; }
+  }
+  b.disabled = false;
+});
 function personRow(key, a, ch, st, title, sub, now, isSub) {
   const label = STATE_WORD[st];
   const line = st === "working" ? `${a.tool || t("셸")}${a.target ? " · " + a.target : ""}`
@@ -1824,6 +1912,7 @@ function detailCard(a, ch, now) {
     ${a.resume ? `<button class="copy resume" data-resume="${esc(a.resume)}" title="${esc(t("이 세션을 다시 여는 명령을 복사합니다(터미널에 붙여 넣기)"))}\n${esc(a.resume)}"><i class="fa-solid fa-terminal"></i> ${t("다시 열기")}</button>` : ""}</div>
     ${sessionMeta(a)}
     ${a.kind === "approval" ? `<div class="approval-note"><i class="fa-solid fa-hand"></i> ${t("권한 승인을 기다리는 중")}${a.tool ? ` · <code>${esc(a.tool)}</code>` : ""}${a.target ? ` · ${esc(a.target)}` : ""} · ${agoSpan(a.since || null, t("째"))}<small>${t("그 컴퓨터의 터미널에서 승인하거나 거절하면 풀립니다.")}</small>${approvalBox(a)}</div>` : ""}
+    ${tgBindBox(a)}
     ${clashes().has(a.id) ? `<div class="clash-note"><i class="fa-solid fa-code-merge"></i>${t("다른 세션도 같은 파일을 방금 고쳤습니다 — 서로 덮어쓰지 않게 확인하세요.")}<small>${clashText(clashes().get(a.id))}</small></div>` : ""}
     ${oldIdle(a) ? `<div class="idle-note"><i class="fa-solid fa-broom"></i>${t("{x}째 쉬는 중입니다.", { x: shortDur(now - (a.since || a.lastActivity)) })}${a.mem > 0 ? " " + t("메모리 {x}를 쓰고 있어요.", { x: fmtMem(a.mem) }) : ""} ${t("안 쓰면 그 터미널에서 /exit 로 닫고, 나중에 이어서 열 수 있습니다.")}</div>` : ""}
     ${a.say && cfg.speech !== false ? `<p class="quote">“${esc(a.say)}”</p>` : ""}
@@ -1989,7 +2078,8 @@ async function sendCompose() {
 
 function renderLog(floor) {
   const now = Date.now() / 1000 - skew;
-  const l = floor ? (logs.get(floor.project) || []) : [];
+  const l = floor && floor.tg ? ((state.telegram || {}).log || []).slice().reverse().map(x => ({ ts: x.ts, who: x.dir === "in" ? x.who : "🤖", text: `${tgKindIcon(x.kind)} ${x.text || ""}` }))
+    : floor ? (logs.get(floor.project) || []) : [];
   setHTML($("log"), l.slice(0, 30).map(x => `<li><span class="a">${agoSpan(x.ts, t(" 전"))}</span><span class="w">${esc(x.who)}</span><span class="x">${x.icon ? `<i class="fa-solid fa-${x.icon}"></i> ` : ""}${esc(x.text)}</span></li>`).join("") || `<li class="muted">${t("아직 기록이 없습니다.")}</li>`);
   tickTimes($("log"), now);
 }

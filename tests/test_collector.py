@@ -692,7 +692,7 @@ def test_handle_outbox_uses_socket_snapshot(collector, monkeypatch):
     monkeypatch.setattr(collector, "WINDOWS", False)
     monkeypatch.setattr(collector, "socket_ok", lambda p: True)
     delivered, results = [], []
-    monkeypatch.setattr(collector, "deliver", lambda sock, text: delivered.append((sock, text)))
+    monkeypatch.setattr(collector, "deliver", lambda sock, text, via="": delivered.append((sock, text)))
     col = collector.Collector("basic")
     col.sockets = {"a": "/sock/a", "b": "/sock/b"}
 
@@ -738,7 +738,7 @@ def test_handle_outbox_result_failure_does_not_drop_rest(collector, monkeypatch,
     monkeypatch.setattr(collector, "WINDOWS", False)
     monkeypatch.setattr(collector, "socket_ok", lambda p: True)
     delivered, reported = [], []
-    monkeypatch.setattr(collector, "deliver", lambda sock, text: delivered.append(text))
+    monkeypatch.setattr(collector, "deliver", lambda sock, text, via="": delivered.append(text))
 
     def flaky_api(hub, path, payload, timeout=5):
         reported.append(payload["id"])
@@ -761,7 +761,7 @@ def test_handle_outbox_deliver_error_fails_only_that_message(collector, monkeypa
     monkeypatch.setattr(collector, "socket_ok", lambda p: True)
     delivered, results = [], []
 
-    def deliver(sock, text):
+    def deliver(sock, text, via=""):
         if text == "bad":
             "\ud800".encode("utf-8")                        # 짝 없는 서로게이트 → UnicodeEncodeError(OSError 아님)
         delivered.append(text)
@@ -1403,3 +1403,71 @@ def test_big_transcript_loads_in_background_then_fills(collector, home, monkeypa
         time.sleep(0.01)
     a = col.collect()[0]
     assert a["title"] == "큰 기록" and a["tools"] == 1 and not col.loading and not col.loaded
+
+
+# ---------- 텔레그램에 붙인 세션의 답 ----------
+
+def reply(text, uuid, ts=TS, sidechain=False):
+    r = said(text, ts)
+    r.update(uuid=uuid, isSidechain=sidechain)
+    return r
+
+
+def test_replies_send_last_text_of_finished_turn_after_bind(collector, home):
+    old = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 3600))
+    recs = [reply("붙이기 전 답", "u0", ts=old), reply("중간 말", "u1"), reply("서브", "u9", sidechain=True), reply("최종 답입니다", "u2")]
+    make_session(home, recs, status="busy")
+    col = collector.Collector("basic")
+    col.collect()
+    relay = {SID: time.time() - 60}
+    assert col.replies(relay) == []                                   # 턴이 아직 안 끝났다
+    make_session(home, recs, status="idle")                           # 같은 기록, 세션 파일만 idle 로
+    col.collect()
+    (sid, item, ids), = col.replies(relay)
+    assert sid == SID and item["text"] == "최종 답입니다" and len(ids) == 2   # 중간 말은 건너뛴 것으로
+    col.relayed.extend(ids)
+    assert col.replies(relay) == []
+    assert col.replies({}) == []
+
+
+def test_replies_none_detail_keeps_nothing(collector, home):
+    make_session(home, [reply("답", "u1")], status="idle")
+    col = collector.Collector("none")
+    col.collect()
+    assert col.replies({SID: 0}) == []
+
+
+def test_send_replies_posts_and_marks(collector, home, monkeypatch):
+    make_session(home, [reply("답", "u1")], status="idle")
+    col = collector.Collector("basic")
+    col.collect()
+    calls = []
+    monkeypatch.setattr(collector, "api", lambda hub, path, body, timeout=5: calls.append((path, body)) or {"ok": True})
+    collector.send_replies("http://hub", "mac", col, {SID: 0})
+    collector.send_replies("http://hub", "mac", col, {SID: 0})
+    assert len(calls) == 1 and calls[0][0] == "/api/telegram/relay" and calls[0][1]["items"][0]["text"] == "답"
+
+
+def test_sender_remembers_relay_from_hub_reply(collector, monkeypatch):
+    monkeypatch.setattr(collector, "post", lambda hub, body, timeout=5: {"ok": True, "relay": {"s1": 123.0}})
+    s = collector.Sender("http://hub", "mac")
+    s.send([{"id": "s1"}], {})
+    assert s.relay == {"s1": 123.0}
+    monkeypatch.setattr(collector, "api", lambda hub, path, body, timeout=5: {"ok": True})
+    s.send([{"id": "s1", "x": 1}], {})
+    assert s.relay == {}                                              # 붙이기를 떼면 허브 답에 relay 가 없다
+
+
+@posix_only
+def test_telegram_message_uses_its_own_prefix(collector, fake_socket):
+    import socket as _s
+    srv = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
+    os.unlink(fake_socket)
+    srv.bind(fake_socket)
+    srv.listen(1)
+    collector.deliver(fake_socket, "안녕", "telegram")
+    conn, _ = srv.accept()
+    got = json.loads(conn.recv(65536).decode().strip())
+    conn.close()
+    srv.close()
+    assert got["message"]["content"].startswith(collector.MESSAGE_PREFIX_TG) and got["message"]["content"].endswith("안녕")

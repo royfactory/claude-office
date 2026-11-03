@@ -78,6 +78,18 @@
   dialog::backdrop { background: rgba(0,0,0,.6); }
   dialog h3 { margin: 0 0 10px; color: var(--text-hi); font-size: 15px; }
   @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  /* 텔레그램 */
+  .tg-steps { margin: 0 0 8px; padding-left: 20px; font-size: 13px; line-height: 1.7; }
+  .tg-steps code { font-size: 12px; }
+  .tg-state { font-size: 13px; margin-bottom: 10px; } .tg-state .ok { color: var(--good); } .tg-state .bad { color: var(--bad); }
+  .tg-code { display: inline-flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--border-2); }
+  .tg-code b { font-size: 22px; letter-spacing: .18em; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+  .tg-links { display: grid; gap: 8px; margin-top: 10px; }
+  .tg-link { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
+  .tg-link .h { display: flex; gap: 8px; align-items: center; } .tg-link .h b { color: var(--text-hi); } .tg-link .h .sp { flex: 1; }
+  .tg-link .bind { color: var(--text-dim); font-size: 12px; }
+  .tg-link .flt { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
+  .tg-opts { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -133,6 +145,22 @@
       <label class="row" style="font-size:13px">언어 <select id="language"><option value="auto">자동(브라우저 언어)</option><option value="ko">한국어</option><option value="en">English</option></select></label>
     </div>
     <div id="accounts"></div>
+  </section>
+
+  <section class="card" id="tgCard">
+    <h2><i class="fa-solid fa-paper-plane"></i> 텔레그램</h2>
+    <p class="help">휴대폰 텔레그램으로 승인 대기·작업 완료 알림을 받고, 세션 하나를 붙여 텔레그램에서 대화합니다. 봇은 허브가 텔레그램에 먼저 묻는 방식이라 허브를 인터넷에 열지 않아도 됩니다.</p>
+    <div id="tgBody"></div>
+    <div class="tg-opts">
+      <span>알림</span>
+      <label class="row"><input type="checkbox" data-tgn="approval"> 승인 대기</label>
+      <label class="row"><input type="checkbox" data-tgn="done"> 작업 완료</label>
+      <label class="row"><input type="checkbox" data-tgn="stalled"> 막힘</label>
+      <label class="row" title="이보다 짧게 끝난 턴은 완료 알림을 보내지 않습니다">완료 알림 기준 <input type="number" id="tgDoneSec" min="0" max="21600" step="10" style="width:76px"> 초</label>
+      <label class="row">내용 <select id="tgDetail"><option value="basic">제목·도구·마지막 말까지</option><option value="minimal">무슨 일·어느 층만</option></select></label>
+      <label class="row" title="붙인 세션의 턴이 끝날 때마다 마지막 답을 텔레그램으로 보냅니다(그 세션만, 텔레그램 서버를 거칩니다)"><input type="checkbox" id="tgReplies"> 붙인 세션의 답 받기</label>
+      <label class="row" title="알림에 '이번만 허용·거절' 단추와 명령 미리보기가 붙습니다. 위 '대시보드에서 권한 요청 허용·거절'도 켜져 있어야 합니다"><input type="checkbox" id="tgApprovals"> 텔레그램에서 승인</label>
+    </div>
   </section>
 
   <section class="card grid2">
@@ -290,7 +318,72 @@ function renderRules() {
   $("language").value = cfg.language || "auto";
   $("outside").checked = cfg.outside !== false;
   $("weather").checked = cfg.weather !== false;
+  const tg = cfg.telegram || {};
+  document.querySelectorAll("[data-tgn]").forEach(x => { x.checked = (tg.notify || ["approval", "done"]).includes(x.dataset.tgn); });
+  $("tgDoneSec").value = tg.doneSec ?? 60;
+  $("tgDetail").value = tg.detail || "basic";
+  $("tgReplies").checked = tg.replies !== false;
+  $("tgApprovals").checked = !!tg.approvals;
 }
+
+// ---- 텔레그램(연결 상태는 허브가 실시간으로, 설정 옵션은 아래 저장 단추로) ----
+let tgState = { enabled: false }, tgCode = null;
+function sessionLabel(b) {
+  const a = agents.find(x => x.host === b.host && x.id === b.session);
+  return a ? `${a.project || ""} · ${a.title || a.name}` : `${b.host} · ${b.session.slice(0, 8)} ${t("(지금 안 보임)")}`;
+}
+function renderTelegram() {
+  const s = tgState;
+  if (!s.enabled) {
+    setHTMLsafe($("tgBody"), `<ol class="tg-steps">
+      <li>${t("텔레그램에서 <code>@BotFather</code> 에게 <code>/newbot</code> 을 보내 봇을 만들고 토큰을 받습니다.")}</li>
+      <li>${t("허브를 띄운 컴퓨터의 claude-office 폴더 <code>.env</code> 에 <code>OFFICE_TELEGRAM_TOKEN=받은토큰</code> 을 넣습니다.")}</li>
+      <li>${t("허브를 다시 띄웁니다(맥: <code>sh hub/install.sh</code>, Windows: <code>start.bat</code>). 그러면 여기서 연결 코드를 받을 수 있습니다.")}</li></ol>`);
+    return;
+  }
+  const hosts = [...new Set(agents.map(a => a.host))];
+  const accts = new Map();
+  for (const a of agents) if (a.account && a.account.id) accts.set(a.account.id, (cfg.accountNames || {})[a.account.id] || a.account.label || a.account.id.slice(0, 6));
+  const code = tgCode && tgCode.until * 1000 > Date.now() ? tgCode : null;
+  const link = code && s.bot ? `https://t.me/${encodeURIComponent(s.bot)}?start=${code.code}` : "";
+  setHTMLsafe($("tgBody"), `<div class="tg-state">${s.bot ? `<b>@${esc(s.bot)}</b> · ` : ""}${s.error ? `<span class="bad"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(s.error)}</span>` : s.ok ? `<span class="ok"><i class="fa-solid fa-circle-check"></i> ${t("연결됨")}</span>` : t("연결 중…")}</div>
+    <div class="row">${code ? `<span class="tg-code"><b>${esc(code.code)}</b><span>${t("텔레그램에서 봇에게 이 코드를 보내세요(10분 안에)")}${link ? ` · <a href="${link}" target="_blank" rel="noopener">${t("휴대폰에서 바로 열기")}</a>` : ""}</span></span>`
+      : `<button id="tgPair"><i class="fa-solid fa-link"></i> ${t("연결 코드 받기")}</button>`}</div>
+    <div class="tg-links">${(s.links || []).map(l => `<div class="tg-link" data-tgl="${esc(l.id)}">
+      <div class="h"><i class="fa-solid fa-user"></i><b>${esc(l.name)}</b><span class="sp"></span>
+        <label class="row" style="font-size:12px"><input type="checkbox" data-tg="muted"${l.muted ? " checked" : ""}> ${t("알림 끄기")}</label>
+        <button class="danger" data-tg="unlink" title="${t("연결 끊기")}"><i class="fa-solid fa-xmark"></i></button></div>
+      <div class="bind">${l.bind ? `<i class="fa-solid fa-paperclip"></i> ${t("붙인 세션")}: ${esc(sessionLabel(l.bind))} <button data-tg="unbind" style="padding:1px 8px">${t("떼기")}</button>`
+        : t("붙인 세션 없음 — 사무실 화면의 세션 상세나 텔레그램 /status → /use 번호 로 붙입니다")}</div>
+      ${hosts.length > 1 || accts.size > 1 ? `<div class="flt"><span>${t("이 컴퓨터·계정의 세션만 알림")}</span>
+        ${hosts.map(h => `<label class="row"><input type="checkbox" data-tgh="${esc(h)}"${(l.filter.hosts || []).includes(h) ? " checked" : ""}>${esc(h)}</label>`).join("")}
+        ${accts.size > 1 ? [...accts].map(([id, nm]) => `<label class="row"><input type="checkbox" data-tga="${esc(id)}"${(l.filter.accounts || []).includes(id) ? " checked" : ""}>${esc(nm)}</label>`).join("") : ""}
+        <span style="color:var(--text-dim2)">${t("(아무것도 안 고르면 모두)")}</span></div>` : ""}
+    </div>`).join("") || `<div class="help">${t("아직 연결된 텔레그램이 없습니다.")}</div>`}</div>`);
+}
+async function tgCall(method, url, body) {
+  try { return await api(method, url, body); } catch (err) { say(t(err.message), "err"); return null; }
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("#tgPair, [data-tg=unlink], [data-tg=unbind]"); if (!b) return;
+  if (b.id === "tgPair") {
+    const r = await tgCall("POST", "/api/telegram/pair");
+    if (r) { tgCode = r; if (r.bot) tgState.bot = r.bot; renderTelegram(); setTimeout(renderTelegram, (r.until * 1000 - Date.now()) + 500); }
+    return;
+  }
+  const id = b.closest("[data-tgl]").dataset.tgl;
+  if (b.dataset.tg === "unlink") { if (confirm(t("이 텔레그램 연결을 끊을까요?"))) await tgCall("DELETE", `/api/telegram/links/${encodeURIComponent(id)}`); }
+  else await tgCall("POST", "/api/telegram/bind", { link: id });
+});
+document.addEventListener("change", async e => {
+  const x = e.target, card = x.closest("[data-tgl]"); if (!card) return;
+  const id = card.dataset.tgl;
+  if (x.dataset.tg === "muted") await tgCall("PUT", `/api/telegram/links/${encodeURIComponent(id)}`, { muted: x.checked });
+  else if (x.dataset.tgh != null || x.dataset.tga != null) {
+    const pick = sel => [...card.querySelectorAll(sel)].filter(i => i.checked).map(i => i.dataset[sel.includes("tgh") ? "tgh" : "tga"]);
+    await tgCall("PUT", `/api/telegram/links/${encodeURIComponent(id)}`, { hosts: pick("[data-tgh]"), accounts: pick("[data-tga]") });
+  }
+});
 
 function renderRooms() {
   $("rooms").innerHTML = cfg.rooms.map((r, i) => `
@@ -391,6 +484,14 @@ document.addEventListener("input", e => {
   else if (t.dataset && t.dataset.acct) {
     cfg.accountNames = { ...(cfg.accountNames || {}) };
     if (val.trim()) cfg.accountNames[t.dataset.acct] = val.trim(); else delete cfg.accountNames[t.dataset.acct];
+  }
+  else if (t.closest("#tgCard") && !t.closest("[data-tgl]")) {
+    const tg = cfg.telegram = { notify: ["approval", "done"], doneSec: 60, detail: "basic", replies: true, approvals: false, ...(cfg.telegram || {}) };
+    if (t.dataset.tgn) tg.notify = [...document.querySelectorAll("[data-tgn]")].filter(i => i.checked).map(i => i.dataset.tgn);
+    else if (t.id === "tgDoneSec") tg.doneSec = Math.max(0, Math.min(21600, Math.round(+val || 0)));
+    else if (t.id === "tgDetail") tg.detail = val;
+    else if (t.id === "tgReplies") tg.replies = val;
+    else if (t.id === "tgApprovals") tg.approvals = val;
   }
   else if (t.id === "outside") cfg.outside = val;
   else if (t.id === "weather") {
@@ -532,9 +633,9 @@ function pick() {
 (async () => {
   try {
     const [c, s] = await Promise.all([api("GET", "/api/config"), api("GET", "/api/state"), loadAssets()]);
-    cfg = c; saved = JSON.stringify(cfg); agents = s.agents;
+    cfg = c; saved = JSON.stringify(cfg); agents = s.agents; tgState = s.telegram || { enabled: false };
     if (I18N.sync(cfg.language)) return;   // 허브 설정 언어가 이 브라우저가 기억한 것과 다르면 새로 고침
-    renderAll();
+    renderAll(); renderTelegram();
   } catch (err) { say(t("불러오지 못함: ") + t(err.message), "err"); return; }
   // 세션 목록만 실시간으로 받는다(편집 중인 설정은 덮어쓰지 않는다)
   const es = new EventSource("/api/stream");
@@ -544,6 +645,16 @@ function pick() {
     if (sig === renderPreview._sig) return;
     renderPreview._sig = sig; agents = s.agents; renderDatalists(); renderPreview();
   };
+  // 그다음 소식은 바뀐 것만(event: patch). 텔레그램 연결·세션 목록이 바뀌면 그 칸을 다시 그린다
+  es.addEventListener("patch", e => {
+    const p = JSON.parse(e.data);
+    if (p.telegram) {   // 연결이 하나 늘면 코드를 썼다는 뜻 — 코드 칸을 닫는다
+      if (tgCode && (p.telegram.links || []).length > (tgState.links || []).length) tgCode = null;
+      tgState = p.telegram;
+    }
+    if (p.set && p.set.length) { const by = new Map(agents.map(a => [a.host + "/" + a.id, a])); for (const a of p.set) by.set(a.host + "/" + a.id, a); for (const k of p.del || []) by.delete(k); agents = [...by.values()]; }
+    if (p.telegram || (p.set && p.set.length) || (p.del && p.del.length)) renderTelegram();
+  });
 })();
 </script>
 </body>
