@@ -1,6 +1,8 @@
 // 영어 사전: 관리 화면(/admin). 키는 화면에 쓰인 한국어 그대로(공용 말은 en-common.js)
 I18N.add({
   // 텔레그램
+  "웹 주소": "Web address", "http://내맥.tailnet.ts.net:3006": "http://my-mac.tailnet.ts.net:3006", "층·세션 제목·도구": "Floor, session title, tool",
+  "알림에 '웹에서 보기' 단추가 붙고, 누르면 이 주소의 대시보드가 그 세션을 고른 채로 열립니다. 휴대폰에서 열리는 주소여야 합니다(예: Tailscale 주소)": "Adds an “Open in browser” button to notifications that opens this dashboard address with that session selected. It must open on your phone (e.g. a Tailscale address)",
   "(아무것도 안 고르면 모두)": "(none selected = all)",
   "(지금 안 보임)": "(not visible now)",
   "떼기": "Detach",

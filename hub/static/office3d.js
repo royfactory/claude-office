@@ -970,7 +970,7 @@ function takeSeat(key, roomId) {
 let state = null, cfg = null, floorKey = null, selected = null, skew = 0, dirtyLooks = false;
 // 층에 들어오면 그 층에서 가장 최근에 일한 세션을 골라 둔다(일하는 중인 세션 먼저).
 // pickPending = 이 층에서 아직 자동으로 고르지 않음, autoPicked = 지금 선택이 자동으로 고른 것
-let pickPending = true, autoPicked = false;
+let pickPending = true, autoPicked = false, hashSel = null;   // hashSel: 주소의 s= 로 고를 세션(층을 바꾼 뒤에 고른다)
 const logs = new Map();       // project -> [{ts, who, text}]
 const prevTool = new Map();   // key -> "tool target"
 // 순회 재생: ▶ 이면 근무 중인 층을 아래층부터 정해진 간격으로 돌아가며 보여 준다.
@@ -1256,6 +1256,13 @@ function gitBadge(g) {
 function chooseFloor(fl) {
   const hashP = decodeURIComponent((location.hash.match(/p=([^&]+)/) || [])[1] || "");
   if (!floorKey && hashP && fl.some(f => f.project === hashP)) floorKey = hashP;
+  // 텔레그램 알림의 '웹에서 보기'(#p=층&s=세션): 그 세션을 고른 채로 연다. 한 번 쓰고 주소에서 뺀다
+  const hashS = decodeURIComponent((location.hash.match(/s=([^&]+)/) || [])[1] || "");
+  if (hashS) {
+    const f = fl.find(x => x.agents.some(a => a.id === hashS));
+    if (f) { floorKey = f.project; hashSel = hashS; }
+    history.replaceState(null, "", "#p=" + encodeURIComponent(floorKey || hashP));
+  }
   const cur = fl.find(f => f.project === floorKey);
   if (!cur) floorKey = (fl.slice().sort((a, b) => b.busy - a.busy || b.last - a.last)[0] || {}).project || null;
   return floorKey;
@@ -1309,6 +1316,11 @@ function apply(instant) {
   const before = floorKey;
   chooseFloor(fl);
   if (before !== floorKey) { for (const a of actors.values()) disposeActor(a); actors.clear(); seatOf.clear(); instant = true; selected = null; pickPending = true; autoPicked = false; }
+  if (hashSel) {
+    selected = hashSel; hashSel = null; pickPending = false; autoPicked = false; showTab("session");
+    // 휴대폰(좁은 화면)은 세션 상세가 맨 아래에 있다 — 텔레그램에서 열었으면 그리로 내려 준다
+    if (innerWidth < 900) setTimeout(() => { const d = $("detail"); if (d) d.scrollIntoView({ behavior: "smooth", block: "start" }); }, 700);
+  }
   const floor = fl.find(f => f.project === floorKey);
   autoPick(floor);
   const agents = floor ? floor.agents : [];

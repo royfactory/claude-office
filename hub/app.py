@@ -161,7 +161,7 @@ DEFAULT_CONFIG: dict = {
     "weather": True,       # 날씨(브라우저 위치 권한이 있을 때만)
     "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
     # 텔레그램(봇 토큰은 .env OFFICE_TELEGRAM_TOKEN): 알릴 일, 완료 알림 기준 초, 내용 수준, 붙인 세션의 답, 승인 단추
-    "telegram": {"notify": ["approval", "done"], "doneSec": 60, "detail": "basic", "replies": True, "approvals": False},
+    "telegram": {"notify": ["approval", "done"], "doneSec": 60, "detail": "basic", "replies": True, "approvals": False, "webUrl": ""},
 }
 
 
@@ -229,6 +229,7 @@ class TelegramCfg(BaseModel):
     detail: Literal["basic", "minimal"] = "basic"   # minimal: 무슨 일·어느 층만(제목·도구·말풍선 빼고)
     replies: bool = True     # 붙인 세션의 답을 텔레그램으로
     approvals: bool = False  # 텔레그램 알림에 허용·거절 단추(관리 화면 '대시보드에서 승인'도 켜져 있어야)
+    webUrl: str = Field("", max_length=200, pattern=r"^(https?://\S+)?$")   # 휴대폰에서 열 대시보드 주소 — 알림의 '웹에서 보기' 단추
 
 
 class Config(BaseModel):

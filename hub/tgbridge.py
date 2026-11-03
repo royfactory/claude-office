@@ -20,6 +20,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -59,9 +60,9 @@ STR = {
         "unmuted": "알림을 켰습니다.",
         "unlinked": "연결을 끊었습니다.",
         "approval": "✋ 승인 대기 · {project}",
-        "done": "✅ 작업 완료 · {project} ({dur})",
+        "done": "✅ {project}",
         "stalled": "⏳ 막힘 · {project}",
-        "reply_hint": "답장하면 이 세션으로 보냅니다.",
+        "open_web": "🔎 웹에서 보기",
         "allow": "✅ 이번만 허용", "deny": "❌ 거절",
         "decided_allow": "→ 허용했습니다", "decided_deny": "→ 거절했습니다",
         "decide_fail": "처리하지 못했습니다: {err}",
@@ -93,10 +94,10 @@ STR = {
         "muted": "Notifications off (replies from the attached session still come).",
         "unmuted": "Notifications on.",
         "unlinked": "Disconnected.",
-        "approval": "✋ Waiting for approval · {project}",
-        "done": "✅ Done · {project} ({dur})",
+        "approval": "✋ Approval · {project}",
+        "done": "✅ {project}",
         "stalled": "⏳ Stuck · {project}",
-        "reply_hint": "Reply to message this session.",
+        "open_web": "🔎 Open in browser",
         "allow": "✅ Allow once", "deny": "❌ Deny",
         "decided_allow": "→ Allowed", "decided_deny": "→ Denied",
         "decide_fail": "Couldn't do that: {err}",
@@ -257,6 +258,13 @@ class Bridge:
             except TgError as e:
                 if e.code == 429 and e.retry_after:
                     time.sleep(min(float(e.retry_after), 30))
+                    continue
+                rm = params.get("reply_markup") or {}
+                if e.code == 400 and any("url" in b for row in rm.get("inline_keyboard", []) for b in row):
+                    # 텔레그램이 웹 주소 단추를 받지 않으면(점 없는 호스트 이름 등) 단추만 빼고 다시
+                    rows = [r for r in ([b for b in row if "url" not in b] for row in rm["inline_keyboard"]) if r]
+                    params = {**params, "reply_markup": {"inline_keyboard": rows}} if rows else {k: v for k, v in params.items() if k != "reply_markup"}
+                    print(time.strftime("%Y-%m-%d %H:%M:%S"), "텔레그램이 웹 주소 단추를 받지 않음(관리 화면 웹 주소 확인):", e, flush=True)
                     continue
                 if method not in ("setMessageReaction",):   # 반응 표시는 실패해도 조용히
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "텔레그램", method, "실패:", e, flush=True)
@@ -575,27 +583,30 @@ class Bridge:
         cfg = self.ops.config()
         tg = cfg.get("telegram", {})
         s = self._s()
+        # 한 줄로: 무슨 일 · 층 · 세션 제목(basic) · 도구(승인)·걸린 시간(완료). 자세한 것은 '웹에서 보기'로
         project = a.get("project") or "?"
-        head = s[kind].format(project=project, dur=self._dur(dur, s))
-        lines = [head]
+        parts = [s[kind].format(project=project)]
         if tg.get("detail", "basic") == "basic":
             title = a.get("title") or a.get("name") or ""
             if title:
-                lines.append(title[:80])
+                parts.append(title[:40])
             if kind == "approval" and a.get("tool"):
-                lines.append(f"{a['tool']}{' · ' + a['target'] if a.get('target') else ''}"[:120])
-            if kind == "done" and a.get("say"):
-                lines.append(f"“{a['say'][:120]}”")
-        markup = None
+                parts.append(a["tool"][:32])
+        if kind == "done":
+            parts.append(self._dur(dur, s))
+        lines = [" · ".join(parts)]
+        rows = []
         if kind == "approval" and tg.get("approvals") and cfg.get("approvals"):
             x = self.ops.pending(host, a["id"])
-            if x:
+            if x:   # 텔레그램에서 결정하려면 명령을 봐야 한다 — 승인 단추를 켠 경우만 미리보기를 붙인다
                 if x.get("preview"):
                     lines.append(x["preview"][:600])
-                markup = {"inline_keyboard": [[{"text": s["allow"], "callback_data": f"ap:{x['id']}:allow"},
-                                               {"text": s["deny"], "callback_data": f"ap:{x['id']}:deny"}]]}
-        if a.get("canMessage") and cfg.get("messaging"):
-            lines.append(s["reply_hint"])
+                rows.append([{"text": s["allow"], "callback_data": f"ap:{x['id']}:allow"},
+                             {"text": s["deny"], "callback_data": f"ap:{x['id']}:deny"}])
+        url = self.web_url(project, a["id"])
+        if url:
+            rows.append([{"text": s["open_web"], "url": url}])
+        markup = {"inline_keyboard": rows} if rows else None
         text = "\n".join(lines)
         sent = False
         for link in self.data["links"]:
@@ -611,6 +622,14 @@ class Bridge:
             sent = True
         if sent:
             self._note("out", "bot", kind, a.get("title") or project, a["id"])
+
+    def web_url(self, project: str, sid: str) -> str:
+        """대시보드에서 그 세션을 고른 채로 여는 주소(관리 화면 '웹 주소'가 있을 때만)."""
+        base = (self.ops.config().get("telegram", {}).get("webUrl") or "").strip().rstrip("/")
+        if not re.match(r"^https?://[^\s/]+", base):
+            return ""
+        q = urllib.parse.quote
+        return f"{base}/#p={q(project, safe='')}&s={q(sid, safe='')}"
 
     def _remember(self, chat, res, host, sid) -> None:
         if isinstance(res, dict) and res.get("message_id"):

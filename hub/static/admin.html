@@ -157,9 +157,10 @@
       <label class="row"><input type="checkbox" data-tgn="done"> 작업 완료</label>
       <label class="row"><input type="checkbox" data-tgn="stalled"> 막힘</label>
       <label class="row" title="이보다 짧게 끝난 턴은 완료 알림을 보내지 않습니다">완료 알림 기준 <input type="number" id="tgDoneSec" min="0" max="21600" step="10" style="width:76px"> 초</label>
-      <label class="row">내용 <select id="tgDetail"><option value="basic">제목·도구·마지막 말까지</option><option value="minimal">무슨 일·어느 층만</option></select></label>
+      <label class="row">내용 <select id="tgDetail"><option value="basic">층·세션 제목·도구</option><option value="minimal">무슨 일·어느 층만</option></select></label>
       <label class="row" title="붙인 세션의 턴이 끝날 때마다 마지막 답을 텔레그램으로 보냅니다(그 세션만, 텔레그램 서버를 거칩니다)"><input type="checkbox" id="tgReplies"> 붙인 세션의 답 받기</label>
       <label class="row" title="알림에 '이번만 허용·거절' 단추와 명령 미리보기가 붙습니다. 위 '대시보드에서 권한 요청 허용·거절'도 켜져 있어야 합니다"><input type="checkbox" id="tgApprovals"> 텔레그램에서 승인</label>
+      <label class="row" title="알림에 '웹에서 보기' 단추가 붙고, 누르면 이 주소의 대시보드가 그 세션을 고른 채로 열립니다. 휴대폰에서 열리는 주소여야 합니다(예: Tailscale 주소)">웹 주소 <input id="tgWebUrl" maxlength="200" style="width:280px" placeholder="http://내맥.tailnet.ts.net:3006"></label>
     </div>
   </section>
 
@@ -324,6 +325,7 @@ function renderRules() {
   $("tgDetail").value = tg.detail || "basic";
   $("tgReplies").checked = tg.replies !== false;
   $("tgApprovals").checked = !!tg.approvals;
+  $("tgWebUrl").value = tg.webUrl || "";
 }
 
 // ---- 텔레그램(연결 상태는 허브가 실시간으로, 설정 옵션은 아래 저장 단추로) ----
@@ -486,12 +488,13 @@ document.addEventListener("input", e => {
     if (val.trim()) cfg.accountNames[t.dataset.acct] = val.trim(); else delete cfg.accountNames[t.dataset.acct];
   }
   else if (t.closest("#tgCard") && !t.closest("[data-tgl]")) {
-    const tg = cfg.telegram = { notify: ["approval", "done"], doneSec: 60, detail: "basic", replies: true, approvals: false, ...(cfg.telegram || {}) };
+    const tg = cfg.telegram = { notify: ["approval", "done"], doneSec: 60, detail: "basic", replies: true, approvals: false, webUrl: "", ...(cfg.telegram || {}) };
     if (t.dataset.tgn) tg.notify = [...document.querySelectorAll("[data-tgn]")].filter(i => i.checked).map(i => i.dataset.tgn);
     else if (t.id === "tgDoneSec") tg.doneSec = Math.max(0, Math.min(21600, Math.round(+val || 0)));
     else if (t.id === "tgDetail") tg.detail = val;
     else if (t.id === "tgReplies") tg.replies = val;
     else if (t.id === "tgApprovals") tg.approvals = val;
+    else if (t.id === "tgWebUrl") tg.webUrl = val.trim();
   }
   else if (t.id === "outside") cfg.outside = val;
   else if (t.id === "weather") {
