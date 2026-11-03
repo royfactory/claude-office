@@ -31,16 +31,22 @@ NUDGE_SEC = 300         # 연결 안 된 채팅에 안내를 다시 보내기까
 APPROVAL_DELAY_SEC = 3  # 승인 대기를 보고 알림을 보내기까지 — 그사이 승인 훅 요청이 오면 단추를 붙인다
 ACTIVE = {"working", "thinking", "shell", "approval", "waiting"}
 NOTIFY_KINDS = ("approval", "done", "stalled")
+STATUS_N = 12           # /status 가 보여 줄 세션 수(/status all 은 전부)
 
 # 텔레그램으로 보내는 글. 관리 화면 언어가 en 이면 영어, 아니면 한국어
 STR = {
     "ko": {
-        "help": "claude-office 봇입니다.\n/status 세션 목록(번호)\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
+        "help": "claude-office 봇입니다.\n/status 세션 목록(번호, 바로 받는 세션이 위) · /status all 전부\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
         "linked": "연결했습니다: {name}\n",
         "need_code": "연결되지 않은 채팅입니다. claude-office 관리 화면의 「텔레그램」에서 연결 코드를 받아 이 채팅에 보내세요.",
         "private_only": "개인 채팅에서만 연결할 수 있습니다.",
         "no_sessions": "지금 보이는 세션이 없습니다.",
-        "list_head": "세션 목록 — /use 번호 로 붙입니다",
+        "list_head": "세션 목록 — /use 번호 로 붙입니다(바로 받는 세션이 위)",
+        "list_more": "… 외 {n}개 — /status all 로 전부",
+        "legend_bypass": "⚠ 권한 건너뛰기 모드 — 보낸 글이 그 컴퓨터 터미널의 승인을 기다립니다",
+        "legend_nomsg": "🚫 메시지를 받지 않는 컴퓨터(수집기 CLAUDE_OFFICE_MESSAGES)",
+        "bound_bypass": "\n⚠ 이 세션은 권한 건너뛰기 모드라, 여기서 보낸 글이 그 컴퓨터 터미널에서 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 바로 받는 세션을 고르거나, 그 설정 폴더의 Claude Code 설정에 crossSessionInbound: \"accept\" 를 둡니다.",
+        "ago_m": "{n}분 전", "ago_h": "{n}시간 전", "ago_d": "{n}일 전", "now": "방금",
         "bad_number": "번호가 맞지 않습니다. /status 로 목록을 다시 보세요.",
         "bound": "이제 이 채팅의 글은 「{title}」({host})로 갑니다. 그 세션의 답이 여기로 옵니다.",
         "bound_no_msg": "\n(주의: 그 컴퓨터가 메시지를 받지 않습니다 — 수집기 .env 의 CLAUDE_OFFICE_MESSAGES=on 과 관리 화면 '메시지 보내기'를 켜세요)",
@@ -64,12 +70,17 @@ STR = {
         "min": "{n}분", "sec": "{n}초", "hour": "{h}시간 {m}분",
     },
     "en": {
-        "help": "claude-office bot.\n/status list sessions (numbered)\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
+        "help": "claude-office bot.\n/status list sessions (numbered, ready-to-receive first) · /status all for all\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
         "linked": "Linked: {name}\n",
         "need_code": "This chat isn't linked. Get a link code from 「Telegram」 on the claude-office admin page and send it here.",
         "private_only": "Only private chats can be linked.",
         "no_sessions": "No sessions right now.",
-        "list_head": "Sessions — attach with /use N",
+        "list_head": "Sessions — attach with /use N (ready-to-receive first)",
+        "list_more": "… {n} more — /status all for all",
+        "legend_bypass": "⚠ bypass-permissions mode — messages wait for approval in that computer's terminal",
+        "legend_nomsg": "🚫 that computer doesn't accept messages (collector CLAUDE_OFFICE_MESSAGES)",
+        "bound_bypass": "\n⚠ This session runs in bypass-permissions mode, so messages from here wait for approval in its terminal (dropped after 5 minutes). To use it remotely, pick a ready-to-receive session or set crossSessionInbound: \"accept\" in that config folder's Claude Code settings.",
+        "ago_m": "{n}m ago", "ago_h": "{n}h ago", "ago_d": "{n}d ago", "now": "now",
         "bad_number": "No such number. Send /status to see the list again.",
         "bound": "This chat now talks to “{title}” ({host}). Its replies will come here.",
         "bound_no_msg": "\n(Note: that computer doesn't accept messages — set CLAUDE_OFFICE_MESSAGES=on in its collector .env and enable messaging on the admin page)",
@@ -373,24 +384,53 @@ class Bridge:
             self.nudged[chat] = time.time()
             self.send(chat, s["need_code"])
 
-    def _sessions(self) -> list[dict]:
+    @staticmethod
+    def ready(a: dict) -> bool:
+        """텔레그램에서 보낸 글을 바로 받는 세션: 메시지를 받는 컴퓨터이고, 권한 건너뛰기 모드가 아니다
+        (그 모드는 Claude Code 규칙상 다른 곳에서 온 메시지를 터미널 승인 뒤에만 넣는다)."""
+        return bool(a.get("canMessage")) and a.get("mode") != "bypassPermissions"
+
+    def _sessions(self, limit: int = 40) -> list[dict]:
+        """붙일 후보: 바로 받는 세션 → 일하는 세션 → 최근에 움직인 세션 순."""
         ag = self.ops.agents()
-        return sorted(ag, key=lambda a: (a.get("kind") == "idle", -(a.get("lastActivity") or 0)))[:30]
+        return sorted(ag, key=lambda a: (not self.ready(a), a.get("kind") == "idle", -(a.get("lastActivity") or 0)))[:limit]
+
+    def _ago(self, ts, s: dict) -> str:
+        sec = time.time() - (ts or time.time())
+        if sec < 60:
+            return s["now"]
+        if sec < 3600:
+            return s["ago_m"].format(n=int(sec // 60))
+        if sec < 86400:
+            return s["ago_h"].format(n=int(sec // 3600))
+        return s["ago_d"].format(n=int(sec // 86400))
 
     async def _command(self, link: dict, chat, cmd: str, arg: str, s: dict) -> None:
         if cmd in ("start", "help"):
             self.send(chat, s["help"])
         elif cmd in ("status", "list", "sessions"):
-            ag = self._sessions()
-            self.lists[chat] = [(a["host"], a["id"]) for a in ag]
+            every = self._sessions()
+            ag = every if arg == "all" else every[:STATUS_N]
+            self.lists[chat] = [(a["host"], a["id"]) for a in every]   # /use 번호는 전체 순서로(짧은 목록은 앞부분)
             if not ag:
                 self.send(chat, s["no_sessions"])
                 return
             b = link.get("bind") or {}
+            hosts = {a["host"] for a in every}
             lines = [s["list_head"]]
             for i, a in enumerate(ag, 1):
                 mark = "📎 " if b.get("session") == a["id"] and b.get("host") == a["host"] else ""
-                lines.append(f"{i}. {mark}{a.get('project', '')} · {(a.get('title') or a.get('name') or '')[:40]} · {s['kind'].get(a.get('kind'), a.get('kind', ''))}")
+                warn = "" if self.ready(a) else (" ⚠" if a.get("canMessage") else " 🚫")
+                kind = s["kind"].get(a.get("kind"), a.get("kind", ""))
+                when = kind if a.get("kind") != "idle" else f"{kind} {self._ago(a.get('lastActivity'), s)}"
+                where = f" @{a['host']}" if len(hosts) > 1 else ""
+                lines.append(f"{i}. {mark}{a.get('project', '')} · {(a.get('title') or a.get('name') or '')[:36]} · {when}{where}{warn}")
+            if len(ag) < len(every):
+                lines.append(s["list_more"].format(n=len(every) - len(ag)))
+            if any(not self.ready(a) and a.get("canMessage") for a in ag):
+                lines.append(s["legend_bypass"])
+            if any(not a.get("canMessage") for a in ag):
+                lines.append(s["legend_nomsg"])
             self.send(chat, "\n".join(lines))
         elif cmd == "use":
             lst = self.lists.get(chat) or [(a["host"], a["id"]) for a in self._sessions()]
@@ -424,7 +464,8 @@ class Bridge:
         s = self._s()
         title = (a or {}).get("title") or (a or {}).get("name") or sid[:8]
         self._note("out", link["name"], "bind", title, sid)
-        self.send(link["chat"], s["bound"].format(title=title, host=host) + ("" if (a or {}).get("canMessage") else s["bound_no_msg"]))
+        extra = s["bound_no_msg"] if not (a or {}).get("canMessage") else s["bound_bypass"] if (a or {}).get("mode") == "bypassPermissions" else ""
+        self.send(link["chat"], s["bound"].format(title=title, host=host) + extra)
         await self.ops.bump()
 
     async def _callback(self, q: dict) -> None:

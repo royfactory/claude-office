@@ -31,7 +31,8 @@ def home(tmp_path, monkeypatch):
     h.mkdir()
     monkeypatch.setenv("HOME", str(h))
     monkeypatch.setenv("USERPROFILE", str(h))   # Windows 의 expanduser
-    for k, v in {"OFFICE_TOKEN": "", "CLAUDE_OFFICE_MESSAGES": "", "CLAUDE_OFFICE_ROOTS": "",
+    # OFFICE_TELEGRAM_TOKEN: 저장소 .env 의 진짜 봇 토큰을 읽으면 시험 허브가 실제 봇을 폴링한다(받은 소식을 가로챈다)
+    for k, v in {"OFFICE_TOKEN": "", "OFFICE_TELEGRAM_TOKEN": "", "CLAUDE_OFFICE_MESSAGES": "", "CLAUDE_OFFICE_ROOTS": "",
                  "CLAUDE_OFFICE_HUB": "http://127.0.0.1:9", "CLAUDE_OFFICE_DETAIL": "basic"}.items():
         monkeypatch.setenv(k, v)
     return h

@@ -1,6 +1,7 @@
 // 영어 사전: 사무실 화면(office3d.js). 키는 office3d.js 의 t("…") 에 쓴 한국어 그대로
 I18N.add({
   // 텔레그램
+  "권한 건너뛰기 모드라 텔레그램에서 보낸 글이 이 터미널의 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 crossSessionInbound: \"accept\" 설정이 필요합니다.": "This session runs in bypass-permissions mode, so messages from Telegram wait for approval in its terminal (dropped after 5 minutes). Set crossSessionInbound: \"accept\" to use it remotely.",
   "글 내용·답은 텔레그램 서버를 거칩니다. 관리 화면 「텔레그램」에서 알림 종류와 내용 수준을 고릅니다.": "Messages and replies pass through Telegram's servers. Pick notification types and detail level under “Telegram” on the admin page.",
   "떼기": "Detach",
   "붙이지 못했습니다": "Couldn't attach",

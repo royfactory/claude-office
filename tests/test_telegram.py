@@ -39,7 +39,7 @@ class FakeTg:
 def tgh(home, tmp_path, monkeypatch):
     monkeypatch.setenv("OFFICE_DATA", str(tmp_path / "data"))
     monkeypatch.setenv("OFFICE_TOKEN", TOKEN)
-    monkeypatch.delenv("OFFICE_TELEGRAM_TOKEN", raising=False)   # 폴링 스레드는 띄우지 않는다
+    monkeypatch.setenv("OFFICE_TELEGRAM_TOKEN", "")   # 폴링 스레드는 띄우지 않는다(빈 값이라야 .env 가 채우지 않는다)
     mod = load_module("office_hub_app_tg", HUB_PY)
     c = TestClient(mod.app)
     c.__enter__()
@@ -109,7 +109,7 @@ def test_disabled_without_token(make_hub_free):
 def make_hub_free(home, tmp_path, monkeypatch):
     monkeypatch.setenv("OFFICE_DATA", str(tmp_path / "data"))
     monkeypatch.setenv("OFFICE_TOKEN", TOKEN)
-    monkeypatch.delenv("OFFICE_TELEGRAM_TOKEN", raising=False)
+    monkeypatch.setenv("OFFICE_TELEGRAM_TOKEN", "")
     mod = load_module("office_hub_app_tg0", HUB_PY)
     c = TestClient(mod.app)
     c.__enter__()
@@ -124,7 +124,7 @@ def test_status_use_and_text_goes_to_bound_session(tgh):
     link(mod, c)
     ingest(c, agent("s1", kind="working", title="일하는 세션"), agent("s2"))
     handle(mod, c, msg("/status", mid=2))
-    assert "1. proj · 일하는 세션" in fake.sent()[-1]
+    assert "1. proj · 일하는 세션 · 근무" in fake.sent()[-1]
     handle(mod, c, msg("/use 1", mid=3))
     assert mod.tg.data["links"][0]["bind"]["session"] == "s1" and "일하는 세션" in fake.sent()[-1]
     handle(mod, c, msg("테스트 돌려줘", mid=4))
@@ -270,3 +270,21 @@ def test_split_text_prefers_newlines(tgh):
     mod, _, _ = tgh
     parts = mod.tgbridge.split_text("a" * 30 + "\n" + "b" * 30, 40)
     assert parts == ["a" * 30, "b" * 30]
+
+
+def test_status_puts_ready_sessions_first_and_warns_bypass(tgh):
+    mod, c, fake = tgh
+    link(mod, c)
+    ingest(c, agent("by", kind="working", title="건너뛰기", mode="bypassPermissions"), agent("ok", title="바로 받음", mode="auto"),
+           agent("no", title="못 받음", canMessage=False), *[agent(f"x{i}", title=f"쉼{i}", mode="auto") for i in range(15)])
+    handle(mod, c, msg("/status", mid=2))
+    out = fake.sent()[-1].split("\n")
+    assert "바로 받음" in out[1] and "쉼" not in out[1] or "바로 받음" in out[1]
+    assert not any("⚠" in l or "🚫" in l for l in out[1:13] if "쉼" in l or "바로 받음" in l)
+    assert "… 외 6개" in fake.sent()[-1] and "건너뛰기" not in fake.sent()[-1]     # 12개만, 바로 받는 세션부터
+    handle(mod, c, msg("/status all", mid=3))
+    full = fake.sent()[-1]
+    assert "건너뛰기 · 근무 ⚠" in full and "못 받음" in full and "🚫" in full and "권한 건너뛰기 모드" in full
+    n = [l for l in full.split("\n") if "건너뛰기 · 근무" in l][0].split(".")[0]
+    handle(mod, c, msg(f"/use {n}", mid=4))
+    assert mod.tg.data["links"][0]["bind"]["session"] == "by" and "crossSessionInbound" in fake.sent()[-1]
