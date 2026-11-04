@@ -27,6 +27,7 @@ API = "https://api.telegram.org"
 PAIR_SEC = 600          # 연결 코드가 유효한 시간
 POLL_SEC = 25           # getUpdates 롱 폴링
 TEXT_MAX = 4000         # 텔레그램 한 메시지 상한(4096)보다 조금 작게
+REPLY_PART = 3500       # 답을 나누는 크기(서식 태그·이스케이프로 늘어날 몫을 남긴다)
 NUDGE_SEC = 300         # 연결 안 된 채팅에 안내를 다시 보내기까지
 APPROVAL_DELAY_SEC = 3  # 승인 대기를 보고 알림을 보내기까지 — 그사이 승인 훅 요청이 오면 단추를 붙인다
 ACTIVE = {"working", "thinking", "shell", "approval", "waiting"}
@@ -125,6 +126,48 @@ def split_text(text: str, n: int = TEXT_MAX) -> list[str]:
     if text:
         out.append(text)
     return out
+
+
+def _esc(t: str) -> str:
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _inline(t: str) -> str:
+    """한 줄 안의 마크다운: `코드`, **굵게**, [글](주소). 나머지는 그대로(이스케이프만)."""
+    out = []
+    for i, seg in enumerate(re.split(r"`([^`\n]+)`", t)):
+        if i % 2:
+            out.append(f"<code>{_esc(seg)}</code>")
+            continue
+        seg = _esc(seg)
+        seg = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<b>\1</b>", seg)
+        seg = re.sub(r"\[([^\]\n]+)\]\((https?://[^)\s\"]+)\)", r'<a href="\2">\1</a>', seg)
+        out.append(seg)
+    return "".join(out)
+
+
+def md_to_html(md: str) -> str:
+    """Claude 답의 마크다운을 텔레그램 HTML 로(굵게·코드·코드 묶음·제목·글머리표·링크). 표 등 나머지는 글 그대로."""
+    out, code, in_code = [], [], False
+    for line in md.split("\n"):
+        if line.lstrip().startswith("```"):
+            if in_code:
+                out.append(f"<pre>{_esc(chr(10).join(code))}</pre>")
+                code = []
+            in_code = not in_code
+            continue
+        if in_code:
+            code.append(line)
+            continue
+        h = re.match(r"^\s{0,3}#{1,6}\s+(.*)$", line)
+        if h:
+            out.append(f"<b>{_inline(h.group(1))}</b>")
+            continue
+        li = re.match(r"^(\s*)[-*]\s+(.*)$", line)
+        out.append(f"{li.group(1)}• {_inline(li.group(2))}" if li else _inline(line))
+    if in_code:   # 나눠 보낸 조각이 코드 묶음 중간에서 끝났다
+        out.append(f"<pre>{_esc(chr(10).join(code))}</pre>")
+    return "\n".join(out)
 
 
 class Bridge:
@@ -246,6 +289,8 @@ class Bridge:
             self._q.put((method, params, after))
 
     def _do(self, method, params, after) -> None:
+        plain = params.get("_plain")
+        params = {k: v for k, v in params.items() if k != "_plain"}
         for _ in range(3):
             try:
                 res = self.call(method, params)
@@ -255,6 +300,11 @@ class Bridge:
             except TgError as e:
                 if e.code == 429 and e.retry_after:
                     time.sleep(min(float(e.retry_after), 30))
+                    continue
+                if e.code == 400 and params.get("parse_mode") and plain is not None:
+                    # 서식이 깨졌다고 받지 않으면(태그 짝 등) 서식 없이 원문으로 다시
+                    params = {**{k: v for k, v in params.items() if k != "parse_mode"}, "text": plain[:4096]}
+                    plain = None
                     continue
                 if method not in ("setMessageReaction",):   # 반응 표시는 실패해도 조용히
                     print(time.strftime("%Y-%m-%d %H:%M:%S"), "텔레그램", method, "실패:", e, flush=True)
@@ -626,7 +676,8 @@ class Bridge:
         if not links:
             return 0
         a = next((x for x in self.ops.agents() if x["host"] == host and x["id"] == session), None) or {}
-        head = f"💬 {(a.get('title') or a.get('name') or a.get('project') or session[:8])[:60]}\n"
+        title = (a.get('title') or a.get('name') or a.get('project') or session[:8])[:60]
+        head = f"💬 {title}\n"
         n = 0
         for it in items:
             rid, text, ts = str(it.get("id", "")), str(it.get("text", "")), float(it.get("ts") or 0)
@@ -636,9 +687,10 @@ class Bridge:
             for link in links:
                 if ts and ts < link["bind"]["at"] - 5:
                     continue
-                parts = split_text(text, TEXT_MAX - len(head))
+                parts = split_text(text, REPLY_PART - len(head))   # HTML 로 바꾸면 길어지니 넉넉히 나눈다
                 for i, part in enumerate(parts):
-                    self.send(link["chat"], (head if i == 0 else "") + part,
+                    html = (f"💬 <b>{_esc(title)}</b>\n" if i == 0 else "") + md_to_html(part)
+                    self.send(link["chat"], html, parse_mode="HTML", _plain=(head if i == 0 else "") + part,
                               after=lambda r, c=link["chat"]: self._remember(c, r, host, session))
                 n += 1
             self._note("out", "bot", "reply", text, session)

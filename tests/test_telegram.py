@@ -174,7 +174,8 @@ def test_ingest_reply_carries_relay_and_relay_sends_only_new_replies(tgh):
         {"id": "u1", "ts": at + 1, "text": "결과는 이렇습니다\n" + "가" * 5000}]}
     assert c.post("/api/telegram/relay", json=body, headers=AUTH).json()["sent"] == 1
     out = fake.sent()
-    assert out[-2].startswith("💬 제목\n결과는") and len(out[-2]) <= 4000 and out[-1].startswith("가")   # 길면 나눈다
+    assert out[-2].startswith("💬 <b>제목</b>\n결과는") and len(out[-2]) <= 4096 and out[-1].startswith("가")   # 길면 나눈다
+    assert fake.last("sendMessage")["parse_mode"] == "HTML"
     assert c.post("/api/telegram/relay", json=body, headers=AUTH).json()["sent"] == 0    # 같은 답은 한 번만
     assert all("붙이기 전" not in t for t in out)
     st = c.get("/api/state").json()["telegram"]
@@ -313,3 +314,19 @@ def test_notification_is_one_line_without_buttons(tgh):
     ingest(c, agent("s1", say="길고 긴 마지막 말"))
     last = fake.last("sendMessage")
     assert "\n" not in last["text"] and "reply_markup" not in last
+
+
+def test_reply_markdown_becomes_telegram_html_and_falls_back_to_plain(tgh):
+    mod, c, fake = tgh
+    h = mod.tgbridge.md_to_html("**한 일**\n- 다시 <시작> & `a<b`\n## 제목\n```\nx < y\n```")
+    assert h == "<b>한 일</b>\n• 다시 &lt;시작&gt; &amp; <code>a&lt;b</code>\n<b>제목</b>\n<pre>x &lt; y</pre>"
+    calls = []
+
+    def strict(method, params):
+        calls.append(params)
+        if params.get("parse_mode"):
+            raise mod.tgbridge.TgError(400, "Bad Request: can't parse entities")
+        return {"message_id": 1}
+    mod.tg.call = strict
+    mod.tg.send(CHAT, "<b>x", parse_mode="HTML", _plain="**x")
+    assert len(calls) == 2 and calls[1]["text"] == "**x" and "parse_mode" not in calls[1] and "_plain" not in calls[0]
