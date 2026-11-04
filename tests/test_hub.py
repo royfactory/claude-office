@@ -1139,3 +1139,42 @@ def test_stale_host_sessions_held_dim_then_dropped(authed):
     h["receivedAt"] = time.time()
     s = c.get("/api/state").json()
     assert "hostStale" not in s["agents"][0] and mod.Hub.state(h, time.time()) == "on"
+
+
+# ---------- 하루 다시보기 ----------
+
+def test_timeline_records_changes_only_and_serves_day(authed):
+    mod, c = authed
+    tl, now = mod.timeline, time.time()
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", project="p", title="제목", kind="working", tool="Edit")]}, headers=AUTH)
+    assert tl.tick({"mac"}, now) is True
+    assert tl.tick({"mac"}, now + 5) is False                          # 15초 안에는 다시 적지 않는다
+    assert tl.tick({"mac"}, now + 20) is False                         # 바뀐 게 없으면 적지 않는다
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", project="p", title="제목", kind="idle")]}, headers=AUTH)
+    assert tl.tick({"mac"}, now + 40) is True
+    c.post("/api/ingest", json={"host": "mac", "agents": []}, headers=AUTH)
+    assert tl.tick({"mac"}, now + 60) is True
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    assert c.get("/api/timeline/days").json()["days"] == [day]
+    fr = c.get(f"/api/timeline?date={day}").json()["frames"]
+    assert fr[0]["s"] == {"mac/s1": ["p", "제목", "working", "Edit", 0, 0]}
+    assert fr[1]["s"]["mac/s1"][2] == "idle" and fr[2]["d"] == ["mac/s1"]
+    r = c.get(f"/api/timeline?date={day}", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.json()["sec"] == 15
+    assert c.get("/api/timeline?date=../../etc").status_code == 400
+
+
+def test_timeline_new_day_writes_full_state_and_prunes(authed):
+    mod, c = authed
+    tl = mod.timeline
+    c.post("/api/ingest", json={"host": "mac", "agents": [agent("s1", project="p")]}, headers=AUTH)
+    d1 = time.mktime((2026, 1, 10, 23, 59, 0, 0, 0, -1))
+    assert tl.tick({"mac"}, d1)
+    assert tl.tick({"mac"}, d1 + 120)                                   # 날이 바뀌면 같은 상태라도 다시 다 적는다
+    assert mod.Timeline.frames("2026-01-11")[0]["s"]["mac/s1"][0] == "p"
+    old = mod.TIMELINE_DIR / "2025-12-01.jsonl"
+    old.write_text("{}\n")
+    tl.day = ""
+    tl.tick({"mac"}, d1 + 400)
+    assert not old.exists()                                             # 14일 넘은 파일은 지운다
+    assert tl.tick({"pc"}, d1 + 600) and mod.Timeline.frames("2026-01-11")[-1]["d"] == ["mac/s1"]   # 끊긴 컴퓨터는 빠진다

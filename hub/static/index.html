@@ -320,6 +320,17 @@
   .topr button { background: rgba(255,255,255,.95); color: #0f172a; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 0; white-space: nowrap; }
   .topr button:hover { background: #fff; }
   .topr button.on { background: #fde68a; color: #78350f; }
+  .stage.replaying #replayBtn { background: #c4b5fd; color: #2e1065; }
+  .live.replay { background: #7c3aed !important; color: #fff !important; }
+  /* 하루 다시보기 막대: 아래 가운데(최근 소식 위) */
+  #replayBar { left: 50%; transform: translateX(-50%); bottom: calc(var(--feedH) + 12px); display: flex; gap: 8px; align-items: center;
+               padding: 6px 10px; border-radius: 12px; background: rgba(15,23,42,.92); border: 1px solid #7c3aed; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+               width: min(640px, calc(100% - 140px)); font-size: 12px; color: #e2e8f0; transition: bottom .25s ease; }
+  #replayBar[hidden] { display: none; }
+  #replayBar input[type=range] { flex: 1; min-width: 80px; accent-color: #a78bfa; }
+  #replayBar b { font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; color: #fff; }
+  #replayBar button, #replayBar select { font-size: 12px; padding: 3px 8px; }
+  .stage.replaying .hint { display: none; }
   /* 나를 기다리는 세션(모든 층): 위 가운데 칩. 누르면 아래로 목록 */
   #attn { top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 6; }
   #attn:empty { display: none; }
@@ -635,10 +646,14 @@
     <div class="ov" id="attn" aria-label="나를 기다리는 세션"></div>
     <ol class="ov" id="attnList" hidden></ol>
     <div class="ov" id="stale" role="status"><i class="fa-solid fa-plug-circle-xmark"></i><span id="staleText">연결 끊김</span></div>
-    <div class="ov topr"><button id="alertBtn"></button><button id="keysBtn" title="단축키 (?)"><i class="fa-solid fa-keyboard"></i></button><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin"><i class="fa-solid fa-gear"></i> 캐릭터 관리</a></div>
+    <div class="ov topr"><button id="alertBtn"></button><button id="keysBtn" title="단축키 (?)"><i class="fa-solid fa-keyboard"></i></button><button id="replayBtn" title="하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로"><i class="fa-solid fa-clock-rotate-left"></i> 다시보기</button><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin"><i class="fa-solid fa-gear"></i> 캐릭터 관리</a></div>
     <button class="edge left" id="toggleLeft" title="빌딩 패널 접기"><i class="fa-solid fa-chevron-left"></i></button>
     <button class="edge right" id="toggleRight" title="오른쪽 패널 접기"><i class="fa-solid fa-chevron-right"></i></button>
     <div class="ov zoom"><button id="zin" title="확대"><i class="fa-solid fa-plus"></i></button><button id="zout" title="축소"><i class="fa-solid fa-minus"></i></button><button id="zreset" title="원위치"><i class="fa-solid fa-rotate-left"></i></button></div>
+    <div class="ov" id="replayBar" hidden><button id="rpPlay" title="재생·정지"></button><select id="rpDay" title="날짜"></select>
+      <input type="range" id="rpSeek" step="15" aria-label="시각"><b id="rpTime"></b>
+      <select id="rpSpeed" title="빠르기"><option value="60">60×</option><option value="300">300×</option><option value="1200">1200×</option><option value="3600">3600×</option></select>
+      <button id="rpExit"><i class="fa-solid fa-tower-broadcast"></i> 실시간으로</button></div>
     <div class="ov hint">드래그로 이동 · 휠로 확대 · 더블클릭으로 원위치 · 쉬는 사람은 마우스를 올리면 이름이 보입니다</div>
     <div class="ov" id="keys" hidden><div class="box"><h3><i class="fa-solid fa-keyboard"></i> 단축키<button class="x" title="닫기">Esc</button></h3><ol id="keysList"></ol></div></div>
     <div class="center-msg" id="empty">수집기에서 아직 소식이 없습니다.<br>메인 맥에서 수집기가 돌고 있는지 확인하세요.</div>

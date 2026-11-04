@@ -378,7 +378,8 @@ function skyAt(hour) {
 const QS = new URLSearchParams(location.search);
 const FORCED_HOUR = (h => (h !== null && h !== "" && isFinite(+h) ? ((+h % 24) + 24) % 24 : null))(QS.get("hour"));
 const FORCED_WEATHER = QS.get("weather");
-const nowHour = () => { const d = new Date(); return FORCED_HOUR ?? d.getHours() + d.getMinutes() / 60; };
+let replayAt = null;   // 하루 다시보기 중인 시각(ms). 바깥 하늘과 벽시계가 이 시각을 따른다
+const nowHour = () => { const d = replayAt ? new Date(replayAt) : new Date(); return (replayAt ? null : FORCED_HOUR) ?? d.getHours() + d.getMinutes() / 60; };
 
 // ---------- 날씨: 브라우저 위치 권한이 이미 있을 때만(설정 weather 가 켜져 있으면) ----------
 // 위치는 소수 첫째 자리(약 10km)로 줄여 브라우저가 Open-Meteo 에 바로 묻는다(허브는 모름). 30분마다, 이 브라우저에 기억.
@@ -548,7 +549,7 @@ function buildClock() {
 }
 function drawClock() {
   if (!clock) return;
-  const d = new Date(), h = FORCED_HOUR ?? null;
+  const d = replayAt ? new Date(replayAt) : new Date(), h = replayAt ? null : FORCED_HOUR ?? null;
   const hh = h != null ? Math.floor(h) : d.getHours(), mm = h != null ? Math.round((h % 1) * 60) % 60 : d.getMinutes();
   const time = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
   const loc = (window.I18N && I18N.lang === "en") ? "en-US" : "ko-KR";
@@ -2465,6 +2466,7 @@ function attention() {
 }
 function renderAttention() {
   if (!state) return;
+  if (replay) { setHTML($("attn"), ""); $("attnList").hidden = true; return; }   // 다시보기 중에는 지난 일이라 모으지 않는다
   const now = Date.now() / 1000 - skew, list = attention();
   const by = k => list.filter(x => x.type === k);
   setHTML($("attn"), ATTN_ORDER.filter(k => by(k).length).map(k =>
@@ -2796,7 +2798,7 @@ function connect() {
   // 첫 소식 뒤로는 바뀐 것만 온다(event: patch). 지금 상태(붙잡아 둔 상태가 있으면 그것)에 덧대어 같은 길로 넘긴다
   src.addEventListener("patch", e => {
     if (es !== src) return;
-    const base = held ? held.s : state;
+    const base = held ? held.s : replay ? liveState : state;
     if (!base) { scheduleReconnect(); return; }   // 덧댈 상태가 없으면 새로 붙어 전체를 받는다
     if (onState(applyPatch(base, JSON.parse(e.data)), first)) first = false;
   });
@@ -2814,6 +2816,10 @@ function onState(s, first, force) {
   if (!force && seeded && Date.now() < resyncUntil &&
       !knownHosts.every(h => s.hosts.some(x => x.host === h && x.online))) { held = { s, first }; return false; }
   held = null; resyncUntil = 0;
+  if (replay) {   // 다시보기 중: 실시간 상태는 받아 두기만 하고 화면은 그대로(실시간으로 돌아오면 이어 붙인다)
+    liveState = s; aliveAt = Date.now(); lostAt = 0; retryMs = 1000; showStale();
+    return true;
+  }
   state = s;
   skew = Date.now() / 1000 - state.now;
   cfg = state.config;
@@ -2846,5 +2852,81 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("online", () => { if (lostAt) { retryMs = 1000; connect(); } });
 connect();
+// ---------- 하루 다시보기 ----------
+// 허브가 15초마다 남긴 세션 상태(/api/timeline)로 그 날 사무실을 빨리감기로 다시 그린다. 그동안 실시간 소식은 liveState 에
+// 받아 두기만 하고, '실시간으로'를 누르면 그것으로 바로 돌아간다. 바깥 하늘·벽시계도 다시보기 시각을 따른다
+let replay = null, liveState = null;
+const RP_TICK_MS = 200;
+async function openReplay(day) {
+  const days = (await fetch("/api/timeline/days").then(r => r.json()).catch(() => ({ days: [] }))).days || [];
+  if (!days.length) { alert(t("아직 다시볼 기록이 없습니다. 허브가 켜져 있는 동안 15초마다 쌓입니다.")); return; }
+  day = day && days.includes(day) ? day : days[0];
+  const j = await fetch(`/api/timeline?date=${day}`).then(r => r.json()).catch(() => null);
+  if (!j || !j.frames.length) { alert(t("그 날 기록을 읽지 못했습니다.")); return; }
+  if (!replay) liveState = state;
+  const fr = j.frames, t0 = fr[0].t, t1 = fr[fr.length - 1].t;
+  replay = { day, days, frames: fr, t0, t1, at: replay && replay.day === day ? replay.at : t0, playing: true, speed: replay ? replay.speed : 300, i: 0, rows: new Map(), changedAt: new Map(), first: new Map() };
+  $("replayBar").hidden = false; $("stage").classList.add("replaying");
+  setHTML($("rpDay"), days.map(d => `<option value="${d}"${d === day ? " selected" : ""}>${d}</option>`).join(""));
+  $("rpSpeed").value = String(replay.speed);
+  const seek = $("rpSeek"); seek.min = t0; seek.max = t1; seek.value = replay.at;
+  setText($("liveText"), t("다시보기")); $("live").className = "live replay";
+  showReplay(true);
+}
+// 그 시각까지의 상태: 앞으로 가면 이어서, 뒤로 가면 처음부터 다시 쌓는다
+function replayRows(at) {
+  const r = replay;
+  if (at < r.lastAt) { r.i = 0; r.rows = new Map(); r.changedAt = new Map(); r.first = new Map(); }
+  r.lastAt = at;
+  while (r.i < r.frames.length && r.frames[r.i].t <= at) {
+    const f = r.frames[r.i++];
+    for (const [k, row] of Object.entries(f.s || {})) {
+      const old = r.rows.get(k);
+      if (!old || old[2] !== row[2] || old[3] !== row[3]) r.changedAt.set(k, f.t);
+      if (!r.first.has(k)) r.first.set(k, f.t);
+      r.rows.set(k, row);
+    }
+    for (const k of f.d || []) r.rows.delete(k);
+  }
+  return r.rows;
+}
+function showReplay(instant) {
+  const r = replay, at = r.at, rows = replayRows(at);
+  const agents = [...rows].map(([k, row]) => {
+    const i = k.indexOf("/"), [project, title, kind, tool, stalled, nsub] = row;
+    return { id: k.slice(i + 1), host: k.slice(0, i), project, title, name: title, kind, tool, target: "", stalled: !!stalled, replay: true,
+      since: r.changedAt.get(k) || at, lastActivity: kind === "idle" ? (r.changedAt.get(k) || at) : at, startedAt: r.first.get(k) || at, tools: 0,
+      subagents: Array.from({ length: nsub }, (_, n) => ({ id: "r" + n, type: t("서브에이전트"), tool: kind === "working" ? tool : "", since: at })) };
+  });
+  const base = liveState || state;
+  state = { ...base, now: at, agents, approvals: [], messages: [], telegram: { enabled: false } };
+  skew = Date.now() / 1000 - at;   // 화면의 '지금' = 다시보기 시각(지하층·n분 전 계산이 그 시각 기준)
+  replayAt = at * 1000;
+  drawClock();
+  apply(instant);
+  $("rpSeek").value = at;
+  setText($("rpTime"), new Date(at * 1000).toLocaleTimeString(I18N && I18N.lang === "en" ? "en-US" : "ko-KR", { hour: "2-digit", minute: "2-digit" }));
+  setHTML($("rpPlay"), `<i class="fa-solid fa-${r.playing ? "pause" : "play"}"></i>`);
+}
+function closeReplay() {
+  if (!replay) return;
+  replay = null; replayAt = null;
+  $("replayBar").hidden = true; $("stage").classList.remove("replaying");
+  const s = liveState; liveState = null;
+  if (s) onState(s, true, true);
+  drawClock();
+}
+setInterval(() => {
+  if (!replay || !replay.playing || document.hidden) return;
+  replay.at = Math.min(replay.t1, replay.at + replay.speed * RP_TICK_MS / 1000);
+  if (replay.at >= replay.t1) replay.playing = false;
+  showReplay(false);
+}, RP_TICK_MS);
+$("replayBtn").addEventListener("click", () => replay ? closeReplay() : openReplay());
+$("rpExit").addEventListener("click", closeReplay);
+$("rpPlay").addEventListener("click", () => { if (!replay) return; if (replay.at >= replay.t1) replay.at = replay.t0; replay.playing = !replay.playing; showReplay(false); });
+$("rpSpeed").addEventListener("change", e => { if (replay) replay.speed = +e.target.value; });
+$("rpSeek").addEventListener("input", e => { if (!replay) return; replay.at = +e.target.value; showReplay(true); });
+$("rpDay").addEventListener("change", e => openReplay(e.target.value));
 // 점검용: 주소에 ?debug 가 있으면 길찾기를 밖에서 부를 수 있게 둔다(벽·가구 통과 시험)
 if (new URLSearchParams(location.search).has("debug")) window.officeDebug = { route, R, ELEV, OBST, me, actors, imgTex, sweepMemory, get renderer() { return renderer; } };

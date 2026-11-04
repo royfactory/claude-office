@@ -1,5 +1,8 @@
 // 영어 사전: 사무실 화면(office3d.js). 키는 office3d.js 의 t("…") 에 쓴 한국어 그대로
 I18N.add({
+  // 하루 다시보기
+  "아직 다시볼 기록이 없습니다. 허브가 켜져 있는 동안 15초마다 쌓입니다.": "Nothing to replay yet. The hub records every 15 seconds while it runs.",
+  "그 날 기록을 읽지 못했습니다.": "Couldn't read that day's record.", "다시보기": "Replay",
   // 텔레그램
   "권한 건너뛰기 모드라 텔레그램에서 보낸 글이 이 터미널의 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 텔레그램 전용 세션(sh scripts/telegram-session.sh 폴더)을 띄웁니다.": "This session runs in bypass-permissions mode, so messages from Telegram wait for approval in its terminal (dropped after 5 minutes). To use it remotely, start a Telegram session (sh scripts/telegram-session.sh folder).",
   "글 내용·답은 텔레그램 서버를 거칩니다. 관리 화면 「텔레그램」에서 알림 종류와 내용 수준을 고릅니다.": "Messages and replies pass through Telegram's servers. Pick notification types and detail level under “Telegram” on the admin page.",

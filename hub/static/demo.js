@@ -100,6 +100,27 @@
     return { today: days[days.length - 1].date, days };
   }
 
+  // 하루 다시보기(/api/timeline): 오늘 08:30~19:30, 5분마다 그럴듯하게 바뀌는 가짜 기록
+  function timeline() {
+    const d = new Date(); d.setHours(8, 30, 0, 0);
+    const t0 = Math.floor(d.getTime() / 1000), list = [...Object.values(START), ...others];
+    const KIND = ["working", "thinking", "working", "idle", "working", "waiting", "idle", "approval"];
+    const TOOL = ["Edit", "Read", "Bash", "Grep", "Write", "WebSearch"];
+    const frames = [];
+    for (let i = 0, prev = {}; i <= 132; i++) {
+      const s = {};
+      list.forEach((a, k) => {
+        const lunch = i >= 42 && i <= 54, h = (i * 7 + k * 11) % 23;
+        const kind = lunch || (k > 3 && i < 20) ? "idle" : KIND[h % KIND.length];
+        const row = [a.project, a.title, kind, kind === "working" ? TOOL[(i + k) % TOOL.length] : "", h === 5 ? 1 : 0, kind === "working" && h % 4 === 0 ? 1 : 0];
+        const key = "macbook/" + a.id;
+        if (JSON.stringify(prev[key]) !== JSON.stringify(row)) { s[key] = row; prev[key] = row; }
+      });
+      if (Object.keys(s).length) frames.push({ t: t0 + i * 300, s });
+    }
+    return { date: d.toISOString().slice(0, 10), sec: 300, frames };
+  }
+
   // ---------- 허브 대신 ----------
   const RealES = g.EventSource, realFetch = g.fetch.bind(g);
   class DemoEventSource {
@@ -128,6 +149,8 @@
     if (path === "config") return json(config);
     if (path === "state") return json(snapshot());
     if (path === "stats") return json(stats());
+    if (path === "timeline/days") return json({ days: [timeline().date] });
+    if (path === "timeline") return json(timeline());
     if (path === "assets" && method === "GET") return json([]);
     if (path === "assets") return json({ detail: "시연에서는 이미지를 올릴 수 없습니다" }, 400);
     return json({ detail: "시연에서는 되지 않습니다" }, 400);

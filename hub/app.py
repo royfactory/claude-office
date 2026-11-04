@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import hmac
 import json
@@ -46,7 +47,7 @@ if __name__ == "__main__":
     _early_log()
 
 from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
@@ -538,6 +539,10 @@ async def _expire_tick(online: dict, flushed: float) -> tuple:
                 stats.flush(now)
             except OSError:
                 pass
+        try:   # 하루 다시보기 기록(15초마다 바뀐 것만). 디스크 오류가 나도 나머지 점검은 계속한다
+            timeline.tick({h for h, v in hub.hosts.items() if hub.state(v, now) != "off"}, now)
+        except OSError as e:
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "다시보기 기록 실패:", repr(e), flush=True)
         # 하루 넘게 소식이 없는 컴퓨터는 잊는다(이름이 바뀌었거나 치운 컴퓨터가 로비·점검표에 계속 남지 않게)
         gone = [h for h, v in hub.hosts.items() if not hub.online(v, now) and now - v["receivedAt"] > HOST_FORGET_SEC]
         for h in gone:
@@ -707,6 +712,7 @@ async def ingest(request: Request) -> dict:
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": _seq_of(body.get("seq")), "machine": machine}
     stats.observe(host, agents)
     tg.observe(host, agents)
+    timeline.observe(host, agents)
     if prev is None or prev["agents"] != agents or prev.get("meta") != meta or prev.get("offline"):
         await hub.bump()
     return _ingest_reply(host)
@@ -745,6 +751,7 @@ async def ingest_patch(request: Request) -> dict:
     hub.hosts[host] = {"receivedAt": time.time(), "agents": agents, "meta": meta, "seq": seq, "machine": machine}
     stats.observe(host, agents)
     tg.observe(host, agents)
+    timeline.observe(host, agents)
     if changed:
         await hub.bump()
     return _ingest_reply(host)
@@ -1214,6 +1221,103 @@ async def tg_link_delete(lid: str) -> dict:
     tg.save()
     await hub.bump()
     return {"ok": True}
+
+
+# ---------- 하루 다시보기 ----------
+# 15초마다 세션 상태(층·제목·상태·도구·막힘·서브에이전트 수)에서 바뀐 것만 날짜별 파일(data/timeline/YYYY-MM-DD.jsonl)에 적는다.
+# 한 줄 = {"t": 시각, "s": {"host/세션": [층, 제목, 상태, 도구, 막힘, 서브에이전트 수]}, "d": [사라진 세션]}.
+# 날이 바뀌거나 허브가 다시 뜨면 첫 줄에 그때 보이는 세션을 모두 적어, 어느 파일이든 처음부터 읽으면 그 날을 다시 그릴 수 있다
+TIMELINE_DIR = DATA / "timeline"
+TIMELINE_SEC = 15
+TIMELINE_KEEP_DAYS = 14
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class Timeline:
+    def __init__(self) -> None:
+        self.cur: dict[str, dict] = {}       # host -> {세션: 줄}
+        self.written: dict[str, list] = {}   # 오늘 파일에 마지막으로 적은 상태
+        self.day = ""
+        self.at = 0.0
+
+    @staticmethod
+    def row(a: dict) -> list:
+        return [str(a.get("project") or a.get("name") or "?")[:60], str(a.get("title") or a.get("name") or "")[:40],
+                str(a.get("kind") or "idle")[:12], str(a.get("tool") or "")[:24], 1 if a.get("stalled") else 0,
+                len(a.get("subagents") or [])]
+
+    def observe(self, host: str, agents: list) -> None:
+        self.cur[host] = {a["id"]: self.row(a) for a in agents if isinstance(a, dict) and isinstance(a.get("id"), str)}
+
+    def tick(self, live: set, now: float | None = None) -> bool:
+        """TIMELINE_SEC 마다 바뀐 것을 적는다. live: 지금 세션을 보이는 컴퓨터. 적었으면 True."""
+        now = time.time() if now is None else now
+        if now - self.at < TIMELINE_SEC:
+            return False
+        self.at = now
+        day = time.strftime("%Y-%m-%d", time.localtime(now))
+        if day != self.day:
+            self.day, self.written = day, {}
+            self.prune(now)
+        cur = {f"{h}/{i}": r for h, rows in self.cur.items() if h in live for i, r in rows.items()}
+        changed = {k: r for k, r in cur.items() if self.written.get(k) != r}
+        gone = [k for k in self.written if k not in cur]
+        if not changed and not gone:
+            return False
+        line = {"t": round(now), **({"s": changed} if changed else {}), **({"d": gone} if gone else {})}
+        TIMELINE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(TIMELINE_DIR / f"{day}.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+        self.written = cur
+        return True
+
+    @staticmethod
+    def prune(now: float) -> None:
+        cut = time.strftime("%Y-%m-%d", time.localtime(now - TIMELINE_KEEP_DAYS * 86400))
+        for p in TIMELINE_DIR.glob("*.jsonl") if TIMELINE_DIR.is_dir() else []:
+            if p.stem < cut:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+    @staticmethod
+    def days() -> list[str]:
+        return sorted((p.stem for p in TIMELINE_DIR.glob("*.jsonl") if _DAY.match(p.stem)), reverse=True) if TIMELINE_DIR.is_dir() else []
+
+    @staticmethod
+    def frames(day: str) -> list[dict]:
+        out = []
+        try:
+            with open(TIMELINE_DIR / f"{day}.jsonl", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:   # 쓰다 끊긴 마지막 줄 등은 건너뛴다
+                        continue
+        except OSError:
+            pass
+        return out
+
+
+timeline = Timeline()
+
+
+@app.get("/api/timeline/days")
+async def timeline_days() -> dict:
+    return {"days": Timeline.days()}
+
+
+@app.get("/api/timeline")
+async def timeline_day(request: Request, date: str = "") -> Response:
+    day = date or time.strftime("%Y-%m-%d")
+    if not _DAY.match(day):
+        raise HTTPException(400, "date 는 YYYY-MM-DD")
+    body = json.dumps({"date": day, "sec": TIMELINE_SEC, "frames": Timeline.frames(day)}, ensure_ascii=False, separators=(",", ":")).encode()
+    headers = {"Cache-Control": "no-cache"}
+    if "gzip" in request.headers.get("accept-encoding", "") and len(body) > 2048:   # 하루치는 수 MB 라 줄여 보낸다
+        body, headers["Content-Encoding"] = gzip.compress(body, 5), "gzip"
+    return Response(body, media_type="application/json", headers=headers)
 
 
 @app.get("/api/stats")

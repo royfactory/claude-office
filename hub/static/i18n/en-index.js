@@ -42,6 +42,9 @@ I18N.add({
   "10분": "10 min", "30분": "30 min",
   // 사용 한도 상세
   "사용 한도": "Usage limits",
+  "다시보기": "Replay", "실시간으로": "Back to live",
+  "하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로": "Replay a day — fast-forward the office from the hub's 15-second record",
+  "재생·정지": "Play/pause", "날짜": "Date", "시각": "Time", "빠르기": "Speed",
   "세션별 메모리": "Memory by session",
   "세션 프로세스와 그 자식(MCP 서버·셸 등)이 쓰는 메모리 합입니다. 한 시간 넘게 쉰 세션은 그 터미널에서 /exit 로 닫으면 메모리를 돌려받고, 나중에 claude --resume 으로 이어서 열 수 있습니다. Windows 수집기는 아직 재지 않습니다.":
     "Memory used by each session's process plus its children (MCP servers, shells, …). Sessions idle for over an hour give their memory back when closed with /exit in their terminal, and can be reopened later with claude --resume. The Windows collector doesn't measure this yet.",
