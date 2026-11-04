@@ -70,6 +70,11 @@ install -m 600 "$REPO/.env" "$APP_DIR/.env"      # 토큰이 들어 있을 수 �
 printf '%s\n' "$REPO" > "$APP_DIR/repo"          # 대시보드 설정 점검표가 명령 앞에 'cd 저장소' 를 붙이게
 HUB="$(grep -E '^CLAUDE_OFFICE_HUB=' "$APP_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'" || true)"
 
+# 전체 디스크 접근 권한은 LaunchAgent 가 처음 띄운 실행 파일 기준으로 따진다. /usr/bin/python3(애플의 중간 실행 파일)로 띄우면
+# 설정 점검이 안내하는 Python.app 에 권한을 줘도 데스크톱·문서 폴더 저장소가 계속 막혔다 — 그 안의 Python.app 을 바로 띄운다
+PYBIN="$(/usr/bin/python3 -c 'import os, sys; p = os.path.join(sys.base_prefix, "Resources", "Python.app", "Contents", "MacOS", "Python"); print(p if os.access(p, os.X_OK) else "/usr/bin/python3")' 2>/dev/null || echo /usr/bin/python3)"
+"$PYBIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null || PYBIN=/usr/bin/python3
+
 cat > "$PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,7 +83,7 @@ cat > "$PLIST" <<PL
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>$PYBIN</string>
     <string>$APP_DIR/collector.py</string>
     <string>--env</string><string>$APP_DIR/.env</string>
   </array>
