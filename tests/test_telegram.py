@@ -330,3 +330,50 @@ def test_reply_markdown_becomes_telegram_html_and_falls_back_to_plain(tgh):
     mod.tg.call = strict
     mod.tg.send(CHAT, "<b>x", parse_mode="HTML", _plain="**x")
     assert len(calls) == 2 and calls[1]["text"] == "**x" and "parse_mode" not in calls[1] and "_plain" not in calls[0]
+
+
+def test_quiet_hours_window_and_keep(tgh):
+    mod, c, fake = tgh
+    B = mod.tgbridge.Bridge
+    at = lambda h, m: time.mktime((2026, 11, 4, h, m, 0, 0, 0, -1))
+    night = {"quietFrom": "23:00", "quietTo": "08:00"}
+    assert B.quiet(night, at(23, 30)) and B.quiet(night, at(2, 0)) and not B.quiet(night, at(8, 0)) and not B.quiet(night, at(12, 0))
+    day = {"quietFrom": "12:00", "quietTo": "13:00"}
+    assert B.quiet(day, at(12, 30)) and not B.quiet(day, at(13, 1))
+    assert not B.quiet({"quietFrom": "", "quietTo": "08:00"}) and not B.quiet({"quietFrom": "09:00", "quietTo": "09:00"})
+    link(mod, c)
+    now = time.localtime()
+    hm = lambda d: time.strftime("%H:%M", time.localtime(time.time() + d))
+    mod.hub.config["telegram"].update(doneSec=0, quietFrom=hm(-600), quietTo=hm(600), quietKeep=["approval"])
+    n = len(fake.sent())
+    ingest(c, agent("s1"))
+    ingest(c, agent("s1", kind="working"))
+    ingest(c, agent("s1"))                                              # 완료 — 방해 금지라 조용
+    assert len(fake.sent()) == n
+    ingest(c, agent("s1", kind="working"))
+    ingest(c, agent("s1", kind="approval", tool="Bash"))                # 승인 대기는 보낸다
+    assert fake.sent()[-1].startswith("✋")
+
+
+def test_quiet_hours_config_validation(tgh):
+    mod, c, fake = tgh
+    cfg = c.get("/api/config").json()
+    cfg["telegram"].update(quietFrom="25:00", quietTo="07:00")
+    assert c.put("/api/config", json=cfg, headers=AUTH).status_code == 422
+    cfg = c.get("/api/config").json()
+    cfg["telegram"].update(quietFrom="23:00", quietTo="07:30", quietKeep=[])
+    assert c.put("/api/config", json=cfg, headers=AUTH).status_code == 200
+
+
+def test_inbound_accept_makes_bypass_session_ready(tgh):
+    mod, c, fake = tgh
+    link(mod, c)
+    ingest(c, agent("tg", title="텔레그램 전용", mode="bypassPermissions", inbound="accept", lastActivity=1),
+           agent("by", title="건너뛰기", mode="bypassPermissions", kind="working"),
+           agent("held", title="보류", mode="auto", inbound="hold"))
+    handle(mod, c, msg("/status", mid=2))
+    lines = fake.sent()[-1].split("\n")
+    assert lines[1].startswith("1. proj · 텔레그램 전용") and lines[1].endswith("📨")    # 바로 받는 세션이 맨 위
+    assert any("보류" in l and l.endswith("⚠") for l in lines) and any("📨 텔레그램 전용 세션" in l for l in lines)
+    handle(mod, c, msg("/use 1", mid=3))
+    assert "⚠" not in fake.sent()[-1]

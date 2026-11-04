@@ -292,6 +292,47 @@ def resume_cmd(sid, cwd, root, detail="basic"):
     return f"cd {shlex.quote(cwd)} && {env}{base}"
 
 
+# 다른 곳(대시보드·텔레그램)에서 온 메시지를 그 세션이 어떻게 받나 — Claude Code 설정 crossSessionInbound(accept·hold·refuse).
+# 비어 있으면 Claude Code 가 권한 모드로 정한다(권한 건너뛰기 세션은 터미널 승인 뒤에만 넣는다). 실행 인자 --settings 가 가장 세고,
+# 그다음 그 작업 폴더의 .claude/settings.local.json → .claude/settings.json → 설정 폴더의 settings.json
+INBOUND_SEC = 60
+_inbound_cache = {}
+_INBOUND = re.compile(r'crossSessionInbound\\?"?\s*:\s*\\?"?(accept|hold|refuse)')
+
+
+def _inbound_file(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            v = json.load(f).get("crossSessionInbound")
+        return v if v in ("accept", "hold", "refuse") else ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def inbound_of(pid, cwd, root):
+    key, now = (pid, cwd, root), time.time()
+    hit = _inbound_cache.get(key)
+    if hit and now - hit[0] < INBOUND_SEC:
+        return hit[1]
+    val = ""
+    if not WINDOWS and pid:
+        args = _run(["ps", "-o", "args=", "-p", str(int(pid))])
+        m = _INBOUND.search(args)
+        if m:
+            val = m.group(1)
+        else:   # --settings 가 파일 경로면 그 파일을 읽는다
+            f = re.search(r"--settings[ =](\S+\.json)", args)
+            val = _inbound_file(os.path.expanduser(f.group(1))) if f else ""
+    if not val and cwd:
+        val = _inbound_file(os.path.join(cwd, ".claude", "settings.local.json")) or _inbound_file(os.path.join(cwd, ".claude", "settings.json"))
+    if not val:
+        val = _inbound_file(os.path.join(root, "settings.json"))
+    if len(_inbound_cache) > 500:
+        _inbound_cache.clear()
+    _inbound_cache[key] = (now, val)
+    return val
+
+
 _account_cache = {}   # 설정 폴더 → (파일 mtime, 값)
 
 
@@ -1035,6 +1076,7 @@ class Collector:
                 "tools": tr.tools,
                 "say": self.said(tr),
                 "mode": tr.mode,
+                **({"inbound": ib} if (ib := inbound_of(s.get("pid"), cwd, root)) else {}),
                 "branch": tr.branch,
                 "git": git_state(cwd),
                 "mem": proc_mem(s.get("pid")),

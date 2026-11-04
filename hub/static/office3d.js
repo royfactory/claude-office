@@ -1721,7 +1721,7 @@ function tgBindBox(a) {
   return `<div class="tg-bind">${mine.length ? `<i class="fa-solid fa-paperclip"></i> ${t("텔레그램 {name} 에 붙음 — 거기서 보낸 글이 이 세션으로 오고, 턴마다 마지막 답이 거기로 갑니다.", { name: esc(mine.map(l => l.name).join(", ")) })}
       <button class="copy" data-tgbind="off"><i class="fa-solid fa-link-slash"></i> ${t("떼기")}</button>`
     : `<button class="copy" data-tgbind="on" title="${esc(t("텔레그램에서 이 세션과 대화합니다"))}"><i class="fa-solid fa-paper-plane"></i> ${t("텔레그램에 붙이기")}</button>`}
-    ${a.mode === "bypassPermissions" ? `<small class="tg-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${t("권한 건너뛰기 모드라 텔레그램에서 보낸 글이 이 터미널의 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 crossSessionInbound: \"accept\" 설정이 필요합니다.")}</small>` : ""}</div>`;
+    ${a.mode === "bypassPermissions" && a.inbound !== "accept" ? `<small class="tg-warn"><i class="fa-solid fa-triangle-exclamation"></i> ${t("권한 건너뛰기 모드라 텔레그램에서 보낸 글이 이 터미널의 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 텔레그램 전용 세션(sh scripts/telegram-session.sh 폴더)을 띄웁니다.")}</small>` : ""}</div>`;
 }
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-tgbind]"); if (!b) return;

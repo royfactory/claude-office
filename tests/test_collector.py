@@ -1471,3 +1471,30 @@ def test_telegram_message_uses_its_own_prefix(collector, fake_socket):
     conn.close()
     srv.close()
     assert got["message"]["content"].startswith(collector.MESSAGE_PREFIX_TG) and got["message"]["content"].endswith("안녕")
+
+
+def test_inbound_from_args_then_project_then_user_settings(collector, home, tmp_path, monkeypatch):
+    collector._inbound_cache.clear()
+    proj, root = tmp_path / "proj", tmp_path / "root"
+    (proj / ".claude").mkdir(parents=True)
+    root.mkdir()
+    monkeypatch.setattr(collector, "WINDOWS", False)
+    args = {"v": "claude --settings {\"crossSessionInbound\":\"accept\"}"}
+    monkeypatch.setattr(collector, "_run", lambda cmd, timeout=4: args["v"])
+    assert collector.inbound_of(1, str(proj), str(root)) == "accept"           # 실행 인자(--settings JSON)
+    collector._inbound_cache.clear()
+    args["v"] = "claude"
+    (root / "settings.json").write_text(json.dumps({"crossSessionInbound": "refuse"}))
+    assert collector.inbound_of(1, str(proj), str(root)) == "refuse"           # 설정 폴더
+    collector._inbound_cache.clear()
+    (proj / ".claude" / "settings.json").write_text(json.dumps({"crossSessionInbound": "hold"}))
+    assert collector.inbound_of(1, str(proj), str(root)) == "hold"             # 작업 폴더가 이긴다
+    collector._inbound_cache.clear()
+    sf = tmp_path / "tg.json"
+    sf.write_text(json.dumps({"crossSessionInbound": "accept"}))
+    args["v"] = f"claude --settings {sf}"
+    assert collector.inbound_of(1, str(proj), str(root)) == "accept"           # --settings 파일
+    collector._inbound_cache.clear()
+    args["v"], _ = "claude", (root / "settings.json").unlink()
+    (proj / ".claude" / "settings.json").unlink()
+    assert collector.inbound_of(1, str(proj), str(root)) == ""

@@ -46,7 +46,8 @@ STR = {
         "list_more": "… 외 {n}개 — /status all 로 전부",
         "legend_bypass": "⚠ 권한 건너뛰기 모드 — 보낸 글이 그 컴퓨터 터미널의 승인을 기다립니다",
         "legend_nomsg": "🚫 메시지를 받지 않는 컴퓨터(수집기 CLAUDE_OFFICE_MESSAGES)",
-        "bound_bypass": "\n⚠ 이 세션은 권한 건너뛰기 모드라, 여기서 보낸 글이 그 컴퓨터 터미널에서 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 바로 받는 세션을 고르거나, 그 설정 폴더의 Claude Code 설정에 crossSessionInbound: \"accept\" 를 둡니다.",
+        "legend_tg": "📨 텔레그램 전용 세션 — 권한 건너뛰기여도 글을 바로 받습니다",
+        "bound_bypass": "\n⚠ 이 세션은 권한 건너뛰기 모드라, 여기서 보낸 글이 그 컴퓨터 터미널에서 승인을 기다립니다(5분 안에 안 하면 버려짐). 밖에서 쓰려면 바로 받는 세션을 고르거나, 텔레그램 전용 세션을 띄웁니다: sh scripts/telegram-session.sh <폴더> (claude --settings '{\"crossSessionInbound\":\"accept\"}' 로 그 세션만 바로 받음).",
         "ago_m": "{n}분 전", "ago_h": "{n}시간 전", "ago_d": "{n}일 전", "now": "방금",
         "bad_number": "번호가 맞지 않습니다. /status 로 목록을 다시 보세요.",
         "bad_more": "목록에 없는 세션은 /status all 로 전부 본 뒤 고릅니다.",
@@ -80,7 +81,8 @@ STR = {
         "list_more": "… {n} more — /status all for all",
         "legend_bypass": "⚠ bypass-permissions mode — messages wait for approval in that computer's terminal",
         "legend_nomsg": "🚫 that computer doesn't accept messages (collector CLAUDE_OFFICE_MESSAGES)",
-        "bound_bypass": "\n⚠ This session runs in bypass-permissions mode, so messages from here wait for approval in its terminal (dropped after 5 minutes). To use it remotely, pick a ready-to-receive session or set crossSessionInbound: \"accept\" in that config folder's Claude Code settings.",
+        "legend_tg": "📨 Telegram session — accepts messages directly even in bypass mode",
+        "bound_bypass": "\n⚠ This session runs in bypass-permissions mode, so messages from here wait for approval in its terminal (dropped after 5 minutes). To use it remotely, pick a ready-to-receive session or start a Telegram session: sh scripts/telegram-session.sh <folder> (claude --settings '{\"crossSessionInbound\":\"accept\"}' — only that session accepts directly).",
         "ago_m": "{n}m ago", "ago_h": "{n}h ago", "ago_d": "{n}d ago", "now": "now",
         "bad_number": "No such number. Send /status to see the list again.",
         "bad_more": "For sessions not listed, send /status all first.",
@@ -438,7 +440,8 @@ class Bridge:
     def ready(a: dict) -> bool:
         """텔레그램에서 보낸 글을 바로 받는 세션: 메시지를 받는 컴퓨터이고, 권한 건너뛰기 모드가 아니다
         (그 모드는 Claude Code 규칙상 다른 곳에서 온 메시지를 터미널 승인 뒤에만 넣는다)."""
-        return bool(a.get("canMessage")) and a.get("mode") != "bypassPermissions"
+        ib = a.get("inbound") or ""   # 그 세션의 crossSessionInbound(수집기가 실행 인자·설정 파일에서 읽음)
+        return bool(a.get("canMessage")) and (ib == "accept" or (not ib and a.get("mode") != "bypassPermissions"))
 
     def _sessions(self, limit: int = 40) -> list[dict]:
         """붙일 후보: 바로 받는 세션 → 일하는 세션 → 최근에 움직인 세션 순."""
@@ -471,12 +474,16 @@ class Bridge:
             for i, a in enumerate(ag, 1):
                 mark = "📎 " if b.get("session") == a["id"] and b.get("host") == a["host"] else ""
                 warn = "" if self.ready(a) else (" ⚠" if a.get("canMessage") else " 🚫")
+                if a.get("inbound") == "accept" and a.get("mode") == "bypassPermissions":
+                    warn = " 📨"   # 권한 건너뛰기지만 메시지를 바로 받게 해 둔 세션(텔레그램 전용 세션)
                 kind = s["kind"].get(a.get("kind"), a.get("kind", ""))
                 when = kind if a.get("kind") != "idle" else f"{kind} · {self._ago(a.get('lastActivity'), s)}"
                 where = f" @{a['host']}" if len(hosts) > 1 else ""
                 lines.append(f"{i}. {mark}{a.get('project', '')} · {(a.get('title') or a.get('name') or '')[:36]} · {when}{where}{warn}")
             if len(ag) < len(every):
                 lines.append(s["list_more"].format(n=len(every) - len(ag)))
+            if any(a.get("inbound") == "accept" and a.get("mode") == "bypassPermissions" for a in ag):
+                lines.append(s["legend_tg"])
             if any(not self.ready(a) and a.get("canMessage") for a in ag):
                 lines.append(s["legend_bypass"])
             if any(not a.get("canMessage") for a in ag):
@@ -517,7 +524,7 @@ class Bridge:
         s = self._s()
         title = (a or {}).get("title") or (a or {}).get("name") or sid[:8]
         self._note("out", link["name"], "bind", title, sid)
-        extra = s["bound_no_msg"] if not (a or {}).get("canMessage") else s["bound_bypass"] if (a or {}).get("mode") == "bypassPermissions" else ""
+        extra = s["bound_no_msg"] if not (a or {}).get("canMessage") else "" if self.ready(a or {}) else s["bound_bypass"]
         self.send(link["chat"], s["bound"].format(title=title, host=host) + extra)
         await self.ops.bump()
 
@@ -619,9 +626,22 @@ class Bridge:
         acc = (a.get("account") or {}).get("id")
         return not (f.get("accounts") and acc not in f["accounts"])
 
+    @staticmethod
+    def quiet(tg: dict, now: float | None = None) -> bool:
+        """지금이 방해 금지 시간인가(허브 컴퓨터 시각). 22:00~07:00 처럼 자정을 넘겨도 된다."""
+        f, t = tg.get("quietFrom") or "", tg.get("quietTo") or ""
+        if not f or not t or f == t:
+            return False
+        lt = time.localtime(time.time() if now is None else now)
+        m = lt.tm_hour * 60 + lt.tm_min
+        a, b = (int(x[:2]) * 60 + int(x[3:]) for x in (f, t))
+        return a <= m < b if a < b else (m >= a or m < b)
+
     def notify(self, kind: str, host: str, a: dict, dur: float = 0) -> None:
         cfg = self.ops.config()
         tg = cfg.get("telegram", {})
+        if self.quiet(tg) and kind not in tg.get("quietKeep", ["approval"]):
+            return   # 방해 금지 시간 — 화면에는 그대로 보인다
         s = self._s()
         # 한 줄로: 무슨 일 · 층 · 세션 제목(basic) · 도구(승인)·걸린 시간(완료). 자세한 것은 대시보드에서
         project = a.get("project") or "?"
