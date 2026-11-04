@@ -303,40 +303,13 @@ def test_use_number_only_from_shown_list(tgh):
     assert mod.tg.data["links"][0]["bind"]["session"] == "x13"
 
 
-def test_web_button_opens_session_when_web_url_set(tgh):
+
+def test_notification_is_one_line_without_buttons(tgh):
     mod, c, fake = tgh
     link(mod, c)
     mod.hub.config["telegram"]["doneSec"] = 0
-    ingest(c, agent("s 1", project="내 프로젝트"))
-    ingest(c, agent("s 1", project="내 프로젝트", kind="working"))
-    ingest(c, agent("s 1", project="내 프로젝트"))
-    assert "reply_markup" not in fake.last("sendMessage")                  # 웹 주소가 없으면 단추 없음
-    mod.hub.config["telegram"]["webUrl"] = "http://mac.tail.ts.net:3006/"
-    ingest(c, agent("s 1", project="내 프로젝트", kind="working"))
-    ingest(c, agent("s 1", project="내 프로젝트"))
-    btn = fake.last("sendMessage")["reply_markup"]["inline_keyboard"][-1][0]
-    assert btn["url"] == "http://mac.tail.ts.net:3006/#p=%EB%82%B4%20%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8&s=s%201"
-
-
-def test_rejected_web_button_is_dropped_and_resent(tgh):
-    mod, c, fake = tgh
-    calls = []
-
-    def picky(method, params):
-        calls.append(params)
-        rm = params.get("reply_markup") or {}
-        if any("url" in b for row in rm.get("inline_keyboard", []) for b in row):
-            raise mod.tgbridge.TgError(400, "Bad Request: wrong HTTP URL")
-        return {"message_id": 1}
-    mod.tg.call = picky
-    mod.tg.send(CHAT, "hi", reply_markup={"inline_keyboard": [[{"text": "w", "url": "http://x"}]]})
-    assert len(calls) == 2 and "reply_markup" not in calls[1]
-
-
-def test_web_url_must_be_http(tgh):
-    mod, c, fake = tgh
-    cfg = c.get("/api/config").json()
-    cfg["telegram"]["webUrl"] = "javascript:alert(1)"
-    assert c.put("/api/config", json=cfg, headers=AUTH).status_code == 422
-    cfg["telegram"]["webUrl"] = "http://mac.tail.ts.net:3006"
-    assert c.put("/api/config", json=cfg, headers=AUTH).status_code == 200
+    ingest(c, agent("s1"))
+    ingest(c, agent("s1", kind="working"))
+    ingest(c, agent("s1", say="길고 긴 마지막 말"))
+    last = fake.last("sendMessage")
+    assert "\n" not in last["text"] and "reply_markup" not in last
