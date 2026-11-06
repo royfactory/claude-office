@@ -244,7 +244,7 @@ I18N.add({
   // 컴퓨터 자원 게이지
   "Claude 세션 {n}개 {x}": "{n|Claude session|Claude sessions} {x}", "한 시간 넘게 쉰 세션 {n}개 {x}": "{n|session|sessions} idle over an hour {x}",
   "Claude 세션 {n}개": "{n|Claude session|Claude sessions}", "정리 후보 {n}개": "{n|cleanup candidate|cleanup candidates}",
-  "{x}째 쉬는 중": "idle for {x}", "메모리를 잰 세션이 없습니다(Windows 수집기이거나 예전 수집기).": "No session memory measured (Windows or older collector).",
+  "{x}째 쉬는 중": "idle for {x}", "메모리를 잰 세션이 없습니다(예전 수집기면 업데이트하세요).": "No session memory measured (update older collectors).",
   "이 세션 프로세스와 자식(MCP 서버·셸 등)이 쓰는 메모리": "Memory used by this session's process and its children (MCP servers, shells, …)",
   "{x}째 쉬는 중입니다.": "Idle for {x}.", "메모리 {x}를 쓰고 있어요.": "Using {x} of memory.",
   "안 쓰면 그 터미널에서 /exit 로 닫고, 나중에 이어서 열 수 있습니다.": "If you're done, close it with /exit in that terminal — you can resume it later.",

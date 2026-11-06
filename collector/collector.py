@@ -1181,23 +1181,87 @@ MEM_SEC = 15
 _ptree = {"at": 0.0, "rss": {}, "kids": {}}
 
 
+def _win_table():
+    """Windows: 프로세스 표({pid: 0}, {부모: [자식]})를 Toolhelp32 스냅샷으로. 메모리는 _win_rss 가 필요한 것만 잰다."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(2, 0)   # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return {}, {}
+    rss, kids = {}, {}
+    try:
+        e = Entry()
+        e.dwSize = ctypes.sizeof(Entry)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            rss[e.th32ProcessID] = None   # 재기 전
+            kids.setdefault(e.th32ParentProcessID, []).append(e.th32ProcessID)
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return rss, kids
+
+
+def _win_rss(pid):
+    """Windows: 그 프로세스의 작업 집합(WorkingSetSize, 바이트). 못 열면 0."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + \
+                   [(n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+                                                   "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h = k32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return 0
+    try:
+        c = Counters()
+        c.cb = ctypes.sizeof(Counters)
+        return int(c.WorkingSetSize) if k32.K32GetProcessMemoryInfo(h, ctypes.byref(c), c.cb) else 0
+    finally:
+        k32.CloseHandle(h)
+
+
 def proc_mem(pid):
     """그 세션 프로세스와 자식들(MCP 서버·셸·서브 프로세스)이 쓰는 메모리(RSS 합, 바이트). 못 재면 None.
 
-    맥·리눅스는 ps 한 번으로 전체 표를 읽어 MEM_SEC 동안 쓴다. Windows 는 아직 재지 않는다."""
-    if WINDOWS or not pid:
+    맥·리눅스는 ps 한 번으로 전체 표를, Windows 는 Toolhelp32 스냅샷으로 프로세스 표를 읽어 MEM_SEC 동안 쓴다
+    (Windows 는 메모리를 세션 트리에 든 프로세스만 잰다)."""
+    if not pid:
         return None
     now = time.time()
     if now - _ptree["at"] > MEM_SEC:
         _ptree["at"] = now
         rss, kids = {}, {}
-        for line in _run(["ps", "-A", "-o", "pid=,ppid=,rss="]).splitlines():
+        if WINDOWS:
             try:
-                p, pp, r = (int(x) for x in line.split())
-            except ValueError:
-                continue
-            rss[p] = r * 1024
-            kids.setdefault(pp, []).append(p)
+                rss, kids = _win_table()
+            except (OSError, AttributeError, ValueError):
+                rss, kids = {}, {}
+        else:
+            for line in _run(["ps", "-A", "-o", "pid=,ppid=,rss="]).splitlines():
+                try:
+                    p, pp, r = (int(x) for x in line.split())
+                except ValueError:
+                    continue
+                rss[p] = r * 1024
+                kids.setdefault(pp, []).append(p)
         _ptree["rss"], _ptree["kids"] = rss, kids
     rss, kids = _ptree["rss"], _ptree["kids"]
     try:
@@ -1212,7 +1276,12 @@ def proc_mem(pid):
         if p in seen:
             continue
         seen.add(p)
-        total += rss.get(p, 0)
+        if rss.get(p) is None and p in rss:   # Windows: 처음 보는 프로세스면 지금 잰다(표를 새로 읽을 때까지 기억)
+            try:
+                rss[p] = _win_rss(p)
+            except (OSError, AttributeError, ValueError):
+                rss[p] = 0
+        total += rss.get(p) or 0
         todo.extend(kids.get(p, ()))
     return total
 

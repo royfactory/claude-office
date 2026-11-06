@@ -1498,3 +1498,11 @@ def test_inbound_from_args_then_project_then_user_settings(collector, home, tmp_
     args["v"], _ = "claude", (root / "settings.json").unlink()
     (proj / ".claude" / "settings.json").unlink()
     assert collector.inbound_of(1, str(proj), str(root)) == ""
+
+
+def test_proc_mem_measures_this_process_on_every_os(collector, monkeypatch):
+    """맥·리눅스는 ps, Windows 는 Toolhelp32·GetProcessMemoryInfo 로 실제 프로세스를 잰다(CI 세 OS 에서)."""
+    monkeypatch.setitem(collector._ptree, "at", 0.0)
+    n = collector.proc_mem(os.getpid())
+    assert n is not None and n > 1024 * 1024
+    assert collector.proc_mem(2147483600) is None

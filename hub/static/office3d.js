@@ -1586,7 +1586,7 @@ function renderMemModal() {
     const o = oldIdle(a), st = stateOf(a);
     return `<li class="${o ? "old" : ""}" data-id="${esc(a.id)}" data-p="${esc(a.project)}"><span class="mn">${esc(a.title || a.name)}<small>${esc(a.name)}${a.worktree ? " · " + esc(a.worktree) : ""}</small></span>
       <span class="ms">${o ? `<i class="fa-solid fa-broom"></i> ${t("{x}째 쉬는 중", { x: shortDur(now - (a.since || a.lastActivity)) })}` : esc(STATE_WORD[st] || "")}</span><span class="mv">${fmtMem(a.mem)}</span></li>`;
-  }).join("") || `<li class="muted">${t("메모리를 잰 세션이 없습니다(Windows 수집기이거나 예전 수집기).")}</li>`);
+  }).join("") || `<li class="muted">${t("메모리를 잰 세션이 없습니다(예전 수집기면 업데이트하세요).")}</li>`);
 }
 function setMemModal(on) { $("memModal").hidden = !on; if (on) renderMemModal(); }
 document.addEventListener("click", e => {

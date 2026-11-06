@@ -46,8 +46,8 @@ I18N.add({
   "하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로": "Replay a day — fast-forward the office from the hub's 15-second record",
   "재생·정지": "Play/pause", "날짜": "Date", "시각": "Time", "빠르기": "Speed",
   "세션별 메모리": "Memory by session",
-  "세션 프로세스와 그 자식(MCP 서버·셸 등)이 쓰는 메모리 합입니다. 한 시간 넘게 쉰 세션은 그 터미널에서 /exit 로 닫으면 메모리를 돌려받고, 나중에 claude --resume 으로 이어서 열 수 있습니다. Windows 수집기는 아직 재지 않습니다.":
-    "Memory used by each session's process plus its children (MCP servers, shells, …). Sessions idle for over an hour give their memory back when closed with /exit in their terminal, and can be reopened later with claude --resume. The Windows collector doesn't measure this yet.",
+  "세션 프로세스와 그 자식(MCP 서버·셸 등)이 쓰는 메모리 합입니다. 한 시간 넘게 쉰 세션은 그 터미널에서 /exit 로 닫으면 메모리를 돌려받고, 나중에 claude --resume 으로 이어서 열 수 있습니다.":
+    "Memory used by each session's process plus its children (MCP servers, shells, …). Sessions idle for over an hour give their memory back when closed with /exit in their terminal, and can be reopened later with claude --resume.",
   "Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 설정 폴더의 로그인 정보로 묶고(예전 수집기면 컴퓨터와 주간 초기화 시각으로), 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).":
     "Subscription usage (Pro · Max) as Claude Code reports it to the status line. Accounts are grouped by the login of each config folder (older collectors: by computer and weekly reset time); each session reports the value from its last response, so the largest value in a group is shown. Only terminal (CLI) sessions from config folders with the status line installed appear (the status line does not run in IDE extensions such as VS Code; see step 6 in the Guide tab).",
   // 오른쪽 패널
