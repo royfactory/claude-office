@@ -6,3 +6,4 @@ __pycache__/
 *.log
 .DS_Store
 site/
+00_document/

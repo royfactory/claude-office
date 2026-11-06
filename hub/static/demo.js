@@ -70,15 +70,24 @@
   }
   function snapshot() {
     const t = now(), wave = x => Math.round(50 + 30 * Math.sin(t / x));
-    const agents = [...Object.values(web), ...others].map(a => ({
+    const el = t - loopAt, clash = el >= 15 && el < 40;   // 루프 가운데 25초 동안 두 세션이 같은 파일을 고친다
+    const agents = [...Object.values(web), ...others].map((a, i) => ({
       ...a, host: "macbook", lastActivity: a.kind === "idle" ? a.lastActivity : t, tools: a.tools + Math.floor((t - T0) / 9),
+      // 세션별 메모리(프로세스 트리 합): 오래 쉰 세션도 꽤 쓴다 — 메모리 게이지를 누르면 '정리 후보'
+      mem: Math.round((180 + ((i * 137) % 9) * 95 + (a.kind === "idle" && t - a.lastActivity > 3600 ? 600 : 0)) * 2 ** 20),
+      edits: clash && (a.id === "w1" || a.id === "w2") ? [{ k: "demo00cart01", f: "cart.ts", ts: t - 30 }] : [],
     }));
+    const tlog = [{ ts: T0 - 120, dir: "in", who: "Alex", kind: "msg", text: "How are the push tests going?", session: "m1" },
+                  { ts: T0 - 60, dir: "out", who: "bot", kind: "reply", text: "APNs refresh is fixed; 14 tests pass.", session: "m1" },
+                  { ts: t - (el % 30), dir: "out", who: "bot", kind: "done", text: "web-app · Fix flaky e2e tests", session: "w2" }];
     return {
       version, now: t, config,
       hosts: [{ host: "macbook", age: 0.4, online: true, count: agents.length, checklistRule: true,
         setup: { roots: 1, hooks: 1, approveHook: 0, statusline: 1, todoTools: 1, os: "mac", messagesEnv: false, approveEnv: false, gitDenied: 0 },
         sys: { cpu: wave(7), gpu: wave(11) - 20, mem: 62 + Math.round(4 * Math.sin(t / 30)), disk: 58, memTotal: 34359738368, diskTotal: 994662584320, ts: Math.round(t) } }],
       agents, messaging: { ready: false, auth: false }, messages: [], approvals: [], approvalsReady: false,
+      telegram: { enabled: true, bot: "office_bot", ok: true, error: "", pairing: false, log: tlog,
+        links: [{ id: "demo01", name: "Alex", muted: false, filter: {}, bind: { host: "macbook", session: "m1", at: T0 - 300 } }] },
     };
   }
 
