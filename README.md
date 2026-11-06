@@ -152,7 +152,7 @@ The collector reads `~/.claude` and Orca profiles (`~/Library/Application Suppor
 
 ## Optional features
 
-All of these are off unless you turn them on. Details are in the [Korean README](README.ko.md) for now.
+All of these are off unless you turn them on. Details for each follow the table.
 
 | Feature | How |
 |---|---|
@@ -160,7 +160,81 @@ All of these are off unless you turn them on. Details are in the [Korean README]
 | **Approve / deny from the dashboard.** "Allow once" and "Deny" buttons with a command preview. The terminal prompt stays up and whichever answers first wins. | `OFFICE_TOKEN` on the hub, the switch in `/admin`, `CLAUDE_OFFICE_APPROVE=on` on that computer, and `install_hooks.py --approve --apply` |
 | **Message a session.** Type into a session from the dashboard. Uses Claude Code's [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging); macOS/Linux only. | `OFFICE_TOKEN`, the switch in `/admin`, and `CLAUDE_OFFICE_MESSAGES=on` on that computer |
 | **Telegram.** One-line notifications for approvals, finished turns (longer than a threshold) and stuck sessions (details stay on the dashboard); reply to a notification to message that session; `/status` and `/use N` to attach a session so the chat talks to it and each turn's last reply comes back; optional Allow/Deny buttons. The hub long-polls Telegram, so it doesn't need to be reachable from the internet. Linking needs a one-time code from `/admin`, private chats only. Quiet hours pause done/stuck notifications (approvals still come by default). Sessions in bypass-permissions mode hold incoming messages for terminal approval; start a Telegram session with `sh scripts/telegram-session.sh <folder>` (`claude --settings '{"crossSessionInbound":"accept"}'`, that session only) — `/status` marks it 📨. Notification text, your Telegram messages and the attached session's replies pass through Telegram's servers. | `OFFICE_TELEGRAM_TOKEN` in the hub `.env`, restart the hub, then `/admin` → Telegram → Get a link code. Messaging (above) is needed to talk to a session |
+| **Read lock.** Require a token to view the dashboard (sign-in page, one-year cookie). | `OFFICE_READ_TOKEN` in the hub `.env` |
 | **Usage-limit bar.** 5-hour and weekly limits from the [status line](https://code.claude.com/docs/en/statusline), per account. Your existing status line keeps working. Terminal (CLI) sessions only. | `install_hooks.py --statusline --apply` |
+
+### Approval-wait detection (hook)
+
+Reading session logs alone, the collector can't tell that a session is stopped at a permission prompt ("Do you want to …?") — it looks busy. A [Claude Code hook](https://code.claude.com/docs/en/hooks) fixes that:
+
+- `hooks/claude_office_hook.py` runs on Claude Code events (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `Notification` (`permission_prompt`), `UserPromptSubmit`, `Stop`, `StopFailure`) and overwrites **only the last event** per session in `~/.claude-office/events/<session id>.json`, e.g. `{"event": "PermissionRequest", "kind": "permission", "ts": …, "tool_name": "Bash"}`.
+- If that event is a permission request and the session is busy, the collector reports it as waiting for approval. Approving, denying, stopping or a new prompt clears it.
+- Not recorded: command text, tool output, prompts, Claude's replies, notification text, folder paths. **Nothing goes over the network.** The hook never decides anything and always exits 0.
+
+Install on **each computer that runs sessions**, from the repository folder:
+
+```bash
+/usr/bin/python3 hooks/install_hooks.py            # preview (macOS/Linux)
+/usr/bin/python3 hooks/install_hooks.py --apply    # add to ~/.claude/settings.json (backs it up)
+/usr/bin/python3 hooks/install_hooks.py --remove   # remove only these hooks
+py hooks\install_hooks.py --apply                  # Windows
+```
+
+Existing hooks and settings are kept. Re-run `--apply` after moving the repository; use `--settings <file>` for other config folders (e.g. Orca profiles) and check `/hooks` in a new session.
+
+### Approve or deny from the dashboard
+
+Sessions waiting for approval get a command preview and **Allow once** / **Deny** in the Sessions tab, so you can answer from another computer or a phone. Works on macOS and Windows (HTTP, not sockets).
+
+- The approval hook `hooks/claude_office_approve.py` (`PermissionRequest`) posts the request to the hub and waits. The terminal prompt stays up; **whichever answers first wins**, and the hub withdraws the request within seconds. With no decision (about 10 minutes, or the hub is down) the hook returns nothing and the terminal asks as usual.
+- Allow is for **this call only** (permission rules don't change). Deny tells Claude it was denied from the dashboard. Bypass-permissions sessions have no prompts, so this doesn't apply.
+- The preview (Bash description and the first 400 characters of the command, the file path, the URL, or the first 300 characters of other input) stays in hub memory and needs the write token to view.
+
+Turn on all four (deliberately layered, since a token holder can allow commands on that computer): `OFFICE_TOKEN` on the hub; **Approve or deny from the dashboard** in `/admin`; `CLAUDE_OFFICE_APPROVE=on` on that computer (`sh collector/install.sh --set CLAUDE_OFFICE_APPROVE=on`, Windows `powershell -ExecutionPolicy Bypass -File collector\install.ps1 -Set CLAUDE_OFFICE_APPROVE=on`); and `install_hooks.py --approve --apply`.
+
+### Message a session
+
+Select a session and a "Message this session" box appears. Text goes dashboard → hub → that computer's collector → the session's inbox socket ([cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging)); no outside service.
+
+- Needs `OFFICE_TOKEN`, **Send messages from the dashboard** in `/admin`, and `CLAUDE_OFFICE_MESSAGES=on` on that computer.
+- Claude receives it as **a message from another session** (prefixed "sent from the claude-office dashboard"), so it can't approve permissions or change settings.
+- Sessions in bypass-permissions mode hold such messages for approval in their terminal (dropped after 5 minutes) unless `crossSessionInbound` is `accept` for that session — `scripts/telegram-session.sh` starts one that way.
+- The collector long-polls the hub and delivers immediately; undelivered messages expire after a minute. Not supported by the Windows collector yet (Windows inboxes need per-session authentication).
+
+### Telegram
+
+1. Create a bot: send `/newbot` to `@BotFather` in Telegram and copy the token.
+2. Put `OFFICE_TELEGRAM_TOKEN=<token>` in the hub `.env` and restart the hub (`sh hub/install.sh`, `start.bat`, or `docker compose up -d`).
+3. `/admin` → Telegram → **Get a link code**, then send the 6-digit code to the bot (the "open on phone" link sends it for you). Only private chats can link; several people can each link their own chat and pick which computers/accounts notify them.
+
+What you get:
+
+- **Notifications**, one line each: waiting for approval, done (turns longer than 60 seconds by default), stuck. Pick types, the threshold and detail level in `/admin`. **Reply** to a notification to message that session.
+- **One session in Telegram**: `/status` (numbered list, ready-to-receive sessions first) then `/use N`, or **Attach to Telegram** in a session's details. What you write goes to that session, and **each turn's last reply** comes back, formatted (bold, code, lists, links). `/stop` detaches. Attached sessions move to a "Telegram" floor at the top, with the bot assistant in the meeting room and linked people in the lounge.
+- **Quiet hours**: a time range (hub computer's time, may cross midnight) when only the chosen notifications are sent (approvals by default). Attached-session replies always come.
+- **Approve from Telegram** (off by default): Allow once / Deny buttons with the command preview. Needs dashboard approvals (above) too.
+- **Telegram session**: `sh scripts/telegram-session.sh <folder> [claude args]` starts `claude --settings '{"crossSessionInbound":"accept"}'`, so only that session accepts messages without terminal approval, even in bypass mode; `/status` marks it 📨. Messages are never treated as your consent, so its own permission prompts still appear (turn on Telegram approvals or start it with e.g. `--permission-mode acceptEdits`).
+- Other commands: `/status all`, `/mute` · `/unmute`, `/unlink`, `/help`.
+
+The bot token lives only in `.env`; linked chats are stored in `data/telegram.json` (not public). Replies are sent by the collector **only for the attached session** and never appear in the public state. Notification text, your Telegram messages and replies pass through Telegram's servers — use the "event and floor only" detail level and turn replies off if that matters.
+
+### Usage-limit bar (status line)
+
+Claude Code reports subscription usage limits (5-hour and weekly) only to the [status line](https://code.claude.com/docs/en/statusline). With `hooks/claude_office_statusline.py` as the status line, those values (usage, reset times, context window size, model name only) are saved to `~/.claude-office/status/<session id>.json` and shown under the building as `Usage ▬ 23% 4h 27m · wk 41%` (`+1` with more accounts). Click it for per-account bars and reset times.
+
+```bash
+/usr/bin/python3 hooks/install_hooks.py --statusline            # preview
+/usr/bin/python3 hooks/install_hooks.py --statusline --apply    # install (also adds the approval-wait hook)
+/usr/bin/python3 hooks/install_hooks.py --remove                # remove and restore your status line
+```
+
+- **Your existing status line keeps showing**: it is saved and run with the same input. Without one, a single line like `opus-5-5 · ctx 19% · 5h 42% · 7d 18%` is shown.
+- Terminal (CLI) sessions only — IDE extensions don't run the status line. Values come with Pro/Max subscriptions after a session's first reply; long-idle sessions keep their last value.
+- If another tool manages the status line (e.g. an Orca profile's `settings.json`), install with `--settings <that file>`; if it gets overwritten, the bar stops updating.
+
+### Read lock
+
+Set `OFFICE_READ_TOKEN` on the hub and viewing also needs a token: `/` and `/admin` show a sign-in page, and the token (or `OFFICE_TOKEN`) sets a signed, HttpOnly cookie for a year. Give viewers the read token; they can't write with it. Collectors read settings with their write token. Screen code (`/static`) and character images stay public.
 
 ## Operations
 
