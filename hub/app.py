@@ -72,6 +72,10 @@ def _load_env(path: Path) -> None:
 _load_env(ROOT / ".env")
 DATA = Path(os.environ.get("OFFICE_DATA") or ROOT / "data")
 TOKEN = os.environ.get("OFFICE_TOKEN", "").strip()
+# 정하면 보기(사무실 화면·관리 화면·상태·설정·요약·다시보기)에도 토큰이 필요하다. 브라우저는 처음 한 번 넣으면 쿠키로 기억한다.
+# 쓰기 토큰(OFFICE_TOKEN)으로도 볼 수 있다. 비우면 예전처럼 보기는 열려 있다(믿을 수 있는 네트워크에서만)
+READ_TOKEN = os.environ.get("OFFICE_READ_TOKEN", "").strip()
+VIEW_COOKIE = "office_view"
 ASSETS = DATA / "assets"
 CONFIG_PATH = DATA / "config.json"
 STATIC = Path(__file__).parent / "static"
@@ -518,6 +522,30 @@ def require_write(request: Request) -> None:
 
 
 
+def _view_sig() -> str:
+    """보기 쿠키 값: 읽기 토큰으로 만든 서명(토큰 원문은 쿠키에 두지 않는다). 토큰을 바꾸면 예전 쿠키는 무효."""
+    return hmac.new(READ_TOKEN.encode(), b"claude-office-view", hashlib.sha256).hexdigest()
+
+
+def _token_ok(got: str) -> bool:
+    return bool(got) and any(t and hmac.compare_digest(got.encode(), t.encode()) for t in (READ_TOKEN, TOKEN))
+
+
+def can_read(request: Request) -> bool:
+    if not READ_TOKEN:
+        return True
+    c = request.cookies.get(VIEW_COOKIE, "")
+    if c and hmac.compare_digest(c.encode(), _view_sig().encode()):
+        return True
+    got = request.headers.get("x-office-token") or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    return _token_ok(got)
+
+
+def require_read(request: Request) -> None:
+    if not can_read(request):
+        raise HTTPException(401, "보기에 토큰이 필요하다(OFFICE_READ_TOKEN)")
+
+
 async def _expire_loop() -> None:
     # 수집기가 끊기면 그 세션들이 화면에서 빠지도록 주기적으로 알린다. 요약 기록도 1분마다 파일에 쓴다
     online: dict[str, bool] = {}
@@ -619,13 +647,37 @@ app.mount("/static", _Static(directory=STATIC), name="static")
 
 
 @app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html", headers=NO_CACHE)
+async def index(request: Request) -> FileResponse:
+    return FileResponse(STATIC / ("index.html" if can_read(request) else "login.html"), headers=NO_CACHE)
 
 
 @app.get("/admin")
-async def admin() -> FileResponse:
-    return FileResponse(STATIC / "admin.html", headers=NO_CACHE)
+async def admin(request: Request) -> FileResponse:
+    return FileResponse(STATIC / ("admin.html" if can_read(request) else "login.html"), headers=NO_CACHE)
+
+
+class Login(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/login")
+async def login(b: Login) -> JSONResponse:
+    """보기 잠금(OFFICE_READ_TOKEN)일 때 토큰을 확인하고 보기 쿠키(1년)를 준다. 틀리면 1초 쉬고 401."""
+    if not READ_TOKEN:
+        return JSONResponse({"ok": True})
+    if not _token_ok(b.token.strip()):
+        await asyncio.sleep(1)
+        raise HTTPException(401, "토큰이 맞지 않다")
+    r = JSONResponse({"ok": True})
+    r.set_cookie(VIEW_COOKIE, _view_sig(), max_age=365 * 86400, httponly=True, samesite="lax")
+    return r
+
+
+@app.post("/api/logout")
+async def logout() -> JSONResponse:
+    r = JSONResponse({"ok": True})
+    r.delete_cookie(VIEW_COOKIE)
+    return r
 
 
 @app.get("/admin/")
@@ -641,7 +693,7 @@ async def favicon() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "hosts": len(hub.hosts), "version": hub.version, "auth": bool(TOKEN)}
+    return {"ok": True, "hosts": len(hub.hosts), "version": hub.version, "auth": bool(TOKEN), "readLock": bool(READ_TOKEN)}
 
 
 def _check_machine(host: str, body: dict) -> str:
@@ -771,7 +823,7 @@ async def host_bye(b: Bye) -> dict:
     return {"ok": True}
 
 
-@app.get("/api/state")
+@app.get("/api/state", dependencies=[Depends(require_read)])
 async def state() -> dict:
     return hub.snapshot()
 
@@ -809,7 +861,7 @@ def _patch(prev: dict, snap: dict) -> dict:
     return out
 
 
-@app.get("/api/stream")
+@app.get("/api/stream", dependencies=[Depends(require_read)])
 async def stream(request: Request) -> StreamingResponse:
     async def gen():
         seen, sent = -1, None
@@ -1303,12 +1355,12 @@ class Timeline:
 timeline = Timeline()
 
 
-@app.get("/api/timeline/days")
+@app.get("/api/timeline/days", dependencies=[Depends(require_read)])
 async def timeline_days() -> dict:
     return {"days": Timeline.days()}
 
 
-@app.get("/api/timeline")
+@app.get("/api/timeline", dependencies=[Depends(require_read)])
 async def timeline_day(request: Request, date: str = "") -> Response:
     day = date or time.strftime("%Y-%m-%d")
     if not _DAY.match(day):
@@ -1320,12 +1372,12 @@ async def timeline_day(request: Request, date: str = "") -> Response:
     return Response(body, media_type="application/json", headers=headers)
 
 
-@app.get("/api/stats")
+@app.get("/api/stats", dependencies=[Depends(require_read)])
 async def get_stats(days: int = 7) -> dict:
     return stats.summary(max(1, min(days, 90)))
 
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=[Depends(require_read)])
 async def get_config() -> dict:
     return hub.config
 
@@ -1391,7 +1443,7 @@ async def upload_asset(request: Request) -> dict:
     return {"name": name, "url": f"/assets/{name}"}
 
 
-@app.get("/api/assets")
+@app.get("/api/assets", dependencies=[Depends(require_read)])
 async def list_assets() -> list[dict]:
     if not ASSETS.is_dir():
         return []

@@ -145,6 +145,7 @@ Your prompts, command text, and file contents are never sent. Turn speech bubble
 | `OFFICE_BIND` / `OFFICE_PORT` | hub | `127.0.0.1` / `3006` | listen address |
 | `OFFICE_DATA` | hub (direct run) | `./data` | settings and images (Docker uses the `office_data` volume) |
 | `OFFICE_TOKEN` | both | | required for writes (collector, settings, images, messages) when set |
+| `OFFICE_READ_TOKEN` | hub | | when set, viewing (dashboard, admin, state, summary, replay) also needs a token; browsers remember it for a year. `OFFICE_TOKEN` works too |
 | `OFFICE_TELEGRAM_TOKEN` | hub | | Telegram bot token from @BotFather; turns on the Telegram bridge |
 
 The collector reads `~/.claude` and Orca profiles (`~/Library/Application Support/orca/claude-profiles/*/home`). After editing `.env`, re-run `docker compose up -d` for the hub and the install command for the collector.

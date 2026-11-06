@@ -2762,6 +2762,8 @@ function markLost() {
 }
 function scheduleReconnect() {
   if (es) { es.close(); es = null; }
+  // 허브가 보기를 잠갔거나 토큰을 바꿨으면(401) 다시 붙어도 소용없다 — 새로 열어 로그인 화면으로
+  fetch("/api/state", { cache: "no-store" }).then(r => { if (r.status === 401) location.reload(); }).catch(() => {});
   clearTimeout(retryTimer);
   const wait = retryMs * (0.8 + Math.random() * 0.4);
   retryMs = Math.min(BACKOFF_MAX, retryMs * 2);

@@ -1612,7 +1612,9 @@ def _exit_on_signal(signum, _frame):
 
 
 def hub_speech(hub):
-    with urllib.request.urlopen(hub.rstrip("/") + "/api/config", timeout=5) as r:
+    # 허브가 보기도 잠갔으면(OFFICE_READ_TOKEN) 설정 읽기에도 토큰이 든다 — 쓰기 토큰으로도 읽힌다
+    req = urllib.request.Request(hub.rstrip("/") + "/api/config", headers={"X-Office-Token": TOKEN} if TOKEN else {})
+    with urllib.request.urlopen(req, timeout=5) as r:
         return bool(json.load(r).get("speech", True))
 
 

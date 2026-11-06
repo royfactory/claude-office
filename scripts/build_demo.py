@@ -60,7 +60,7 @@ def main():
         assert "static/demo.js" in s, src
         s = re.sub(r"(<title>)", '<meta name="description" content="claude-office demo: a live 3D office for Claude Code sessions (sample data)">\n\\1', s, 1)
         (out / dst).write_text(s, encoding="utf-8")
-    for name in ("index.html", "admin.html"):   # 뿌리로 옮긴 페이지의 원본은 지운다(헷갈리지 않게)
+    for name in ("index.html", "admin.html", "login.html"):   # 뿌리로 옮긴 페이지의 원본·보기 잠금 화면은 지운다
         (out / "static" / name).unlink()
     (out / ".nojekyll").write_text("")
     leftovers = [str(p.relative_to(out)) for p in out.rglob("*") if p.suffix in (".html", ".js") and re.search(r"""["'`]/(?:api|assets|static)/""", p.read_text(encoding="utf-8", errors="ignore")) and "vendor" not in p.parts]

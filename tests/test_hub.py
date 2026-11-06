@@ -64,7 +64,7 @@ def test_health(hub):
     _, c = hub
     r = c.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "hosts": 0, "version": 0, "auth": False}
+    assert r.json() == {"ok": True, "hosts": 0, "version": 0, "auth": False, "readLock": False}
 
 
 def test_health_reports_auth(authed):
@@ -1178,3 +1178,40 @@ def test_timeline_new_day_writes_full_state_and_prunes(authed):
     tl.tick({"mac"}, d1 + 400)
     assert not old.exists()                                             # 14일 넘은 파일은 지운다
     assert tl.tick({"pc"}, d1 + 600) and mod.Timeline.frames("2026-01-11")[-1]["d"] == ["mac/s1"]   # 끊긴 컴퓨터는 빠진다
+
+
+# ---------- 보기 잠금(OFFICE_READ_TOKEN) ----------
+
+@pytest.fixture
+def locked(make_hub, monkeypatch):
+    monkeypatch.setenv("OFFICE_READ_TOKEN", "view-secret")
+    return make_hub(TOKEN)
+
+
+def test_read_lock_blocks_reads_until_login_cookie(locked):
+    mod, c = locked
+    assert 'id="tk"' in c.get("/").text and 'id="tk"' in c.get("/admin").text   # 로그인 화면
+    for path in ("/api/state", "/api/config", "/api/stats", "/api/timeline/days", "/api/assets"):
+        assert c.get(path).status_code == 401, path
+    assert c.get("/health").json()["readLock"] is True
+    assert c.post("/api/login", json={"token": "nope"}).status_code == 401
+    r = c.post("/api/login", json={"token": "view-secret"})
+    assert r.status_code == 200 and "office_view" in r.cookies and "view-secret" not in r.cookies["office_view"]
+    assert c.get("/api/state").status_code == 200 and 'id="tk"' not in c.get("/").text   # 쿠키로 보인다
+    c.post("/api/logout")
+    c.cookies.clear()
+    assert c.get("/api/state").status_code == 401
+
+
+def test_read_lock_accepts_write_token_header_and_keeps_writes_separate(locked):
+    mod, c = locked
+    assert c.get("/api/config", headers=AUTH).status_code == 200            # 수집기는 쓰기 토큰으로 설정을 읽는다
+    assert c.get("/api/config", headers={"X-Office-Token": "view-secret"}).status_code == 200
+    c.post("/api/login", json={"token": "view-secret"})
+    assert c.post("/api/ingest", json={"host": "mac", "agents": []}).status_code == 401   # 보기 쿠키로 쓰기는 안 된다
+    assert c.get("/static/office3d.js").status_code == 200                    # 화면 코드는 잠그지 않는다
+
+
+def test_no_read_lock_by_default(authed):
+    _, c = authed
+    assert c.get("/api/state").status_code == 200 and c.post("/api/login", json={"token": "x"}).status_code == 200

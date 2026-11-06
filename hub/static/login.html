@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png" type="image/png" sizes="32x32">
+<title>Claude Office</title>
+<link rel="stylesheet" href="/static/theme.css">
+<style>
+  body { min-height: 100vh; display: grid; place-items: center; margin: 0; }
+  form { width: min(360px, calc(100% - 32px)); background: var(--surface); border: 1px solid var(--border-2); border-radius: 14px; padding: 20px; display: grid; gap: 12px; }
+  h1 { margin: 0; font-size: 18px; color: var(--text-hi); }
+  p { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+  code { font-size: 12px; }
+  input { width: 100%; box-sizing: border-box; }
+  .err { color: var(--bad); min-height: 1.2em; }
+</style>
+</head>
+<body>
+<!-- 허브가 보기도 잠갔을 때(OFFICE_READ_TOKEN) 사무실·관리 화면 대신 나온다. 토큰을 확인하면 이 브라우저에 1년짜리 쿠키를 두고 새로 연다 -->
+<form id="f">
+  <h1>🏢 Claude Office</h1>
+  <p id="msg"></p>
+  <input id="tk" type="password" autocomplete="current-password" required autofocus>
+  <button class="primary" id="go"></button>
+  <span class="err" id="err"></span>
+</form>
+<script>
+  const en = !(navigator.language || "").toLowerCase().startsWith("ko");
+  document.documentElement.lang = en ? "en" : "ko";
+  document.getElementById("msg").innerHTML = en
+    ? "This dashboard is locked. Enter the hub's <code>OFFICE_READ_TOKEN</code> (or <code>OFFICE_TOKEN</code>) from its <code>.env</code>. This browser will remember it."
+    : "이 대시보드는 잠겨 있습니다. 허브 컴퓨터 <code>.env</code> 의 <code>OFFICE_READ_TOKEN</code>(또는 <code>OFFICE_TOKEN</code>) 값을 넣으세요. 이 브라우저가 기억합니다.";
+  document.getElementById("go").textContent = en ? "Open" : "열기";
+  document.getElementById("tk").placeholder = en ? "Token" : "토큰";
+  document.getElementById("f").addEventListener("submit", async e => {
+    e.preventDefault();
+    const err = document.getElementById("err");
+    err.textContent = "";
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: document.getElementById("tk").value }) }).catch(() => null);
+    if (r && r.ok) location.reload();
+    else err.textContent = en ? "Wrong token." : "토큰이 맞지 않습니다.";
+  });
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ services:
       OFFICE_DATA: /data
       OFFICE_TOKEN: ${OFFICE_TOKEN:-}
       OFFICE_TELEGRAM_TOKEN: ${OFFICE_TELEGRAM_TOKEN:-}
+      OFFICE_READ_TOKEN: ${OFFICE_READ_TOKEN:-}
       TZ: ${TZ:-Asia/Seoul}
     cpus: 0.5
     mem_limit: 192m
