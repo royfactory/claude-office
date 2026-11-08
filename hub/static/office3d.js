@@ -2009,24 +2009,56 @@ $("people").addEventListener("click", e => { const s = e.target.closest("[data-k
 
 // ---------- 오른쪽 패널 탭 ----------
 // 사람들 · 세션(고른 세션의 상세 + 메시지) · 활동 로그 · 안내. 마지막에 본 탭은 이 브라우저에 기억한다
-const TABS = ["people", "session", "log", "legend"];
+// 오른쪽 패널은 위(지금 층: 사람들·세션·로그)와 아래(모든 층: 남은 일·안내) 두 칸. 칸마다 탭 하나가 켜진다
+const TABS = ["people", "session", "log"], TABS2 = ["left", "legend"];
 function showTab(name) {
-  if (!TABS.includes(name)) name = "people";
-  document.querySelectorAll(".tabs [data-tab]").forEach(b => {
+  const bottom = TABS2.includes(name);
+  if (!bottom && !TABS.includes(name)) name = "people";
+  const box = document.querySelector(bottom ? ".rp.bottom" : ".rp.top");
+  box.querySelectorAll(".tabs [data-tab]").forEach(b => {
     const on = b.dataset.tab === name;
     b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
   });
-  document.querySelectorAll(".pane[data-pane]").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
-  try { localStorage.setItem("office.tab", name); } catch (_) {}
+  box.querySelectorAll(".pane[data-pane]").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
+  if (bottom) setBottomMin(false);   // 접힌 아래 칸의 탭을 누르면 편다
+  try { localStorage.setItem(bottom ? "office.tab2" : "office.tab", name); } catch (_) {}
 }
-document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) showTab(b.dataset.tab); });
+document.addEventListener("click", e => { const b = e.target.closest(".rp .tabs [data-tab]"); if (b) showTab(b.dataset.tab); });
+// 위아래 칸 경계: 끌어서 아래 칸 높이를 바꾸고(이 브라우저에 기억), 아주 낮추거나 두 번 누르면 아래 칸을 탭만 남기고 접는다
+const RPANEL = document.querySelector("aside.right");
+function setBottomMin(on) {
+  RPANEL.classList.toggle("bottom-min", on);
+  try { localStorage.setItem("office.rpMin", on ? "1" : "0"); } catch (_) {}
+}
+try {
+  const h = +localStorage.getItem("office.rpBottom");
+  if (h > 0) RPANEL.style.setProperty("--bh", h + "px");
+  if (localStorage.getItem("office.rpMin") === "1") RPANEL.classList.add("bottom-min");
+} catch (_) {}
+$("rpGrip").addEventListener("pointerdown", e => {
+  const g = e.currentTarget; g.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const r = RPANEL.getBoundingClientRect(), h = Math.round(r.bottom - ev.clientY - 14);
+    if (h < 70) { setBottomMin(true); return; }
+    setBottomMin(false);
+    const v = Math.min(h, r.height - 160);
+    RPANEL.style.setProperty("--bh", v + "px");
+    try { localStorage.setItem("office.rpBottom", String(v)); } catch (_) {}
+  };
+  const up = () => { g.removeEventListener("pointermove", move); g.removeEventListener("pointerup", up); };
+  g.addEventListener("pointermove", move); g.addEventListener("pointerup", up);
+});
+$("rpGrip").addEventListener("dblclick", () => setBottomMin(!RPANEL.classList.contains("bottom-min")));
 function updateSessionTab(a) {
   if ($("sessionEmpty").hidden !== !!a) $("sessionEmpty").hidden = !!a;
   if ($("tabSessionDot").className !== (a ? "dot" : "")) $("tabSessionDot").className = a ? "dot" : "";   // 고른 세션이 있으면 탭에 점
 }
-let savedTab = "people";
-try { savedTab = localStorage.getItem("office.tab") || "people"; } catch (_) {}
-showTab(savedTab);
+let savedTab = "people", savedTab2 = "left";
+try { savedTab = localStorage.getItem("office.tab") || "people"; savedTab2 = localStorage.getItem("office.tab2") || "left"; } catch (_) {}
+if (savedTab === "legend") { savedTab = "people"; savedTab2 = "legend"; }   // 예전엔 안내가 위 탭이었다
+const keepMin = RPANEL.classList.contains("bottom-min");
+showTab(savedTab); showTab(savedTab2);
+if (keepMin) setBottomMin(true);
 updateSessionTab(null);
 
 // ---------- 고른 세션에 메시지 보내기 ----------
@@ -2611,7 +2643,7 @@ document.addEventListener("keydown", e => {
   if (!state) return;
   const k = e.key;
   if (k === "?") { toggleKeys(); }
-  else if (k === "Escape") { if (!$("leftModal").hidden) setLeftModal(false); else if (!$("memModal").hidden) setMemModal(false); else if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
+  else if (k === "Escape") { if (!$("memModal").hidden) setMemModal(false); else if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
   else if (k === "ArrowUp") stepFloor(1);
   else if (k === "ArrowDown") stepFloor(-1);
   else if (/^[1-9]$/.test(k)) { const f = floors().find(x => x.n === +k); if (f) jumpFloor(f.project); }
@@ -2627,7 +2659,7 @@ document.addEventListener("keydown", e => {
   else if (k === "[") setPanel("left", !document.querySelector(".app").classList.contains("left-closed"));
   else if (k === "]") setPanel("right", !document.querySelector(".app").classList.contains("right-closed"));
   else if (k === "m" || k === "M") $("alertBtn").click();
-  else if (k === "l" || k === "L") setLeftModal($("leftModal").hidden);
+  else if (k === "l" || k === "L") showTab("left");
   else return;
   e.preventDefault();
 });
@@ -2898,7 +2930,6 @@ function renderLeft() {
   badge.classList.toggle("wait", wait > 0);
   const tip = t("남은 일 {n}건 · 나를 기다림 {w}", { n, w: wait });
   if (badge.title !== tip) badge.title = tip;
-  if ($("leftModal").hidden) return;
   setHTML($("leftSum"), groups.length ? `${t("나를 기다림")} <b>${wait}</b> · ${t("할 일이 남은 세션")} <b>${todo}</b> · ${t("커밋 안 한 변경이 있는 층")} <b>${groups.filter(g => g.f && g.f.git && (g.f.git.dirty || g.f.git.ahead)).length}</b>` : "");
   const icon = { in_progress: "circle-play", pending: "circle" };
   setHTML($("leftList"), groups.map(g => `<div class="lf-proj">${g.f ? `<span class="badge" style="--h:${floorHue(g.f.n)}">${floorLabel(g.f.n)}</span>` : ""}${esc(g.project)}${g.f ? gitBadge(g.f.git) : ""}${g.list.length ? "" : ` <small>${t("세션 없음")}</small>`}</div>` +
@@ -2908,12 +2939,9 @@ function renderLeft() {
       ${x.left.length ? `<ul class="lf-t">${x.left.slice().sort((p, q) => (q.st === "in_progress") - (p.st === "in_progress")).slice(0, 5).map(it => `<li class="${it.st}"><i class="fa-solid fa-${icon[it.st] || "circle"}"></i>${esc(it.s)}</li>`).join("")}${x.left.length > 5 ? `<li>${t("외 {n}개", { n: x.left.length - 5 })}</li>` : ""}</ul>` : ""}
     </div>`).join("")).join("") || `<p class="muted">${t("남은 일이 없습니다. 모든 세션이 할 일을 마쳤고 나를 기다리는 세션도 없어요.")}</p>`);
 }
-function setLeftModal(on) { $("leftModal").hidden = !on; if (on) renderLeft(); }
-$("leftBtn").addEventListener("click", () => setLeftModal($("leftModal").hidden));
 document.addEventListener("click", e => {
-  if (e.target === $("leftModal") || e.target.closest("#leftModal .x")) { setLeftModal(false); return; }
   const row = e.target.closest("#leftList .lf-s");
-  if (row) { setLeftModal(false); jumpTo(row.dataset.id, row.dataset.p); }
+  if (row) jumpTo(row.dataset.id, row.dataset.p);
 });
 // ---------- 하루 다시보기 ----------
 // 허브가 15초마다 남긴 세션 상태(/api/timeline)로 그 날 사무실을 빨리감기로 다시 그린다. 그동안 실시간 소식은 liveState 에

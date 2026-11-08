@@ -26,8 +26,16 @@
   aside { background: var(--bg-2); overflow-y: auto; padding: 14px 12px; }
   aside.left { border-right: 1px solid var(--border); }
   /* 오른쪽 패널 = 탭. 고른 탭 하나가 패널 높이를 다 쓰고, 넘치면 그 안에서 스크롤한다 */
-  aside.right { border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-  .tabs { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 3px; background: var(--surface);
+  aside.right { border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 0; overflow: hidden; }
+  .rp { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .rp.top { flex: 1 1 auto; }
+  .rp.bottom { flex: 0 0 var(--bh, 38%); }
+  .rp-grip { flex: none; height: 14px; margin: 2px 0; cursor: row-resize; position: relative; touch-action: none; }
+  .rp-grip::after { content: ""; position: absolute; left: 50%; top: 5px; width: 44px; height: 4px; margin-left: -22px; border-radius: 4px; background: var(--border-2); }
+  .rp-grip:hover::after { background: var(--brand); }
+  aside.right.bottom-min .rp.bottom { flex-basis: 34px; } aside.right.bottom-min .rp.bottom .pane { display: none; }
+  .tabs.two { grid-template-columns: repeat(2, 1fr); }
+  .tabs { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; background: var(--surface);
           border: 1px solid var(--border); border-radius: 10px; }
   .tabs button { border: 0; background: transparent; border-radius: 7px; padding: 6px 4px; font-size: 12px; font-weight: 600;
                  color: var(--text-dim); display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
@@ -39,7 +47,7 @@
   .tabs em.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); }
   .pane { flex: 1; min-height: 0; overflow-y: auto; display: none; flex-direction: column; gap: 10px; scrollbar-width: thin; }
   .pane.on { display: flex; }
-  .pane[data-pane=people], .pane[data-pane=log], .pane[data-pane=legend] {
+  .pane[data-pane=people], .pane[data-pane=log], .pane[data-pane=legend], .pane[data-pane=left] {
     background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
   .pane-head { display: flex; align-items: center; font-size: 13px; font-weight: 700; color: var(--text-hi); }
   .pane-head small { margin-left: auto; color: var(--text-dim); font-weight: 500; font-size: 12px; }
@@ -185,13 +193,12 @@
   .lt i { display: block; height: 100%; background: var(--good); }
   [data-lv=mid] > .lt i, .lt[data-lv=mid] i { background: var(--warning); } [data-lv=hi] > .lt i, .lt[data-lv=hi] i { background: var(--bad); }
   .vals b.lv-mid { color: var(--warning) !important; } .vals b.lv-hi { color: var(--bad) !important; }
-  #limModal, #memModal, #leftModal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(2,6,23,.6); }
-  #limModal[hidden], #memModal[hidden], #leftModal[hidden] { display: none; }
-  #leftModal .box { width: min(760px, calc(100% - 32px)) !important; }
-  #limModal .box, #memModal .box, #leftModal .box { width: min(440px, calc(100% - 32px)); max-height: 80vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border-2);
+  #limModal, #memModal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(2,6,23,.6); }
+  #limModal[hidden], #memModal[hidden] { display: none; }
+  #limModal .box, #memModal .box { width: min(440px, calc(100% - 32px)); max-height: 80vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border-2);
                    border-radius: 14px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
-  #limModal h3, #memModal h3, #leftModal h3 { margin: 0 0 10px; font-size: 14px; color: var(--text-hi); display: flex; align-items: center; gap: 8px; }
-  #limModal h3 .x, #memModal h3 .x, #leftModal h3 .x { margin-left: auto; padding: 2px 8px; }
+  #limModal h3, #memModal h3 { margin: 0 0 10px; font-size: 14px; color: var(--text-hi); display: flex; align-items: center; gap: 8px; }
+  #limModal h3 .x, #memModal h3 .x { margin-left: auto; padding: 2px 8px; }
   #limList > li { padding: 10px 0; border-top: 1px solid var(--border); } #limList > li:first-child { border-top: 0; padding-top: 2px; }
   .lm-h { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; } .lm-h b { color: var(--text-hi); font-size: 13px; }
   .lm-h i { color: var(--text-dim); } .lm-h small { margin-left: auto; color: var(--text-dim2); font-size: 11px; }
@@ -209,13 +216,10 @@
   #memList .mv { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-hi); }
   #memList li.old .ms { color: var(--warning); }
   /* 남은 일: 프로젝트(층)마다 묶고, 세션 한 줄에 표시들 + 남은 할 일 */
-  /* 남은 일 건수: 단추 오른쪽 위에 떠 있는 배지(10개 이상은 9+). 나를 기다리는 세션이 있으면 주황, 할 일만 남았으면 남색 */
-  #leftBtn { position: relative; }
-  #leftBtn b { position: absolute; top: -7px; right: -7px; min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
-               border-radius: 999px; background: #475569; color: #fff; font-size: 10px; font-weight: 800; line-height: 17px; text-align: center;
-               box-shadow: 0 0 0 2px #0b1324; pointer-events: none; font-variant-numeric: tabular-nums; }
-  #leftBtn b.wait { background: #f97316; }
-  #leftBtn b:empty { display: none; }
+  /* 남은 일 건수: 탭 글자 옆 배지(10개 이상은 9+). 나를 기다리는 세션이 있으면 주황 */
+  .tabs em#leftN:not(:empty) { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: #475569; color: #fff !important;
+                               line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+  .tabs em#leftN.wait { background: #f97316; }
   .lf-proj { margin: 12px 0 4px; display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-hi); font-weight: 700; }
   .lf-proj:first-child { margin-top: 0; } .lf-proj small { color: var(--text-dim2); font-weight: 400; }
   .lf-s { display: grid; gap: 3px; padding: 7px 8px; border-radius: 8px; cursor: pointer; border-top: 1px solid var(--border); font-size: 12px; }
@@ -671,7 +675,7 @@
     <div class="ov" id="attn" aria-label="나를 기다리는 세션"></div>
     <ol class="ov" id="attnList" hidden></ol>
     <div class="ov" id="stale" role="status"><i class="fa-solid fa-plug-circle-xmark"></i><span id="staleText">연결 끊김</span></div>
-    <div class="ov topr"><button id="alertBtn"></button><button id="keysBtn" title="단축키 (?)"><i class="fa-solid fa-keyboard"></i></button><button id="leftBtn" title="남은 일 — 모든 세션의 할 일·나를 기다리는 것을 한눈에 (L)"><i class="fa-solid fa-list-check"></i><span class="lbl"> 남은 일</span><b id="leftN"></b></button><button id="replayBtn" title="하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로"><i class="fa-solid fa-clock-rotate-left"></i><span class="lbl"> 다시보기</span></button><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin" title="캐릭터 관리"><i class="fa-solid fa-gear"></i><span class="lbl"> 캐릭터 관리</span></a></div>
+    <div class="ov topr"><button id="alertBtn"></button><button id="keysBtn" title="단축키 (?)"><i class="fa-solid fa-keyboard"></i></button><button id="replayBtn" title="하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로"><i class="fa-solid fa-clock-rotate-left"></i><span class="lbl"> 다시보기</span></button><span class="live" id="live"><span id="liveText">연결 중</span></span><a href="/admin" title="캐릭터 관리"><i class="fa-solid fa-gear"></i><span class="lbl"> 캐릭터 관리</span></a></div>
     <button class="edge left" id="toggleLeft" title="빌딩 패널 접기"><i class="fa-solid fa-chevron-left"></i></button>
     <button class="edge right" id="toggleRight" title="오른쪽 패널 접기"><i class="fa-solid fa-chevron-right"></i></button>
     <div class="ov zoom"><button id="zin" title="확대"><i class="fa-solid fa-plus"></i></button><button id="zout" title="축소"><i class="fa-solid fa-minus"></i></button><button id="zreset" title="원위치"><i class="fa-solid fa-rotate-left"></i></button></div>
@@ -713,21 +717,18 @@
     <ol id="limList"></ol>
     <p class="lm-note">Claude Code 가 상태 표시줄에 알려 주는 구독 계정의 사용률입니다(Pro·Max). 계정은 설정 폴더의 로그인 정보로 묶고(예전 수집기면 컴퓨터와 주간 초기화 시각으로), 세션마다 마지막 응답 때 값이라 묶음 안의 가장 큰 값을 보여 줍니다. 상태 표시줄을 건 설정 폴더의, 터미널(CLI)에서 연 세션만 보입니다(VS Code 등 IDE 확장 세션은 상태 표시줄이 돌지 않음, 「안내」 탭 6번).</p></div></div>
 
-  <div id="leftModal" hidden role="dialog" aria-label="남은 일"><div class="box"><h3><i class="fa-solid fa-list-check"></i> 남은 일<button class="x" title="닫기">Esc</button></h3>
-    <p class="mem-sum" id="leftSum"></p>
-    <div id="leftList"></div>
-    <p class="lm-f">모든 층의 세션에서 남은 할 일(Claude 의 체크리스트), 승인 대기, 물어보고 멈춘 세션, 막힌 세션, 커밋·푸시 안 한 변경을 모았습니다. 줄을 누르면 그 세션으로 갑니다. 단축키 L.</p></div></div>
   <div id="memModal" hidden role="dialog" aria-label="세션별 메모리"><div class="box"><h3><i class="fa-solid fa-memory"></i> 세션별 메모리<button class="x" title="닫기">Esc</button></h3>
     <p class="mem-sum" id="memSum"></p>
     <ol id="memList"></ol>
     <p class="lm-f">세션 프로세스와 그 자식(MCP 서버·셸 등)이 쓰는 메모리 합입니다. 한 시간 넘게 쉰 세션은 그 터미널에서 /exit 로 닫으면 메모리를 돌려받고, 나중에 claude --resume 으로 이어서 열 수 있습니다.</p></div></div>
 
   <aside class="right">
-    <nav class="tabs" role="tablist" aria-label="오른쪽 패널">
+   <!-- 위: 지금 보는 층(사람들·세션·로그). 아래: 층과 상관없는 공통(남은 일·안내). 가운데 손잡이로 높이를 바꾸거나 아래를 접는다 -->
+   <div class="rp top">
+    <nav class="tabs" role="tablist" aria-label="이 층">
       <button role="tab" data-tab="people"><i class="fa-solid fa-users"></i>사람들<em id="tabPeopleN"></em></button>
       <button role="tab" data-tab="session"><i class="fa-solid fa-id-card"></i>세션<em id="tabSessionDot"></em></button>
       <button role="tab" data-tab="log"><i class="fa-solid fa-list"></i>로그</button>
-      <button role="tab" data-tab="legend"><i class="fa-solid fa-circle-info"></i>안내</button>
     </nav>
 
     <section class="pane" data-pane="people" role="tabpanel">
@@ -751,11 +752,23 @@
       <ol id="log"></ol>
     </section>
 
+   </div>
+   <div class="rp-grip" id="rpGrip" role="separator" aria-orientation="horizontal" title="위아래로 끌어 높이 조절 · 두 번 누르면 아래 칸 접기·펴기"></div>
+   <div class="rp bottom">
+    <nav class="tabs two" role="tablist" aria-label="모든 층">
+      <button role="tab" data-tab="left" title="남은 일 — 모든 세션의 할 일·나를 기다리는 것 (L)"><i class="fa-solid fa-list-check"></i>남은 일<em id="leftN"></em></button>
+      <button role="tab" data-tab="legend"><i class="fa-solid fa-circle-info"></i>안내</button>
+    </nav>
+    <section class="pane" data-pane="left" role="tabpanel">
+      <p class="mem-sum" id="leftSum"></p>
+      <div id="leftList"></div>
+    </section>
     <section class="pane" data-pane="legend" role="tabpanel">
       <div id="ruleBox"></div>
       <div class="pane-head" style="margin-top:14px">어디서 무엇을 하나</div>
       <ol id="legend"></ol>
     </section>
+   </div>
   </aside>
 </div>
 <script src="/static/i18n.js"></script>
