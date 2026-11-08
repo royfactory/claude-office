@@ -2,6 +2,7 @@
 I18N.add({
   // 텔레그램
   "층·세션 제목·도구": "Floor, session title, tool",
+  "답 모양": "Reply format", "한 줄(전체는 /more)": "One line (/more for full)", "전체": "Full",
   "방해 금지": "Quiet hours", "그동안에도 보낼 알림": "Still send during quiet hours",
   "이 시간에는 아래에서 고른 알림만 보냅니다(허브 컴퓨터 시각). 붙인 세션의 답은 늘 옵니다. 둘 다 비우면 꺼짐": "During these hours only the notifications picked here are sent (hub computer's time). Replies from the attached session always come. Leave both empty to turn off",
   "(아무것도 안 고르면 모두)": "(none selected = all)",

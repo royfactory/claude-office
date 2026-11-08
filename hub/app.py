@@ -166,7 +166,7 @@ DEFAULT_CONFIG: dict = {
     "weather": True,       # 날씨(브라우저 위치 권한이 있을 때만)
     "lookVersion": LOOK_VERSION,   # 기본 캐릭터 그림 묶음 번호. 새 설정은 이미 받은 상태
     # 텔레그램(봇 토큰은 .env OFFICE_TELEGRAM_TOKEN): 알릴 일, 완료 알림 기준 초, 내용 수준, 붙인 세션의 답, 승인 단추
-    "telegram": {"notify": ["approval", "done"], "doneSec": 60, "detail": "basic", "replies": True, "approvals": False,
+    "telegram": {"notify": ["approval", "done"], "doneSec": 60, "detail": "basic", "replies": True, "replyStyle": "line", "approvals": False,
                  "quietFrom": "", "quietTo": "", "quietKeep": ["approval"]},
 }
 
@@ -234,6 +234,7 @@ class TelegramCfg(BaseModel):
     doneSec: int = Field(60, ge=0, le=6 * 3600)   # 이보다 오래 일한 턴이 끝났을 때만 '완료' 알림
     detail: Literal["basic", "minimal"] = "basic"   # minimal: 무슨 일·어느 층만(제목·도구·말풍선 빼고)
     replies: bool = True     # 붙인 세션의 답을 텔레그램으로
+    replyStyle: Literal["line", "full"] = "line"   # line: 한 줄(첫 문장, 전체는 /more) · full: 답 전체
     approvals: bool = False  # 텔레그램 알림에 허용·거절 단추(관리 화면 '대시보드에서 승인'도 켜져 있어야)
     # 방해 금지 시간(허브 컴퓨터 시각, "HH:MM", 둘 다 있고 다를 때만). 그동안은 quietKeep 의 알림만 보낸다(붙인 세션의 답은 늘 보냄)
     quietFrom: str = Field("", pattern=r"^([01]\d|2[0-3]):[0-5]\d$|^$")

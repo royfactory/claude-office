@@ -166,6 +166,7 @@ def test_ingest_reply_carries_relay_and_relay_sends_only_new_replies(tgh):
     lk = link(mod, c)
     assert "relay" not in ingest(c, agent("s1"))
     c.post("/api/telegram/bind", json={"link": lk["id"], "host": "mac", "session": "s1"}, headers=AUTH)
+    mod.hub.config["telegram"]["replyStyle"] = "full"     # 이 시험은 답 전체 보내기
     r = ingest(c, agent("s1"))
     at = r["relay"]["s1"]
     assert abs(at - time.time()) < 5
@@ -377,3 +378,19 @@ def test_inbound_accept_makes_bypass_session_ready(tgh):
     assert any("보류" in l and l.endswith("⚠") for l in lines) and any("📨 텔레그램 전용 세션" in l for l in lines)
     handle(mod, c, msg("/use 1", mid=3))
     assert "⚠" not in fake.sent()[-1]
+
+
+def test_reply_line_style_by_default_and_more_sends_full(tgh):
+    mod, c, fake = tgh
+    lk = link(mod, c)
+    ingest(c, agent("s1"))
+    c.post("/api/telegram/bind", json={"link": lk["id"], "host": "mac", "session": "s1"}, headers=AUTH)
+    at = ingest(c, agent("s1"))["relay"]["s1"]
+    body = {"host": "mac", "session": "s1", "items": [{"id": "u1", "ts": at + 1, "text": "## 결과\n**네 가지를 모두 처리했어요.** 두 저장소 모두 깨끗해요.\n- 하나\n" + "가" * 4000}]}
+    c.post("/api/telegram/relay", json=body, headers=AUTH)
+    last = fake.last("sendMessage")
+    assert last["text"] == "💬 proj · 제목 · 네 가지를 모두 처리했어요." and "parse_mode" not in last   # 한 줄
+    handle(mod, c, msg("/more", mid=7))
+    parts = fake.sent()[-2:]
+    assert parts[0].startswith("💬 <b>제목</b>\n<b>결과</b>") and parts[1].startswith("가")   # 전체는 /more
+    assert mod.tgbridge.first_line("# 제목만\n") == "" and len(mod.tgbridge.first_line("가" * 100)) == 60

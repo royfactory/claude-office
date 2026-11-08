@@ -37,7 +37,7 @@ STATUS_N = 12           # /status 가 보여 줄 세션 수(/status all 은 전�
 # 텔레그램으로 보내는 글. 관리 화면 언어가 en 이면 영어, 아니면 한국어
 STR = {
     "ko": {
-        "help": "claude-office 봇입니다.\n/status 세션 목록(번호, 바로 받는 세션이 위) · /status all 전부\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
+        "help": "claude-office 봇입니다.\n/status 세션 목록(번호, 바로 받는 세션이 위) · /status all 전부\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/more 붙인 세션의 마지막 답 전체 보기\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
         "linked": "연결했습니다: {name}\n",
         "need_code": "연결되지 않은 채팅입니다. claude-office 관리 화면의 「텔레그램」에서 연결 코드를 받아 이 채팅에 보내세요.",
         "private_only": "개인 채팅에서만 연결할 수 있습니다.",
@@ -54,6 +54,7 @@ STR = {
         "bound": "이제 이 채팅의 글은 「{title}」({host})로 갑니다. 그 세션의 답이 여기로 옵니다.",
         "bound_no_msg": "\n(주의: 그 컴퓨터가 메시지를 받지 않습니다 — 수집기 .env 의 CLAUDE_OFFICE_MESSAGES=on 과 관리 화면 '메시지 보내기'를 켜세요)",
         "unbound": "세션을 뗐습니다. 알림은 계속 옵니다.",
+        "no_more": "아직 받은 답이 없습니다.",
         "no_target": "붙인 세션이 없습니다. /status 로 목록을 보고 /use 번호 로 붙이거나, 알림에 답장하세요.",
         "send_fail": "보내지 못했습니다: {err}",
         "text_only": "글만 보낼 수 있습니다.",
@@ -72,7 +73,7 @@ STR = {
         "min": "{n}분", "sec": "{n}초", "hour": "{h}시간 {m}분",
     },
     "en": {
-        "help": "claude-office bot.\n/status list sessions (numbered, ready-to-receive first) · /status all for all\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
+        "help": "claude-office bot.\n/status list sessions (numbered, ready-to-receive first) · /status all for all\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/more show the attached session's last reply in full\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
         "linked": "Linked: {name}\n",
         "need_code": "This chat isn't linked. Get a link code from 「Telegram」 on the claude-office admin page and send it here.",
         "private_only": "Only private chats can be linked.",
@@ -89,6 +90,7 @@ STR = {
         "bound": "This chat now talks to “{title}” ({host}). Its replies will come here.",
         "bound_no_msg": "\n(Note: that computer doesn't accept messages — set CLAUDE_OFFICE_MESSAGES=on in its collector .env and enable messaging on the admin page)",
         "unbound": "Detached. Notifications continue.",
+        "no_more": "No reply yet.",
         "no_target": "No session attached. Send /status and /use N, or reply to a notification.",
         "send_fail": "Couldn't send: {err}",
         "text_only": "Only text can be sent.",
@@ -172,6 +174,20 @@ def md_to_html(md: str) -> str:
     return "\n".join(out)
 
 
+def first_line(md: str, n: int = 60) -> str:
+    """답의 첫 문장(마크다운 기호를 걷고 n자까지) — 한 줄 답장용."""
+    for line in md.splitlines():
+        if re.match(r"^\s{0,3}#{1,6}\s", line):   # 제목 줄('## 결과')은 건너뛰고 첫 내용 줄을 쓴다
+            continue
+        t = re.sub(r"^\s*([-*]\s+|\d+[.)]\s+|>\s*)", "", line)
+        t = re.sub(r"[*_`]+", "", t).strip()
+        if t and not t.startswith("```"):
+            m = re.search(r"^(.+?[.!?。]|.+?(?:요|다)\.)(\s|$)", t)
+            t = m.group(1) if m else t
+            return t if len(t) <= n else t[: n - 1].rstrip() + "…"
+    return ""
+
+
 class Bridge:
     """ops: 허브 쪽 동작을 모은 객체(app.py 의 _TgOps). agents()·config()·send()·decide()·pending()·bump()."""
 
@@ -192,6 +208,7 @@ class Bridge:
         self.reply_to: dict[tuple, tuple] = {}   # (채팅, 알림 메시지 id) -> (host, 세션)
         self.outbox: dict[str, tuple] = {}   # 허브 메시지 id -> (채팅, 텔레그램 메시지 id)
         self.relayed: collections.deque = collections.deque(maxlen=400)
+        self.last_reply: dict[int, tuple] = {}   # 채팅 -> (제목, 마지막 답 전문) — /more 로 전체를 보낸다
         self.nudged: dict[int, float] = {}
         self.log: collections.deque = collections.deque(maxlen=30)
         self._q: queue.Queue = queue.Queue()
@@ -500,6 +517,15 @@ class Bridge:
                 self.send(chat, s["bad_number"] + (" " + s["bad_more"] if len(lst) < len(self._sessions()) else ""))
                 return
             await self.bind(link, host, sid)
+        elif cmd == "more":
+            t = self.last_reply.get(chat)
+            if not t:
+                self.send(chat, s["no_more"])
+                return
+            title, text = t
+            for i, part in enumerate(split_text(text, REPLY_PART)):
+                self.send(chat, (f"💬 <b>{_esc(title)}</b>\n" if i == 0 else "") + md_to_html(part), parse_mode="HTML",
+                          _plain=(f"💬 {title}\n" if i == 0 else "") + part)
         elif cmd == "stop":
             link["bind"] = None
             self.save()
@@ -698,6 +724,7 @@ class Bridge:
         a = next((x for x in self.ops.agents() if x["host"] == host and x["id"] == session), None) or {}
         title = (a.get('title') or a.get('name') or a.get('project') or session[:8])[:60]
         head = f"💬 {title}\n"
+        full = self.ops.config().get("telegram", {}).get("replyStyle", "line") == "full"
         n = 0
         for it in items:
             rid, text, ts = str(it.get("id", "")), str(it.get("text", "")), float(it.get("ts") or 0)
@@ -706,6 +733,12 @@ class Bridge:
             self.relayed.append(rid)
             for link in links:
                 if ts and ts < link["bind"]["at"] - 5:
+                    continue
+                self.last_reply[link["chat"]] = (title, text)
+                if not full:   # 한 줄: 층 · 세션 제목 · 첫 문장. 전체는 /more 로(자세한 것은 사무실 화면에서)
+                    line = " · ".join(x for x in ("💬 " + (a.get("project") or ""), title[:40], first_line(text)) if x.strip(" ·💬"))
+                    self.send(link["chat"], line[:300], after=lambda r, c=link["chat"]: self._remember(c, r, host, session))
+                    n += 1
                     continue
                 parts = split_text(text, REPLY_PART - len(head))   # HTML 로 바꾸면 길어지니 넉넉히 나눈다
                 for i, part in enumerate(parts):
