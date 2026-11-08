@@ -394,3 +394,20 @@ def test_reply_line_style_by_default_and_more_sends_full(tgh):
     parts = fake.sent()[-2:]
     assert parts[0].startswith("💬 <b>제목</b>\n<b>결과</b>") and parts[1].startswith("가")   # 전체는 /more
     assert mod.tgbridge.first_line("# 제목만\n") == "" and len(mod.tgbridge.first_line("가" * 100)) == 60
+
+
+def test_todo_lists_waiting_sessions_first_and_use_number_attaches(tgh):
+    mod, c, fake = tgh
+    link(mod, c)
+    ingest(c, agent("t1", title="할 일만", todos=[{"s": "A", "st": "completed"}, {"s": "B", "st": "in_progress"}, {"s": "C", "st": "pending"}]),
+           agent("q1", title="물어봄", asks=True), agent("ap", title="승인", kind="approval", tool="Bash"),
+           agent("ok", title="다 함", todos=[{"s": "A", "st": "completed"}]))
+    handle(mod, c, msg("/todo", mid=2))
+    lines = fake.sent()[-1].split("\n")
+    assert lines[1].startswith("1. ✋ proj · 승인") and lines[2].startswith("2. ❓ proj · 물어봄 · 물어보고 멈춤")
+    assert lines[3] == "3. 📝 proj · 할 일만 · 할 일 1/3 — ▶ B" and len(lines) == 4        # 다 한 세션은 빠진다
+    handle(mod, c, msg("/use 3", mid=3))
+    assert mod.tg.data["links"][0]["bind"]["session"] == "t1"
+    ingest(c, agent("ok"))
+    handle(mod, c, msg("/todo", mid=4))
+    assert "남은 일이 없습니다" in fake.sent()[-1]

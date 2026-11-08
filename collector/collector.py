@@ -526,6 +526,20 @@ def iso_ts(s):
     return base + (float("0." + m.group(1)) if m else 0.0)
 
 
+# 답의 끝 줄이 이렇게 끝나면 Claude 가 사람에게 묻고 멈춘 것으로 본다(화면의 '남은 일'·'질문' 칩)
+_ASKS = re.compile(r"(\?|？|까요|할지|주시겠어요|골라\s*주세요|알려\s*주세요|정해\s*주세요|확인해\s*주세요"
+                   r"|shall i|should i|would you like|do you want|let me know)[\s.!)\]*_`~]*$", re.I)
+
+
+def asks_user(text):
+    """답 전문의 마지막 내용 줄이 질문·요청으로 끝나는가."""
+    for line in reversed(str(text or "").splitlines()):
+        t = line.strip().strip("*_`>").strip()
+        if t and not t.startswith("```"):
+            return bool(_ASKS.search(t))
+    return False
+
+
 def say_of(text):
     # 마크다운 장식을 걷어내고 한 줄로 줄인다
     t = text.replace("```", " ").replace("**", "").replace("`", "")
@@ -1087,6 +1101,8 @@ class Collector:
                 "timeline": tr.timeline(now),
                 "bg": [{"tool": b["tool"], "target": b["target"], "ts": b.get("ts")} for b in bg][:5],
                 "todos": list(tr.tasks.values())[:30],
+                # 턴이 끝났고 마지막 답이 질문으로 끝나면 '내 답을 기다림'
+                "asks": status != "busy" and bool(tr.texts) and asks_user(tr.texts[-1]["text"]),
                 "canMessage": MESSAGES and not WINDOWS and socket_ok(sock),
                 "recent": [{"tool": r["tool"], "target": r["target"], "ts": r["ts"]} for r in tr.recent[::-1]],
                 "subagents": subs,

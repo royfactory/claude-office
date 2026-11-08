@@ -42,7 +42,9 @@ I18N.add({
   "10분": "10 min", "30분": "30 min",
   // 사용 한도 상세
   "사용 한도": "Usage limits",
-  "다시보기": "Replay", "실시간으로": "Back to live",
+  "다시보기": "Replay", "실시간으로": "Back to live", "남은 일": "What's left",
+  "남은 일 — 모든 세션의 할 일·나를 기다리는 것을 한눈에 (L)": "What's left — every session's todos and what's waiting on you (L)",
+  "모든 층의 세션에서 남은 할 일(Claude 의 체크리스트), 승인 대기, 물어보고 멈춘 세션, 막힌 세션, 커밋·푸시 안 한 변경을 모았습니다. 줄을 누르면 그 세션으로 갑니다. 단축키 L.": "Remaining todos (Claude's checklists), approvals, sessions that asked you something, stuck sessions and uncommitted/unpushed changes from every floor. Click a row to go to that session. Shortcut L.",
   "하루 다시보기 — 허브가 15초마다 남긴 기록으로 그 날 사무실을 빨리감기로": "Replay a day — fast-forward the office from the hub's 15-second record",
   "재생·정지": "Play/pause", "날짜": "Date", "시각": "Time", "빠르기": "Speed",
   "세션별 메모리": "Memory by session",

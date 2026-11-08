@@ -20,6 +20,7 @@ A live 3D office for your Claude Code sessions. Every session becomes a characte
 - **Same-file warning.** When two sessions on one computer edit the same file within ten minutes, a "Same file" chip appears at the top and in both sessions' details.
 - **Telegram.** Get approval, done and stuck notifications on your phone, attach one session to a chat and talk to it from Telegram (its last reply of each turn comes back), and optionally approve from Telegram. Linked chats get their own floor at the top of the building.
 - **Resume.** Each session's details have a button that copies `cd <folder> && claude --resume <id>` (with `CLAUDE_CONFIG_DIR` for non-default profiles).
+- **What's left, in one place.** Press What's left (`L`) for every session grouped by project: what's waiting on you (approvals, sessions that **asked you a question and stopped**, stuck sessions), remaining todos from Claude's checklists, and uncommitted/unpushed changes. Click a row to jump to that session; `/todo` in Telegram.
 - **Replay a day.** The hub records session states every 15 seconds (changes only, `data/timeline/`, kept 14 days). Press Replay at the top to fast-forward any day (60×–3600×, drag the time bar); the sky and wall clock follow the replayed time. Live updates resume when you go back to live.
 - **Daily and weekly summary.** Active time, tool calls, lines changed, output tokens and sessions per project, for today or the last 7 days (Recent activity → Summary). Stored on the hub in `data/stats.json`.
 - **Git status per floor.** Uncommitted changes and unpushed commits for each project's checkouts (counts only). On macOS the collector needs Full Disk Access to read repos inside Desktop or Documents; the Guide tab's setup checklist shows how.
@@ -214,7 +215,7 @@ What you get:
 - **Quiet hours**: a time range (hub computer's time, may cross midnight) when only the chosen notifications are sent (approvals by default). Attached-session replies always come.
 - **Approve from Telegram** (off by default): Allow once / Deny buttons with the command preview. Needs dashboard approvals (above) too.
 - **Telegram session**: `sh scripts/telegram-session.sh <folder> [claude args]` starts `claude --settings '{"crossSessionInbound":"accept"}'`, so only that session accepts messages without terminal approval, even in bypass mode; `/status` marks it 📨. Messages are never treated as your consent, so its own permission prompts still appear (turn on Telegram approvals or start it with e.g. `--permission-mode acceptEdits`).
-- Other commands: `/status all`, `/mute` · `/unmute`, `/unlink`, `/help`.
+- Other commands: `/todo` (what's left, waiting-on-you first), `/more`, `/status all`, `/mute` · `/unmute`, `/unlink`, `/help`.
 
 The bot token lives only in `.env`; linked chats are stored in `data/telegram.json` (not public). Replies are sent by the collector **only for the attached session** and never appear in the public state. Notification text, your Telegram messages and replies pass through Telegram's servers — use the "event and floor only" detail level and turn replies off if that matters.
 

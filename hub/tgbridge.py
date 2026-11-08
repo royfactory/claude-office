@@ -37,7 +37,7 @@ STATUS_N = 12           # /status 가 보여 줄 세션 수(/status all 은 전�
 # 텔레그램으로 보내는 글. 관리 화면 언어가 en 이면 영어, 아니면 한국어
 STR = {
     "ko": {
-        "help": "claude-office 봇입니다.\n/status 세션 목록(번호, 바로 받는 세션이 위) · /status all 전부\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/more 붙인 세션의 마지막 답 전체 보기\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
+        "help": "claude-office 봇입니다.\n/status 세션 목록(번호, 바로 받는 세션이 위) · /status all 전부\n/use 번호  그 세션을 이 채팅에 붙이기 — 이후 보내는 글이 그 세션으로 가고, 답이 여기로 옵니다\n/todo 남은 일(나를 기다리는 세션·남은 할 일) 한눈에\n/more 붙인 세션의 마지막 답 전체 보기\n/stop 붙인 세션 떼기\n/mute · /unmute 알림 끄기·켜기\n/unlink 이 채팅 연결 끊기\n알림에 답장하면 그 세션으로 보냅니다.",
         "linked": "연결했습니다: {name}\n",
         "need_code": "연결되지 않은 채팅입니다. claude-office 관리 화면의 「텔레그램」에서 연결 코드를 받아 이 채팅에 보내세요.",
         "private_only": "개인 채팅에서만 연결할 수 있습니다.",
@@ -55,6 +55,9 @@ STR = {
         "bound_no_msg": "\n(주의: 그 컴퓨터가 메시지를 받지 않습니다 — 수집기 .env 의 CLAUDE_OFFICE_MESSAGES=on 과 관리 화면 '메시지 보내기'를 켜세요)",
         "unbound": "세션을 뗐습니다. 알림은 계속 옵니다.",
         "no_more": "아직 받은 답이 없습니다.",
+        "todo_head": "남은 일 — 나를 기다리는 세션부터(/use 번호 로 붙이기)",
+        "todo_none": "남은 일이 없습니다. 할 일을 다 마쳤고 나를 기다리는 세션도 없어요.",
+        "todo_ask": "물어보고 멈춤", "todo_appr": "승인 대기", "todo_stall": "막힘", "todo_n": "할 일 {d}/{n}",
         "no_target": "붙인 세션이 없습니다. /status 로 목록을 보고 /use 번호 로 붙이거나, 알림에 답장하세요.",
         "send_fail": "보내지 못했습니다: {err}",
         "text_only": "글만 보낼 수 있습니다.",
@@ -73,7 +76,7 @@ STR = {
         "min": "{n}분", "sec": "{n}초", "hour": "{h}시간 {m}분",
     },
     "en": {
-        "help": "claude-office bot.\n/status list sessions (numbered, ready-to-receive first) · /status all for all\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/more show the attached session's last reply in full\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
+        "help": "claude-office bot.\n/status list sessions (numbered, ready-to-receive first) · /status all for all\n/use N  attach that session to this chat — what you send goes to it, and its replies come here\n/todo what's left (sessions waiting on you, remaining todos)\n/more show the attached session's last reply in full\n/stop detach\n/mute · /unmute notifications\n/unlink disconnect this chat\nReply to a notification to message that session.",
         "linked": "Linked: {name}\n",
         "need_code": "This chat isn't linked. Get a link code from 「Telegram」 on the claude-office admin page and send it here.",
         "private_only": "Only private chats can be linked.",
@@ -91,6 +94,9 @@ STR = {
         "bound_no_msg": "\n(Note: that computer doesn't accept messages — set CLAUDE_OFFICE_MESSAGES=on in its collector .env and enable messaging on the admin page)",
         "unbound": "Detached. Notifications continue.",
         "no_more": "No reply yet.",
+        "todo_head": "What's left — sessions waiting on you first (attach with /use N)",
+        "todo_none": "Nothing left. All todos are done and no session is waiting on you.",
+        "todo_ask": "asked you", "todo_appr": "approval", "todo_stall": "stuck", "todo_n": "todo {d}/{n}",
         "no_target": "No session attached. Send /status and /use N, or reply to a notification.",
         "send_fail": "Couldn't send: {err}",
         "text_only": "Only text can be sent.",
@@ -517,6 +523,8 @@ class Bridge:
                 self.send(chat, s["bad_number"] + (" " + s["bad_more"] if len(lst) < len(self._sessions()) else ""))
                 return
             await self.bind(link, host, sid)
+        elif cmd in ("todo", "left"):
+            self._todo(link, chat, s)
         elif cmd == "more":
             t = self.last_reply.get(chat)
             if not t:
@@ -541,6 +549,30 @@ class Bridge:
         else:
             self.send(chat, s["help"])
         await self.ops.bump()
+
+    def _todo(self, link: dict, chat, s: dict) -> None:
+        """남은 일 요약: 나를 기다리는 세션(승인·질문·막힘) → 할 일이 남은 세션. 번호는 /use 로 바로 붙일 수 있다."""
+        rows = []
+        for a in self.ops.agents():
+            left = [x for x in a.get("todos") or [] if x.get("st") != "completed"]
+            mark = "✋" if a.get("kind") == "approval" else "❓" if a.get("asks") and a.get("kind") == "idle" else "⏳" if a.get("stalled") else ""
+            if not mark and not left:
+                continue
+            rows.append(({"✋": 0, "❓": 1, "⏳": 2}.get(mark, 3), -len(left), mark or "📝", a, left))   # 승인 → 질문 → 막힘 → 할 일
+        if not rows:
+            self.send(chat, s["todo_none"])
+            return
+        rows.sort(key=lambda r: (r[0], r[1]))
+        rows = rows[:STATUS_N]
+        self.lists[chat] = [(r[3]["host"], r[3]["id"]) for r in rows]
+        lines = [s["todo_head"]]
+        for i, (_, _, mark, a, left) in enumerate(rows, 1):
+            what = s["todo_ask"] if mark == "❓" else s["todo_appr"] if mark == "✋" else s["todo_stall"] if mark == "⏳" else ""
+            todos = a.get("todos") or []
+            cur = next((x for x in left if x.get("st") == "in_progress"), left[0] if left else None)
+            tail = (f" · {s['todo_n'].format(d=len(todos) - len(left), n=len(todos))}" if todos else "") + (f" — ▶ {cur['s'][:40]}" if cur else "")
+            lines.append(f"{i}. {mark} {a.get('project', '')} · {(a.get('title') or a.get('name') or '')[:32]}{' · ' + what if what else ''}{tail}")
+        self.send(chat, "\n".join(lines))
 
     async def bind(self, link: dict, host: str, sid: str) -> None:
         """그 채팅에 세션을 붙인다(텔레그램 /use 와 화면의 '텔레그램에 붙이기')."""

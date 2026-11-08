@@ -1506,3 +1506,18 @@ def test_proc_mem_measures_this_process_on_every_os(collector, monkeypatch):
     n = collector.proc_mem(os.getpid())
     assert n is not None and n > 1024 * 1024
     assert collector.proc_mem(2147483600) is None
+
+
+def test_asks_user_detects_question_endings(collector):
+    yes = ["바로 커밋할까요?", "어느 쪽으로 할지 알려 주세요.", "**A안과 B안 중 골라 주세요**", "Shall I push it?", "결과는 이래요.\n\n진행할까요", "Want me to continue? Let me know."]
+    no = ["다 고쳤어요.", "테스트 13개 모두 통과했습니다.", "```\nok?\n```\n끝났어요.", ""]
+    assert all(collector.asks_user(t) for t in yes), [t for t in yes if not collector.asks_user(t)]
+    assert not any(collector.asks_user(t) for t in no), [t for t in no if collector.asks_user(t)]
+
+
+def test_collect_marks_asks_only_after_turn(collector, home):
+    recs = [reply("어느 쪽으로 할까요?", "u1")]
+    make_session(home, recs, status="idle")
+    assert collect_one(collector)["asks"] is True
+    make_session(home, recs, status="busy")
+    assert collect_one(collector)["asks"] is False

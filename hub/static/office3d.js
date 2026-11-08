@@ -2424,10 +2424,11 @@ const doneAt = new Map();   // 세션 id -> 일을 마친 시각(열어 보거�
 const ATTN = {
   approval: { icon: "hand", word: t("승인 대기"), short: t("승인") },
   clash: { icon: "code-merge", word: t("같은 파일을 여러 세션이 고치는 중"), short: t("동시 편집") },
+  ask: { icon: "circle-question", word: t("물어보고 멈춘 세션 — 내 답을 기다림"), short: t("질문") },
   stalled: { icon: "hourglass-end", word: t("막힘"), short: t("막힘") },
   done: { icon: "circle-check", word: t("작업 완료"), short: t("완료") },
 };
-const ATTN_ORDER = ["approval", "clash", "stalled", "done"];
+const ATTN_ORDER = ["approval", "ask", "clash", "stalled", "done"];
 // ---------- 같은 파일 동시 편집 ----------
 // 수집기가 세션마다 최근 15분 안에 고친 파일을 경로 해시(k)로 보낸다. 같은 컴퓨터에서 두 세션 이상이 CLASH_SEC 안에 같은 파일을
 // 고쳤으면 경고한다(서로 덮어쓰거나 충돌하기 쉽다). 다른 worktree 는 경로가 달라 겹치지 않는다
@@ -2460,6 +2461,7 @@ function attention() {
   for (const a of state.agents) {
     if (a.kind === "approval") out.push({ a, type: "approval", ts: a.since });
     else if (a.stalled) out.push({ a, type: "stalled", ts: a.lastActivity });
+    else if (a.asks && a.kind === "idle") out.push({ a, type: "ask", ts: a.since || a.lastActivity });
     else if (a.kind === "idle" && doneAt.has(a.id)) out.push({ a, type: "done", ts: doneAt.get(a.id) });
   }
   return out.sort((x, y) => ATTN_ORDER.indexOf(x.type) - ATTN_ORDER.indexOf(y.type) || (y.ts || 0) - (x.ts || 0));
@@ -2478,12 +2480,14 @@ function renderAttention() {
     const n = floorN.get(x.a.project);
     const what = x.type === "approval" ? `${x.a.tool ? esc(x.a.tool) + " · " : ""}${agoSpan(x.ts || null, t("째"))}`
       : x.type === "clash" ? clashText(x.cs)
+      : x.type === "ask" ? `${agoSpan(x.ts, t(" 전"))}${x.a.say ? ` · ${esc(x.a.say)}` : ""}`
       : x.type === "stalled" ? `${t("조용한 지")} ${agoSpan(x.a.lastActivity)}` : `${agoSpan(x.ts, t(" 전"))}${x.a.say ? ` · ${esc(x.a.say)}` : ""}`;
     return `<li data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">${n ? `<span class="badge" style="--h:${floorHue(n)}">${floorLabel(n)}</span>` : ""}
       <span class="w"><b>${esc(x.a.title || x.a.name)}</b><small>${what}</small></span></li>`;
   }).join("") + (attnOpen === "done" ? `<li class="all" data-all="1"><i class="fa-solid fa-check-double"></i> ${t("모두 확인")}</li>` : "") : "");
   $("attnList").hidden = !items.length;
   tickTimes($("attn"), now); tickTimes($("attnList"), now);
+  renderLeft();
   // 브라우저 탭 제목에도 '나를 기다리는 수'(승인 + 확인 안 한 완료)
   const n = by("approval").length + by("done").length;
   const ttl = (n ? `(${n}) ` : "") + t("Claude 사무실");
@@ -2521,7 +2525,7 @@ try { alertMode = ALERT_MODES.includes(localStorage.getItem("office.alert")) ? l
 const canNotify = () => "Notification" in window && window.isSecureContext;
 function renderAlertBtn() {
   const b = $("alertBtn");
-  b.innerHTML = `<i class="fa-solid fa-${ALERT_ICON[alertMode]}"></i> ${ALERT_LABEL[alertMode]}`;
+  b.innerHTML = `<i class="fa-solid fa-${ALERT_ICON[alertMode]}"></i><span class="lbl"> ${ALERT_LABEL[alertMode]}</span>`;
   b.classList.toggle("on", alertMode !== "off");
   b.title = t("소리·알림: {m} (누르면 바뀜, 단축키 M)", { m: ALERT_LABEL[alertMode] }) +
     (canNotify() ? (Notification.permission === "denied" ? "\n" + t("데스크톱 알림이 브라우저에서 막혀 있어 소리만 냅니다.") : "")
@@ -2583,7 +2587,7 @@ renderAlertBtn();
 // 글을 쓰는 칸에서는 동작하지 않는다. ? 로 목록
 const KEYS = [
   ["↑ ↓", t("위층·아래층")], ["1 – 9", t("그 층으로")], ["Space", t("층 순회 재생·정지")], ["A", t("나를 기다리는 다음 세션으로")],
-  ["F", t("최근 소식 펼치기·접기")], ["T", t("타임라인 보기")], ["/", t("소식 검색")], ["[  ]", t("왼쪽·오른쪽 패널 접기")], ["M", t("소리·알림 바꾸기")], ["Esc", t("선택 풀기·창 닫기")], ["?", t("이 목록")],
+  ["F", t("최근 소식 펼치기·접기")], ["T", t("타임라인 보기")], ["/", t("소식 검색")], ["[  ]", t("왼쪽·오른쪽 패널 접기")], ["M", t("소리·알림 바꾸기")], ["L", t("남은 일 한눈에")], ["Esc", t("선택 풀기·창 닫기")], ["?", t("이 목록")],
 ];
 function renderKeys() {
   setHTML($("keysList"), KEYS.map(([k, d]) => `<li><kbd>${k}</kbd><span>${d}</span></li>`).join(""));
@@ -2607,7 +2611,7 @@ document.addEventListener("keydown", e => {
   if (!state) return;
   const k = e.key;
   if (k === "?") { toggleKeys(); }
-  else if (k === "Escape") { if (!$("memModal").hidden) setMemModal(false); else if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
+  else if (k === "Escape") { if (!$("leftModal").hidden) setLeftModal(false); else if (!$("memModal").hidden) setMemModal(false); else if (!$("limModal").hidden) setLimitModal(false); else if (!$("keys").hidden) toggleKeys(false); else if (attnOpen) { attnOpen = ""; renderAttention(); } else if (selected) select(selected); }
   else if (k === "ArrowUp") stepFloor(1);
   else if (k === "ArrowDown") stepFloor(-1);
   else if (/^[1-9]$/.test(k)) { const f = floors().find(x => x.n === +k); if (f) jumpFloor(f.project); }
@@ -2623,6 +2627,7 @@ document.addEventListener("keydown", e => {
   else if (k === "[") setPanel("left", !document.querySelector(".app").classList.contains("left-closed"));
   else if (k === "]") setPanel("right", !document.querySelector(".app").classList.contains("right-closed"));
   else if (k === "m" || k === "M") $("alertBtn").click();
+  else if (k === "l" || k === "L") setLeftModal($("leftModal").hidden);
   else return;
   e.preventDefault();
 });
@@ -2854,6 +2859,58 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("online", () => { if (lostAt) { retryMs = 1000; connect(); } });
 connect();
+// ---------- 남은 일: 모든 세션을 한 화면에 ----------
+// 세션마다 나를 기다리는 것(승인·질문·막힘)과 남은 할 일(Claude 체크리스트), 층마다 커밋·푸시 안 한 변경을 모은다.
+// 나를 기다리는 세션이 있는 프로젝트부터, 그다음 남은 할 일이 많은 순. 줄을 누르면 그 세션으로 간다
+function leftItems() {
+  if (!state) return { groups: [], wait: 0, todo: 0 };
+  const fl = floors(), floorOf = new Map(fl.map(f => [f.project, f]));
+  const rows = new Map();
+  let wait = 0, todo = 0;
+  for (const a of state.agents) {
+    if (a.virtual) continue;
+    const left = (a.todos || []).filter(x => x.st !== "completed");
+    const tags = [];
+    if (a.kind === "approval") tags.push(["approval", t("승인 대기") + (a.tool ? " · " + a.tool : "")]);
+    if (a.asks && a.kind === "idle") tags.push(["ask", t("물어보고 멈춤")]);
+    if (a.stalled) tags.push(["stalled", t("막힘")]);
+    const needs = tags.length > 0;
+    if (!needs && !left.length) continue;
+    if (needs) wait++;
+    if (left.length) todo++;
+    if (a.kind !== "idle" && a.kind !== "approval") tags.push(["work", STATE_WORD[stateOf(a)] || ""]);
+    else if (!needs) tags.push(["idle", t("쉬는 중") + " · " + shortDur(Date.now() / 1000 - skew - (a.since || a.lastActivity || 0))]);
+    if (left.length) tags.push(["todo", t("할 일 {d}/{n}", { d: (a.todos || []).length - left.length, n: (a.todos || []).length })]);
+    const g = rows.get(a.project) || { project: a.project, f: floorOf.get(a.project), list: [], score: 0 };
+    g.list.push({ a, tags, left, needs });
+    g.score += (needs ? 100 : 0) + left.length;
+    rows.set(a.project, g);
+  }
+  for (const f of fl) if (!f.tg && f.git && (f.git.dirty || f.git.ahead) && !rows.has(f.project)) rows.set(f.project, { project: f.project, f, list: [], score: 0 });
+  const groups = [...rows.values()].sort((x, y) => y.score - x.score || (y.f && y.f.git ? (y.f.git.dirty || 0) : 0) - (x.f && x.f.git ? (x.f.git.dirty || 0) : 0));
+  for (const g of groups) g.list.sort((x, y) => y.needs - x.needs || y.left.length - x.left.length);
+  return { groups, wait, todo };
+}
+function renderLeft() {
+  const { groups, wait, todo } = leftItems();
+  setText($("leftN"), wait ? String(wait) : "");
+  if ($("leftModal").hidden) return;
+  setHTML($("leftSum"), groups.length ? `${t("나를 기다림")} <b>${wait}</b> · ${t("할 일이 남은 세션")} <b>${todo}</b> · ${t("커밋 안 한 변경이 있는 층")} <b>${groups.filter(g => g.f && g.f.git && (g.f.git.dirty || g.f.git.ahead)).length}</b>` : "");
+  const icon = { in_progress: "circle-play", pending: "circle" };
+  setHTML($("leftList"), groups.map(g => `<div class="lf-proj">${g.f ? `<span class="badge" style="--h:${floorHue(g.f.n)}">${floorLabel(g.f.n)}</span>` : ""}${esc(g.project)}${g.f ? gitBadge(g.f.git) : ""}${g.list.length ? "" : ` <small>${t("세션 없음")}</small>`}</div>` +
+    g.list.map(x => `<div class="lf-s" data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">
+      <div class="lf-h">${x.tags.map(([k, w]) => `<span class="lf-tag ${k}">${esc(w)}</span>`).join("")}<b>${esc(x.a.title || x.a.name)}</b></div>
+      ${x.a.asks && x.a.say ? `<div class="lf-q">“${esc(x.a.say)}”</div>` : ""}
+      ${x.left.length ? `<ul class="lf-t">${x.left.slice().sort((p, q) => (q.st === "in_progress") - (p.st === "in_progress")).slice(0, 5).map(it => `<li class="${it.st}"><i class="fa-solid fa-${icon[it.st] || "circle"}"></i>${esc(it.s)}</li>`).join("")}${x.left.length > 5 ? `<li>${t("외 {n}개", { n: x.left.length - 5 })}</li>` : ""}</ul>` : ""}
+    </div>`).join("")).join("") || `<p class="muted">${t("남은 일이 없습니다. 모든 세션이 할 일을 마쳤고 나를 기다리는 세션도 없어요.")}</p>`);
+}
+function setLeftModal(on) { $("leftModal").hidden = !on; if (on) renderLeft(); }
+$("leftBtn").addEventListener("click", () => setLeftModal($("leftModal").hidden));
+document.addEventListener("click", e => {
+  if (e.target === $("leftModal") || e.target.closest("#leftModal .x")) { setLeftModal(false); return; }
+  const row = e.target.closest("#leftList .lf-s");
+  if (row) { setLeftModal(false); jumpTo(row.dataset.id, row.dataset.p); }
+});
 // ---------- 하루 다시보기 ----------
 // 허브가 15초마다 남긴 세션 상태(/api/timeline)로 그 날 사무실을 빨리감기로 다시 그린다. 그동안 실시간 소식은 liveState 에
 // 받아 두기만 하고, '실시간으로'를 누르면 그것으로 바로 돌아간다. 바깥 하늘·벽시계도 다시보기 시각을 따른다
