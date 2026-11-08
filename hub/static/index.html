@@ -222,7 +222,27 @@
   .tabs em#leftN.wait { background: #f97316; }
   .lf-proj { margin: 12px 0 4px; display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-hi); font-weight: 700; }
   .lf-proj:first-child { margin-top: 0; } .lf-proj small { color: var(--text-dim2); font-weight: 400; }
+  .lf-proj { min-width: 0; } .lf-proj .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .lf-proj .badge, .lf-proj .gitb { flex: none; }
+  /* 세션 없이 git 변경만 남은 층 묶음: 펼치기 전엔 한 줄(약식이 아니어도 접을 수 있다) */
+  .lf-gitonly .lf-chev { display: inline-block; }
+  .lf-gitonly:not(.open) .lf-d { display: none; }
+  .lf-gitonly.open .lf-chev { transform: rotate(90deg); }
+  .lf-gitonly .lf-d .lf-proj { margin: 6px 0 0; font-weight: 600; font-size: 12px; }
   .lf-s { display: grid; gap: 3px; padding: 7px 8px; border-radius: 8px; cursor: pointer; border-top: 1px solid var(--border); font-size: 12px; }
+  .lf-go { margin-left: auto; flex: none; border: 0; background: transparent; color: var(--text-dim2); padding: 0 4px; font-size: 11px; cursor: pointer; }
+  .lf-go:hover { color: var(--brand-light); }
+  .lf-chev { display: none; width: 10px; font-size: 9px; color: var(--text-dim2); transition: transform .15s; }
+  /* 약식: 세션마다 한 줄(제목은 말줄임), 세부 내용(질문·남은 할 일)은 눌러서 펼친다 */
+  #leftList.compact .lf-chev { display: inline-block; }
+  #leftList.compact .lf-s.open .lf-chev { transform: rotate(90deg); }
+  #leftList.compact .lf-s .lf-d { display: none; }
+  #leftList.compact .lf-s.open .lf-d { display: grid; gap: 3px; }
+  #leftList.compact .lf-h { flex-wrap: nowrap; min-width: 0; }
+  #leftList.compact .lf-h b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #leftList.compact .lf-s { padding: 5px 8px; }
+  #leftList.compact .lf-proj { margin: 8px 0 2px; }
+  .lf-d { display: grid; gap: 3px; }
   .lf-s:hover { background: rgba(255,255,255,.04); }
   .lf-h { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .lf-h b { color: var(--text-hi); font-weight: 600; }
   .lf-tag { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid; white-space: nowrap; }

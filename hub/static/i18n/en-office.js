@@ -5,7 +5,7 @@ I18N.add({
   "물어보고 멈춤": "Asked you", "쉬는 중": "idle", "할 일 {d}/{n}": "todo {d}/{n}", "나를 기다림": "Waiting on you",
   "할 일이 남은 세션": "Sessions with todos left", "커밋 안 한 변경이 있는 층": "Floors with uncommitted changes", "세션 없음": "no session",
   "외 {n}개": "+{n} more", "남은 일이 없습니다. 모든 세션이 할 일을 마쳤고 나를 기다리는 세션도 없어요.": "Nothing left. Every session finished its todos and none is waiting on you.",
-  "남은 일 한눈에": "What's left", "남은 일 {n}건 · 나를 기다림 {w}": "{n} left · {w} waiting on you",
+  "남은 일 한눈에": "What's left", "이 세션으로": "Go to this session", "커밋 안 한 변경만 남은 층 {n}곳": "{n|floor|floors} with only uncommitted changes", "남은 일 {n}건 · 나를 기다림 {w}": "{n} left · {w} waiting on you",
   // 하루 다시보기
   "아직 다시볼 기록이 없습니다. 허브가 켜져 있는 동안 15초마다 쌓입니다.": "Nothing to replay yet. The hub records every 15 seconds while it runs.",
   "그 날 기록을 읽지 못했습니다.": "Couldn't read that day's record.", "다시보기": "Replay",

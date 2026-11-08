@@ -2021,6 +2021,7 @@ function showTab(name) {
   });
   box.querySelectorAll(".pane[data-pane]").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
   if (bottom) setBottomMin(false);   // 접힌 아래 칸의 탭을 누르면 편다
+  if (name === "left") requestAnimationFrame(fitLeft);
   try { localStorage.setItem(bottom ? "office.tab2" : "office.tab", name); } catch (_) {}
 }
 document.addEventListener("click", e => { const b = e.target.closest(".rp .tabs [data-tab]"); if (b) showTab(b.dataset.tab); });
@@ -2923,6 +2924,15 @@ function leftItems() {
   for (const g of groups) g.list.sort((x, y) => y.needs - x.needs || y.left.length - x.left.length);
   return { groups, wait, todo };
 }
+// 아래 칸이 좁아 다 펼치면 넘치면 '약식'(세션마다 한 줄, 누르면 그 줄만 펼침). 넉넉하면 다 펼친다(층 목록의 밀도와 같은 생각)
+const leftOpen = new Set();   // 약식일 때 사람이 펼친 세션
+function fitLeft() {
+  const pane = document.querySelector('.pane[data-pane="left"]'), list = $("leftList");
+  if (!pane || !pane.classList.contains("on")) return;
+  list.classList.remove("compact");
+  const over = pane.scrollHeight > pane.clientHeight + 2;
+  list.classList.toggle("compact", over);
+}
 function renderLeft() {
   const { groups, wait, todo } = leftItems();
   const n = groups.reduce((k, g) => k + g.list.length, 0), badge = $("leftN");   // 목록의 세션 수(나를 기다림 + 할 일 남음)
@@ -2932,17 +2942,34 @@ function renderLeft() {
   if (badge.title !== tip) badge.title = tip;
   setHTML($("leftSum"), groups.length ? `${t("나를 기다림")} <b>${wait}</b> · ${t("할 일이 남은 세션")} <b>${todo}</b> · ${t("커밋 안 한 변경이 있는 층")} <b>${groups.filter(g => g.f && g.f.git && (g.f.git.dirty || g.f.git.ahead)).length}</b>` : "");
   const icon = { in_progress: "circle-play", pending: "circle" };
-  setHTML($("leftList"), groups.map(g => `<div class="lf-proj">${g.f ? `<span class="badge" style="--h:${floorHue(g.f.n)}">${floorLabel(g.f.n)}</span>` : ""}${esc(g.project)}${g.f ? gitBadge(g.f.git) : ""}${g.list.length ? "" : ` <small>${t("세션 없음")}</small>`}</div>` +
-    g.list.map(x => `<div class="lf-s" data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">
-      <div class="lf-h">${x.tags.map(([k, w]) => `<span class="lf-tag ${k}">${esc(w)}</span>`).join("")}<b>${esc(x.a.title || x.a.name)}</b></div>
-      ${x.a.asks && x.a.say ? `<div class="lf-q">“${esc(x.a.say)}”</div>` : ""}
-      ${x.left.length ? `<ul class="lf-t">${x.left.slice().sort((p, q) => (q.st === "in_progress") - (p.st === "in_progress")).slice(0, 5).map(it => `<li class="${it.st}"><i class="fa-solid fa-${icon[it.st] || "circle"}"></i>${esc(it.s)}</li>`).join("")}${x.left.length > 5 ? `<li>${t("외 {n}개", { n: x.left.length - 5 })}</li>` : ""}</ul>` : ""}
-    </div>`).join("")).join("") || `<p class="muted">${t("남은 일이 없습니다. 모든 세션이 할 일을 마쳤고 나를 기다리는 세션도 없어요.")}</p>`);
+  const projHead = g => `<div class="lf-proj">${g.f ? `<span class="badge" style="--h:${floorHue(g.f.n)}">${floorLabel(g.f.n)}</span>` : ""}<span class="nm">${esc(g.project)}</span>${g.f ? gitBadge(g.f.git) : ""}</div>`;
+  const withS = groups.filter(g => g.list.length), gitOnly = groups.filter(g => !g.list.length);
+  // 세션 없이 커밋·푸시 안 한 변경만 남은 층은 한 묶음으로(약식이면 접힌 채 한 줄)
+  const gitBlock = gitOnly.length ? `<div class="lf-s lf-gitonly has${leftOpen.has("_git") ? " open" : ""}" data-id="_git">
+      <div class="lf-h"><i class="fa-solid fa-chevron-right lf-chev"></i><span class="lf-tag idle">${esc(t("커밋 안 한 변경만 남은 층 {n}곳", { n: gitOnly.length }))}</span></div>
+      <div class="lf-d">${gitOnly.map(projHead).join("")}</div></div>` : "";
+  setHTML($("leftList"), withS.map(g => projHead(g) +
+    g.list.map(x => {
+      const detail = (x.a.asks && x.a.say ? `<div class="lf-q">“${esc(x.a.say)}”</div>` : "") +
+        (x.left.length ? `<ul class="lf-t">${x.left.slice().sort((p, q) => (q.st === "in_progress") - (p.st === "in_progress")).slice(0, 5).map(it => `<li class="${it.st}"><i class="fa-solid fa-${icon[it.st] || "circle"}"></i>${esc(it.s)}</li>`).join("")}${x.left.length > 5 ? `<li>${t("외 {n}개", { n: x.left.length - 5 })}</li>` : ""}</ul>` : "");
+      return `<div class="lf-s${detail ? " has" : ""}${leftOpen.has(x.a.id) ? " open" : ""}" data-id="${esc(x.a.id)}" data-p="${esc(x.a.project)}">
+      <div class="lf-h">${detail ? `<i class="fa-solid fa-chevron-right lf-chev"></i>` : ""}${x.tags.map(([k, w]) => `<span class="lf-tag ${k}">${esc(w)}</span>`).join("")}<b>${esc(x.a.title || x.a.name)}</b>
+        <button class="lf-go" title="${esc(t("이 세션으로"))}"><i class="fa-solid fa-arrow-right"></i></button></div>
+      ${detail ? `<div class="lf-d">${detail}</div>` : ""}
+    </div>`;
+    }).join("")).join("") + gitBlock || `<p class="muted">${t("남은 일이 없습니다. 모든 세션이 할 일을 마쳤고 나를 기다리는 세션도 없어요.")}</p>`);
+  fitLeft();
 }
 document.addEventListener("click", e => {
-  const row = e.target.closest("#leftList .lf-s");
-  if (row) jumpTo(row.dataset.id, row.dataset.p);
+  const row = e.target.closest("#leftList .lf-s"); if (!row) return;
+  // 화살표 단추나 세부 내용이 없는 줄은 그 세션으로, 약식에서 세부 내용이 있는 줄은 펼치기·접기
+  if (row.dataset.id === "_git") { /* 층 묶음은 늘 펼치기·접기 */ }
+  else if (e.target.closest(".lf-go") || !row.classList.contains("has") || !$("leftList").classList.contains("compact")) { jumpTo(row.dataset.id, row.dataset.p); return; }
+  const id = row.dataset.id;
+  if (leftOpen.has(id)) leftOpen.delete(id); else leftOpen.add(id);
+  row.classList.toggle("open", leftOpen.has(id));
 });
+new ResizeObserver(() => fitLeft()).observe(document.querySelector('.pane[data-pane="left"]'));
 // ---------- 하루 다시보기 ----------
 // 허브가 15초마다 남긴 세션 상태(/api/timeline)로 그 날 사무실을 빨리감기로 다시 그린다. 그동안 실시간 소식은 liveState 에
 // 받아 두기만 하고, '실시간으로'를 누르면 그것으로 바로 돌아간다. 바깥 하늘·벽시계도 다시보기 시각을 따른다
