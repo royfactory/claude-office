@@ -518,6 +518,13 @@
   #people li { display: flex; gap: 9px; padding: 8px 6px; border-radius: 9px; cursor: pointer; }
   #people li:hover, #people li.on { background: var(--surface-2); }
   #people li.sub { margin-left: 18px; }
+  /* 칸에 다 안 들어가면 줄인다(층 목록·남은 일과 같은 생각): dense = 셋째 줄 빼기, tight = 한 줄(얼굴 작게). 고른 사람은 그대로 */
+  #people.dense li:not(.on) .r3 { display: none; }
+  #people.dense li:not(.on) { padding: 6px; }
+  #people.tight li:not(.on) .r2 { display: none; }
+  #people.tight li:not(.on) { padding: 4px 6px; align-items: center; }
+  #people.tight li:not(.on) .av { width: 24px; height: 24px; border-width: 1.5px; }
+  #people.tight li:not(.on) .av .emo { font-size: 13px; }
   .av { width: 32px; height: 32px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--bg-2);
         border: 2px solid var(--c); overflow: hidden; }
   .av.big { width: 44px; height: 44px; }

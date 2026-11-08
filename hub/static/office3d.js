@@ -1685,12 +1685,24 @@ function renderPeople(floor, chars) {
   setText($("tabPeopleN"), String(real.length || ""));
   setHTML($("people"), rows.join(""));
   tickTimes($("people"), now);
+  fitPeople();
   const a = floor.agents.find(x => x.id === selected) || floor.agents.find(x => selected && selected.startsWith(x.id + "/"));
   setHTML($("detail"), a ? (a.virtual ? tgCard(a, now) : detailCard(a, chars.get(a.id), now)) : "");
   tickTimes($("detail"), now);
   updateCompose(a && !a.virtual ? a : null, now);
   updateSessionTab(a);
 }
+// 사람들 목록이 칸에 다 안 들어가면 단계적으로 줄인다: 셋째 줄(폴더·도구 수·ctx) → 한 줄(얼굴·제목·상태)
+function fitPeople() {
+  const pane = document.querySelector('.pane[data-pane="people"]'), list = $("people");
+  if (!pane || !pane.classList.contains("on")) return;
+  const over = () => pane.scrollHeight > pane.clientHeight + 2;
+  list.classList.remove("dense", "tight");
+  if (!over()) return;
+  list.classList.add("dense");
+  if (over()) list.classList.add("tight");
+}
+new ResizeObserver(() => fitPeople()).observe(document.querySelector('.pane[data-pane="people"]'));
 // 텔레그램 층의 비서·연결된 사람: 목록 한 줄과 고르면 나오는 칸
 function tgPersonRow(a) {
   const ch = a.virtualCh, sub = a.virtual === "bot" ? t("텔레그램 봇 · 알림과 붙인 세션의 답을 보냅니다") : (a.link.bind ? `📎 ${tgSessionName(a.link.bind)}` : t("붙인 세션 없음"));
@@ -2022,6 +2034,7 @@ function showTab(name) {
   box.querySelectorAll(".pane[data-pane]").forEach(p => p.classList.toggle("on", p.dataset.pane === name));
   if (bottom) setBottomMin(false);   // 접힌 아래 칸의 탭을 누르면 편다
   if (name === "left") requestAnimationFrame(fitLeft);
+  if (name === "people") requestAnimationFrame(fitPeople);
   try { localStorage.setItem(bottom ? "office.tab2" : "office.tab", name); } catch (_) {}
 }
 document.addEventListener("click", e => { const b = e.target.closest(".rp .tabs [data-tab]"); if (b) showTab(b.dataset.tab); });
