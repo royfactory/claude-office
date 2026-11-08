@@ -209,7 +209,12 @@
   #memList .mv { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-hi); }
   #memList li.old .ms { color: var(--warning); }
   /* 남은 일: 프로젝트(층)마다 묶고, 세션 한 줄에 표시들 + 남은 할 일 */
-  #leftBtn b { margin-left: 4px; background: #f97316; color: #fff; border-radius: 999px; padding: 0 6px; font-size: 10px; }
+  /* 남은 일 건수: 단추 오른쪽 위에 떠 있는 배지(10개 이상은 9+). 나를 기다리는 세션이 있으면 주황, 할 일만 남았으면 남색 */
+  #leftBtn { position: relative; }
+  #leftBtn b { position: absolute; top: -7px; right: -7px; min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
+               border-radius: 999px; background: #475569; color: #fff; font-size: 10px; font-weight: 800; line-height: 17px; text-align: center;
+               box-shadow: 0 0 0 2px #0b1324; pointer-events: none; font-variant-numeric: tabular-nums; }
+  #leftBtn b.wait { background: #f97316; }
   #leftBtn b:empty { display: none; }
   .lf-proj { margin: 12px 0 4px; display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-hi); font-weight: 700; }
   .lf-proj:first-child { margin-top: 0; } .lf-proj small { color: var(--text-dim2); font-weight: 400; }

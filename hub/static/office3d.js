@@ -2893,7 +2893,11 @@ function leftItems() {
 }
 function renderLeft() {
   const { groups, wait, todo } = leftItems();
-  setText($("leftN"), wait ? String(wait) : "");
+  const n = groups.reduce((k, g) => k + g.list.length, 0), badge = $("leftN");   // 목록의 세션 수(나를 기다림 + 할 일 남음)
+  setText(badge, n ? (n > 9 ? "9+" : String(n)) : "");
+  badge.classList.toggle("wait", wait > 0);
+  const tip = t("남은 일 {n}건 · 나를 기다림 {w}", { n, w: wait });
+  if (badge.title !== tip) badge.title = tip;
   if ($("leftModal").hidden) return;
   setHTML($("leftSum"), groups.length ? `${t("나를 기다림")} <b>${wait}</b> · ${t("할 일이 남은 세션")} <b>${todo}</b> · ${t("커밋 안 한 변경이 있는 층")} <b>${groups.filter(g => g.f && g.f.git && (g.f.git.dirty || g.f.git.ahead)).length}</b>` : "");
   const icon = { in_progress: "circle-play", pending: "circle" };
