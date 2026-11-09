@@ -16,7 +16,9 @@ import json
 import math
 import os
 import re
+import secrets
 import signal
+import socket
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -514,12 +516,124 @@ stats = Stats()
 
 
 def require_write(request: Request) -> None:
-    """OFFICE_TOKEN 이 있으면 쓰기 요청에 같은 토큰을 요구한다(Authorization: Bearer 또는 X-Office-Token)."""
+    """OFFICE_TOKEN 이 있으면 쓰기 요청에 같은 토큰을 요구한다(Authorization: Bearer 또는 X-Office-Token).
+    '승인·메시지까지'로 등록한 휴대폰(기기 쿠키)도 쓸 수 있다."""
     if not TOKEN:
         return
     got = request.headers.get("x-office-token") or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-    if not hmac.compare_digest(got.encode(), TOKEN.encode()):
-        raise HTTPException(401, "토큰이 필요하다(OFFICE_TOKEN)")
+    if hmac.compare_digest(got.encode(), TOKEN.encode()):
+        return
+    d = devices.find(request.cookies.get(DEV_COOKIE, ""))
+    if d and d["scope"] == "full":
+        return
+    raise HTTPException(401, "토큰이 필요하다(OFFICE_TOKEN)")
+
+
+# ---------- 휴대폰 등록(같은 와이파이) ----------
+# 관리 화면이 일회용 코드(10분)를 만들어 이 컴퓨터의 와이파이 주소와 함께 QR 로 보이고, 휴대폰이 그 주소의 /pair 에서 코드를 내면
+# 기기 쿠키(1년)를 받는다. 허브에는 쿠키 값의 해시만 둔다(data/devices.json). scope: view(보기) · full(승인·메시지까지)
+DEVICES_PATH = DATA / "devices.json"
+DEV_COOKIE = "office_dev"
+DEV_PAIR_SEC = 600
+DEV_PAIR_TRIES = 5
+
+
+class Devices:
+    def __init__(self) -> None:
+        try:
+            raw = json.loads(DEVICES_PATH.read_text(encoding="utf-8"))
+            self.items: list[dict] = raw if isinstance(raw, list) else []
+        except (OSError, ValueError):
+            self.items = []
+        self.pair: dict | None = None   # {code, scope, until, tries}
+        self.saved_at = 0.0
+
+    @staticmethod
+    def _hash(token: str) -> str:
+        return hashlib.sha256(f"claude-office-dev:{token}".encode()).hexdigest()
+
+    def save(self) -> None:
+        try:
+            DATA.mkdir(parents=True, exist_ok=True)
+            tmp = DEVICES_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.items, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, DEVICES_PATH)
+            try:
+                os.chmod(DEVICES_PATH, 0o600)
+            except OSError:
+                pass
+            self.saved_at = time.time()
+        except OSError as e:
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "기기 목록을 저장하지 못함:", repr(e), flush=True)
+
+    def new_code(self, scope: str) -> dict:
+        self.pair = {"code": f"{secrets.randbelow(10 ** 6):06d}", "scope": scope, "until": time.time() + DEV_PAIR_SEC, "tries": 0}
+        return self.pair
+
+    def claim(self, code: str, name: str) -> tuple[dict, str] | None:
+        p = self.pair
+        if not p or p["until"] < time.time():
+            return None
+        if not secrets.compare_digest(code, p["code"]):
+            p["tries"] += 1
+            if p["tries"] >= DEV_PAIR_TRIES:   # 여러 번 틀리면 그 코드는 버린다(새로 만들어야 한다)
+                self.pair = None
+            return None
+        self.pair = None
+        token = secrets.token_urlsafe(32)
+        d = {"id": secrets.token_hex(5), "name": name[:40] or "휴대폰", "scope": p["scope"], "hash": self._hash(token),
+             "created": time.time(), "seen": time.time()}
+        self.items.append(d)
+        self.save()
+        return d, token
+
+    def find(self, token: str) -> dict | None:
+        if not token:
+            return None
+        h = self._hash(token)
+        d = next((x for x in self.items if hmac.compare_digest(x["hash"], h)), None)
+        if d and time.time() - d.get("seen", 0) > 300:   # 마지막으로 본 때는 5분 단위로만 적는다
+            d["seen"] = time.time()
+            if time.time() - self.saved_at > 300:
+                self.save()
+        return d
+
+    def public(self) -> list[dict]:
+        return [{k: d[k] for k in ("id", "name", "scope", "created", "seen")} for d in self.items]
+
+
+devices = Devices()
+
+
+def lan_urls() -> dict:
+    """휴대폰이 열 주소 후보: 이 컴퓨터의 와이파이·유선 주소(터널·도커·루프백 빼고). 허브가 127.0.0.1 에만 열려 있으면 알려 준다."""
+    port = int(os.environ.get("OFFICE_PORT") or 3006)
+    bind = os.environ.get("OFFICE_BIND") or "127.0.0.1"
+    ips: list[str] = []
+    try:
+        import subprocess
+        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=3).stdout if sys.platform != "win32" else ""
+        name = ""
+        for line in out.splitlines():
+            if line and not line[0].isspace():
+                name = line.split(":")[0]
+            m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+            if m and re.match(r"^(en|eth|wl|wlan)\d", name) and not m.group(1).startswith(("127.", "169.254.")):   # 링크 로컬(케이블 직결)은 휴대폰이 못 닿는다
+                ips.append(m.group(1))
+    except (OSError, ValueError):
+        pass
+    try:   # 기본 경로의 주소(Windows·ifconfig 가 없을 때). 패킷은 보내지 않는다
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        if not ip.startswith(("127.", "169.254.")) and ip not in ips:
+            ips.append(ip)
+    except OSError:
+        pass
+    if bind not in ("0.0.0.0", "::", ""):
+        ips = [ip for ip in ips if ip == bind]
+    return {"urls": [f"http://{ip}:{port}" for ip in ips], "bind": bind, "port": port, "lanOpen": bind in ("0.0.0.0", "::", "") or bool(ips)}
 
 
 
@@ -537,6 +651,8 @@ def can_read(request: Request) -> bool:
         return True
     c = request.cookies.get(VIEW_COOKIE, "")
     if c and hmac.compare_digest(c.encode(), _view_sig().encode()):
+        return True
+    if devices.find(request.cookies.get(DEV_COOKIE, "")):   # 등록한 휴대폰
         return True
     got = request.headers.get("x-office-token") or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     return _token_ok(got)
@@ -672,6 +788,59 @@ async def login(b: Login) -> JSONResponse:
     r = JSONResponse({"ok": True})
     r.set_cookie(VIEW_COOKIE, _view_sig(), max_age=365 * 86400, httponly=True, samesite="lax")
     return r
+
+
+@app.get("/pair")
+async def pair_page() -> FileResponse:
+    return FileResponse(STATIC / "pair.html", headers=NO_CACHE)
+
+
+class DevPair(BaseModel):
+    scope: Literal["view", "full"] = "view"
+
+
+@app.post("/api/devices/pair", dependencies=[Depends(require_write)])
+async def devices_pair(b: DevPair) -> dict:
+    p = devices.new_code(b.scope)
+    return {"code": p["code"], "until": p["until"], "scope": p["scope"], **lan_urls()}
+
+
+class DevClaim(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+    name: str = Field("", max_length=40)
+
+
+@app.post("/api/devices/claim")
+async def devices_claim(b: DevClaim) -> JSONResponse:
+    r = devices.claim(b.code.strip(), b.name.strip())
+    if not r:
+        await asyncio.sleep(1)
+        raise HTTPException(401, "코드가 맞지 않거나 지났다 — 관리 화면에서 새 QR 을 만든다")
+    d, token = r
+    resp = JSONResponse({"ok": True, "device": {k: d[k] for k in ("id", "name", "scope")}})
+    resp.set_cookie(DEV_COOKIE, token, max_age=365 * 86400, httponly=True, samesite="lax")
+    return resp
+
+
+@app.get("/api/devices/me")
+async def devices_me(request: Request) -> dict:
+    d = devices.find(request.cookies.get(DEV_COOKIE, ""))
+    return {"device": {k: d[k] for k in ("id", "name", "scope")} if d else None}
+
+
+@app.get("/api/devices", dependencies=[Depends(require_write)])
+async def devices_list() -> dict:
+    return {"devices": devices.public(), **lan_urls()}
+
+
+@app.delete("/api/devices/{did}", dependencies=[Depends(require_write)])
+async def devices_delete(did: str) -> dict:
+    before = len(devices.items)
+    devices.items = [d for d in devices.items if d["id"] != did]
+    if len(devices.items) == before:
+        raise HTTPException(404, "그 기기가 없다")
+    devices.save()
+    return {"ok": True}
 
 
 @app.post("/api/logout")

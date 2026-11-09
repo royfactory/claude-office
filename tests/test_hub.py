@@ -1215,3 +1215,48 @@ def test_read_lock_accepts_write_token_header_and_keeps_writes_separate(locked):
 def test_no_read_lock_by_default(authed):
     _, c = authed
     assert c.get("/api/state").status_code == 200 and c.post("/api/login", json={"token": "x"}).status_code == 200
+
+
+# ---------- 휴대폰 등록(같은 와이파이) ----------
+
+def test_device_pair_claim_view_scope_reads_but_cannot_write(locked):
+    mod, c = locked
+    assert c.post("/api/devices/pair", json={"scope": "view"}).status_code == 401          # 코드를 만드는 건 쓰기 토큰
+    code = c.post("/api/devices/pair", json={"scope": "view"}, headers=AUTH).json()["code"]
+    assert c.get("/pair").status_code == 200 and "/api/devices/claim" in c.get("/pair").text   # 잠겨 있어도 등록 화면은 열린다
+    assert c.post("/api/devices/claim", json={"code": "000000" if code != "000000" else "111111", "name": "x"}).status_code == 401
+    r = c.post("/api/devices/claim", json={"code": code, "name": "내 폰"})
+    assert r.status_code == 200 and r.json()["device"]["scope"] == "view" and "office_dev" in r.cookies
+    assert c.get("/api/state").status_code == 200                                           # 기기 쿠키로 본다
+    assert c.get("/api/devices/me").json()["device"]["name"] == "내 폰"
+    assert c.post("/api/sessions/message", json={"host": "h", "session": "s", "text": "x"}).status_code == 401   # 보기만
+    assert c.post("/api/devices/claim", json={"code": code, "name": "또"}).status_code == 401   # 코드는 한 번만
+    saved = (mod.DATA / "devices.json").read_text()
+    assert r.cookies["office_dev"] not in saved                                             # 쿠키 원문은 저장하지 않는다
+
+
+def test_device_full_scope_can_write_and_revoke_cuts_it_off(locked):
+    mod, c = locked
+    code = c.post("/api/devices/pair", json={"scope": "full"}, headers=AUTH).json()["code"]
+    c.post("/api/devices/claim", json={"code": code, "name": "폰"})
+    assert c.post("/api/ingest", json={"host": "mac", "agents": []}).status_code == 200      # 승인·메시지까지 = 쓰기 가능
+    did = c.get("/api/devices", headers=AUTH).json()["devices"][0]["id"]
+    assert c.delete(f"/api/devices/{did}", headers=AUTH).status_code == 200
+    assert c.get("/api/state").status_code == 401 and c.post("/api/ingest", json={"host": "mac", "agents": []}).status_code == 401
+
+
+def test_device_code_dies_after_wrong_tries(locked):
+    mod, c = locked
+    code = c.post("/api/devices/pair", json={}, headers=AUTH).json()["code"]
+    wrong = "000000" if code != "000000" else "111111"
+    mod.asyncio_sleep = None
+    for _ in range(5):
+        c.post("/api/devices/claim", json={"code": wrong, "name": ""})
+    assert c.post("/api/devices/claim", json={"code": code, "name": ""}).status_code == 401   # 5번 틀리면 그 코드는 버린다
+
+
+def test_lan_urls_respects_bind(make_hub, monkeypatch):
+    monkeypatch.setenv("OFFICE_BIND", "127.0.0.1")
+    mod, c = make_hub(TOKEN)
+    info = c.post("/api/devices/pair", json={}, headers=AUTH).json()
+    assert info["lanOpen"] is False and info["urls"] == [] and len(info["code"]) == 6

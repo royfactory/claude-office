@@ -161,6 +161,7 @@ All of these are off unless you turn them on. Details for each follow the table.
 | **Approve / deny from the dashboard.** "Allow once" and "Deny" buttons with a command preview. The terminal prompt stays up and whichever answers first wins. | `OFFICE_TOKEN` on the hub, the switch in `/admin`, `CLAUDE_OFFICE_APPROVE=on` on that computer, and `install_hooks.py --approve --apply` |
 | **Message a session.** Type into a session from the dashboard. Uses Claude Code's [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging); macOS/Linux only. | `OFFICE_TOKEN`, the switch in `/admin`, and `CLAUDE_OFFICE_MESSAGES=on` on that computer |
 | **Telegram.** One-line notifications for approvals, finished turns (longer than a threshold) and stuck sessions (details stay on the dashboard); reply to a notification to message that session; `/status` and `/use N` to attach a session so the chat talks to it and each turn's last reply comes back; optional Allow/Deny buttons. The hub long-polls Telegram, so it doesn't need to be reachable from the internet. Linking needs a one-time code from `/admin`, private chats only. Quiet hours pause done/stuck notifications (approvals still come by default). Sessions in bypass-permissions mode hold incoming messages for terminal approval; start a Telegram session with `sh scripts/telegram-session.sh <folder>` (`claude --settings '{"crossSessionInbound":"accept"}'`, that session only) — `/status` marks it 📨. Notification text, your Telegram messages and the attached session's replies pass through Telegram's servers. | `OFFICE_TELEGRAM_TOKEN` in the hub `.env`, restart the hub, then `/admin` → Telegram → Get a link code. Messaging (above) is needed to talk to a session |
+| **Phone on the same Wi-Fi.** Scan a QR from `/admin` to register a phone (view only, or approve & message); add it to the home screen. | `OFFICE_BIND=0.0.0.0` + `OFFICE_READ_TOKEN` |
 | **Read lock.** Require a token to view the dashboard (sign-in page, one-year cookie). | `OFFICE_READ_TOKEN` in the hub `.env` |
 | **Usage-limit bar.** 5-hour and weekly limits from the [status line](https://code.claude.com/docs/en/statusline), per account. Your existing status line keeps working. Terminal (CLI) sessions only. | `install_hooks.py --statusline --apply` |
 
@@ -232,6 +233,10 @@ Claude Code reports subscription usage limits (5-hour and weekly) only to the [s
 - **Your existing status line keeps showing**: it is saved and run with the same input. Without one, a single line like `opus-5-5 · ctx 19% · 5h 42% · 7d 18%` is shown.
 - Terminal (CLI) sessions only — IDE extensions don't run the status line. Values come with Pro/Max subscriptions after a session's first reply; long-idle sessions keep their last value.
 - If another tool manages the status line (e.g. an Orca profile's `settings.json`), install with `--settings <that file>`; if it gets overwritten, the bar stops updating.
+
+### Phone on the same Wi-Fi
+
+Open the dashboard in a phone browser without opening anything to the internet. Set `OFFICE_BIND=0.0.0.0` and `OFFICE_READ_TOKEN` (read lock) in the hub `.env` and restart the hub (turn off any `tailscale serve` on the same port — they collide, and the hub then answers on the tailnet directly). In `/admin` → Phone, pick View only or Approve & message, press Make QR and scan it with the phone; it gets a one-year device cookie (only its hash is stored in `data/devices.json`) and can be disconnected from `/admin`. Use "Add to Home screen" to run it like an app. Office or café Wi-Fi may block devices from reaching each other.
 
 ### Read lock
 

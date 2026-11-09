@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/static/vendor/fontawesome/css/fontawesome.min.css">
 <link rel="stylesheet" href="/static/vendor/fontawesome/css/solid.min.css">
 <link rel="stylesheet" href="/static/theme.css">
+<script src="/static/vendor/qrcode/qrcode.js"></script>
 <style>
   main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 96px; }
   section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
@@ -89,6 +90,17 @@
   .tg-link .h { display: flex; gap: 8px; align-items: center; } .tg-link .h b { color: var(--text-hi); } .tg-link .h .sp { flex: 1; }
   .tg-link .bind { color: var(--text-dim); font-size: 12px; }
   .tg-link .flt { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
+  /* 휴대폰 연결 */
+  .dev-qr { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .dev-qr .qr { background: #fff; padding: 10px; border-radius: 12px; line-height: 0; }
+  .dev-qr .qr svg { width: 200px; height: 200px; }
+  .dev-qr .side { display: grid; gap: 6px; font-size: 13px; min-width: 0; }
+  .dev-qr .side b.code { font-size: 26px; letter-spacing: .18em; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+  .dev-qr .side code { word-break: break-all; }
+  .dev-list { display: grid; gap: 6px; margin-top: 12px; }
+  .dev-list .d { display: flex; gap: 10px; align-items: center; font-size: 13px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+  .dev-list .d b { color: var(--text-hi); } .dev-list .d small { color: var(--text-dim); } .dev-list .d .sp { flex: 1; }
+  .warn-box { margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.3); font-size: 12.5px; }
   .tg-opts { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; font-size: 13px; }
 </style>
 </head>
@@ -170,6 +182,16 @@
       <label class="row"><input type="checkbox" data-tgq="done"> 작업 완료</label>
       <label class="row"><input type="checkbox" data-tgq="stalled"> 막힘</label>
     </div>
+  </section>
+
+  <section class="card" id="devCard">
+    <h2><i class="fa-solid fa-mobile-screen"></i> 휴대폰 연결(같은 와이파이)</h2>
+    <p class="help">QR 을 휴대폰 카메라로 찍으면 그 휴대폰이 이 대시보드에 등록됩니다(인터넷에는 열지 않습니다). 휴대폰 브라우저 메뉴의 '홈 화면에 추가'로 앱처럼 쓸 수 있어요.</p>
+    <div class="row">
+      <label class="row" style="font-size:13px">권한 <select id="devScope"><option value="view">보기만</option><option value="full">승인·메시지까지</option></select></label>
+      <button id="devPair"><i class="fa-solid fa-qrcode"></i> QR 만들기</button>
+    </div>
+    <div id="devBody"></div>
   </section>
 
   <section class="card grid2">
@@ -387,6 +409,42 @@ document.addEventListener("click", async e => {
   const id = b.closest("[data-tgl]").dataset.tgl;
   if (b.dataset.tg === "unlink") { if (confirm(t("이 텔레그램 연결을 끊을까요?"))) await tgCall("DELETE", `/api/telegram/links/${encodeURIComponent(id)}`); }
   else await tgCall("POST", "/api/telegram/bind", { link: id });
+});
+// ---- 휴대폰 연결(같은 와이파이): 일회용 코드 → 와이파이 주소의 /pair#c=코드 QR → 기기 목록 ----
+let devCode = null;
+async function loadDevices() {
+  const r = await tgCall("GET", "/api/devices");
+  if (r) renderDevices(r);
+}
+function renderDevices(info) {
+  const urls = info.urls || [], code = devCode && devCode.until * 1000 > Date.now() ? devCode : null;
+  let html = "";
+  if (!info.lanOpen) html += `<div class="warn-box">${t("허브가 이 컴퓨터에서만 열려 있어 휴대폰이 닿지 않습니다. 허브 <code>.env</code> 에 <code>OFFICE_BIND=0.0.0.0</code> 을 넣고 허브를 다시 띄우세요(같은 와이파이의 다른 사람도 주소에 닿으니 <code>OFFICE_READ_TOKEN</code> 으로 보기 잠금도 켜는 걸 권합니다).")}</div>`;
+  else if (!urls.length) html += `<div class="warn-box">${t("이 컴퓨터의 와이파이 주소를 찾지 못했습니다. 와이파이에 연결돼 있는지 확인하세요.")}</div>`;
+  if (code && urls.length) {
+    const url = `${urls[0]}/pair#c=${code.code}`;
+    let svg = "";
+    try { const q = qrcode(0, "M"); q.addData(url); q.make(); svg = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }); } catch (_) {}
+    html += `<div class="dev-qr"><div class="qr">${svg}</div><div class="side"><span>${t("휴대폰 카메라로 찍고 10분 안에 '연결'을 누르세요")}</span>
+      <b class="code">${esc(code.code)}</b><span>${t("권한")}: ${code.scope === "full" ? t("승인·메시지까지") : t("보기만")}</span>
+      <code>${esc(url)}</code>${urls.length > 1 ? `<small>${t("다른 주소")}: ${urls.slice(1).map(esc).join(", ")}</small>` : ""}
+      <small>${t("회사·카페 와이파이는 기기끼리 접속을 막기도 합니다. 안 열리면 집 와이파이에서 해 보세요.")}</small></div></div>`;
+  }
+  const list = info.devices || [];
+  html += `<div class="dev-list">${list.map(d => `<div class="d"><i class="fa-solid fa-mobile-screen"></i><b>${esc(d.name)}</b>
+      <small>${d.scope === "full" ? t("승인·메시지까지") : t("보기만")} · ${t("마지막")} ${new Date(d.seen * 1000).toLocaleString()}</small><span class="sp"></span>
+      <button class="danger" data-devdel="${esc(d.id)}" title="${t("연결 끊기")}"><i class="fa-solid fa-xmark"></i></button></div>`).join("") ||
+    `<div class="help">${t("아직 연결된 휴대폰이 없습니다.")}</div>`}</div>`;
+  setHTMLsafe($("devBody"), html);
+}
+document.addEventListener("click", async e => {
+  if (e.target.closest("#devPair")) {
+    const r = await tgCall("POST", "/api/devices/pair", { scope: $("devScope").value });
+    if (r) { devCode = r; renderDevices({ ...r, devices: (await tgCall("GET", "/api/devices") || {}).devices }); setTimeout(loadDevices, (r.until * 1000 - Date.now()) + 500); }
+    return;
+  }
+  const del = e.target.closest("[data-devdel]");
+  if (del && confirm(t("이 휴대폰 연결을 끊을까요?"))) { await tgCall("DELETE", `/api/devices/${encodeURIComponent(del.dataset.devdel)}`); loadDevices(); }
 });
 document.addEventListener("change", async e => {
   const x = e.target, card = x.closest("[data-tgl]"); if (!card) return;
@@ -652,7 +710,7 @@ function pick() {
     const [c, s] = await Promise.all([api("GET", "/api/config"), api("GET", "/api/state"), loadAssets()]);
     cfg = c; saved = JSON.stringify(cfg); agents = s.agents; tgState = s.telegram || { enabled: false };
     if (I18N.sync(cfg.language)) return;   // 허브 설정 언어가 이 브라우저가 기억한 것과 다르면 새로 고침
-    renderAll(); renderTelegram();
+    renderAll(); renderTelegram(); loadDevices();
   } catch (err) { say(t("불러오지 못함: ") + t(err.message), "err"); return; }
   // 세션 목록만 실시간으로 받는다(편집 중인 설정은 덮어쓰지 않는다)
   const es = new EventSource("/api/stream");
@@ -671,6 +729,7 @@ function pick() {
     }
     if (p.set && p.set.length) { const by = new Map(agents.map(a => [a.host + "/" + a.id, a])); for (const a of p.set) by.set(a.host + "/" + a.id, a); for (const k of p.del || []) by.delete(k); agents = [...by.values()]; }
     if (p.telegram || (p.set && p.set.length) || (p.del && p.del.length)) renderTelegram();
+    if (devCode && devCode.until * 1000 > Date.now()) loadDevices();   // QR 을 띄운 동안은 휴대폰이 연결됐는지 다시 본다
   });
 })();
 </script>

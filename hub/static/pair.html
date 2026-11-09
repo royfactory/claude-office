@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b1220">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<title>Claude Office</title>
+<link rel="stylesheet" href="/static/theme.css">
+<style>
+  body { min-height: 100vh; display: grid; place-items: center; margin: 0; padding: 16px; box-sizing: border-box; }
+  form { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border-2); border-radius: 14px; padding: 20px; display: grid; gap: 12px; }
+  h1 { margin: 0; font-size: 19px; color: var(--text-hi); }
+  p { margin: 0; font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+  label { display: grid; gap: 6px; font-size: 13px; color: var(--text-dim); }
+  input { width: 100%; box-sizing: border-box; font-size: 16px; }
+  button { font-size: 16px; padding: 10px; }
+  .err { color: var(--bad); min-height: 1.2em; font-size: 13px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<!-- 관리 화면의 QR(#c=코드)로 열린다. 이름을 정해 코드를 내면 이 브라우저에 기기 쿠키(1년)가 생기고 사무실 화면으로 간다 -->
+<form id="f">
+  <h1>📱 Claude Office</h1>
+  <p id="msg"></p>
+  <label><span id="nameL"></span><input id="name" maxlength="40" autocomplete="off"></label>
+  <label id="codeBox"><span id="codeL"></span><input id="code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"></label>
+  <button class="primary" id="go"></button>
+  <span class="err" id="err"></span>
+</form>
+<script>
+  const en = !(navigator.language || "").toLowerCase().startsWith("ko");
+  const T = en
+    ? { msg: "Connect this phone to the dashboard on the same Wi-Fi. You can disconnect it anytime from the admin page.", name: "Name for this phone", code: "6-digit code (shown with the QR)", go: "Connect", bad: "Wrong or expired code — make a new QR on the admin page.", def: "Phone" }
+    : { msg: "같은 와이파이에서 이 휴대폰을 대시보드에 연결합니다. 관리 화면에서 언제든 끊을 수 있어요.", name: "이 휴대폰 이름", code: "6자리 코드(QR 아래 숫자)", go: "연결", bad: "코드가 맞지 않거나 지났습니다 — 관리 화면에서 QR 을 새로 만드세요.", def: "휴대폰" };
+  document.documentElement.lang = en ? "en" : "ko";
+  const $ = id => document.getElementById(id);
+  $("msg").textContent = T.msg; $("nameL").textContent = T.name; $("codeL").textContent = T.code; $("go").textContent = T.go;
+  const ua = navigator.userAgent;
+  $("name").value = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? (en ? "Android phone" : "안드로이드 휴대폰") : T.def;
+  const code = (location.hash.match(/c=(\d{6})/) || [])[1] || "";
+  if (code) { $("code").value = code; $("codeBox").hidden = true; }
+  history.replaceState(null, "", "/pair");   // 코드를 주소창·방문 기록에 남기지 않는다
+  $("f").addEventListener("submit", async e => {
+    e.preventDefault();
+    $("err").textContent = "";
+    const r = await fetch("/api/devices/claim", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: $("code").value.trim(), name: $("name").value.trim() }) }).catch(() => null);
+    if (r && r.ok) location.replace("/");
+    else { $("err").textContent = T.bad; $("codeBox").hidden = false; }
+  });
+</script>
+</body>
+</html>

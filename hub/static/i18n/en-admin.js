@@ -1,5 +1,20 @@
 // 영어 사전: 관리 화면(/admin). 키는 화면에 쓰인 한국어 그대로(공용 말은 en-common.js)
 I18N.add({
+  // 휴대폰 연결
+  "허브가 이 컴퓨터에서만 열려 있어 휴대폰이 닿지 않습니다. 허브 <code>.env</code> 에 <code>OFFICE_BIND=0.0.0.0</code> 을 넣고 허브를 다시 띄우세요(같은 와이파이의 다른 사람도 주소에 닿으니 <code>OFFICE_READ_TOKEN</code> 으로 보기 잠금도 켜는 걸 권합니다).": "The hub only listens on this computer, so phones can't reach it. Add <code>OFFICE_BIND=0.0.0.0</code> to the hub <code>.env</code> and restart the hub (others on the same Wi-Fi can reach the address too, so turning on the read lock with <code>OFFICE_READ_TOKEN</code> is recommended).",
+  "회사·카페 와이파이는 기기끼리 접속을 막기도 합니다. 안 열리면 집 와이파이에서 해 보세요.": "Office and café Wi-Fi often block devices from reaching each other. If it doesn't open, try your home Wi-Fi.",
+  "이 컴퓨터의 와이파이 주소를 찾지 못했습니다. 와이파이에 연결돼 있는지 확인하세요.": "Couldn't find this computer's Wi-Fi address. Check that it's on Wi-Fi.",
+  "이 휴대폰 연결을 끊을까요?": "Disconnect this phone?",
+  "아직 연결된 휴대폰이 없습니다.": "No phones connected yet.",
+  "휴대폰 카메라로 찍고 10분 안에 '연결'을 누르세요": "Scan with the phone camera and tap Connect within 10 minutes",
+  "다른 주소": "Other addresses",
+  "휴대폰 연결(같은 와이파이)": "Phone (same Wi-Fi)",
+  "권한": "Access",
+  "마지막": "last seen",
+  "승인·메시지까지": "Approve & message",
+  "보기만": "View only",
+  "QR 을 휴대폰 카메라로 찍으면 그 휴대폰이 이 대시보드에 등록됩니다(인터넷에는 열지 않습니다). 휴대폰 브라우저 메뉴의 '홈 화면에 추가'로 앱처럼 쓸 수 있어요.": "Scan the QR with a phone camera to register that phone with this dashboard (nothing is opened to the internet). Use “Add to Home screen” in the phone browser to use it like an app.",
+  "QR 만들기": "Make QR",
   // 텔레그램
   "층·세션 제목·도구": "Floor, session title, tool",
   "답 모양": "Reply format", "한 줄(전체는 /more)": "One line (/more for full)", "전체": "Full",
